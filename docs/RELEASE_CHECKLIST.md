@@ -18,6 +18,7 @@
 - Verify `/api/health` returns `ok: true`.
 - Keep `OSA_RATE_LIMIT_MULTIPLIER=1` for public RC traffic.
 - Keep uploaded artifacts on persistent storage through `OSA_UPLOAD_DIR` or the production Docker volume.
+- Verify connector execution in `--runner stub` and at least one real `--runner provider` mode with a user-owned API key.
 
 Production startup fails fast unless the required release environment is present. Local escape hatches exist only for private testing:
 
@@ -53,7 +54,7 @@ The production compose file binds OSA to `127.0.0.1:8788`; put Nginx, Caddy, or 
 
 ## Still Open Before Wider Release
 
-- Replace the stub connector with a real OpenClaw/Codex task adapter.
+- Add richer OpenClaw/Codex task adapters around the provider-capable connector.
 - Harden signed connector tokens further with rotation, shorter expiries, and audit UI.
 - Replace local JSON/Base64 artifact uploads with S3/MinIO signed artifact uploads for larger deployments.
 - Move rate-limit state to Redis or Postgres before running multiple app instances.

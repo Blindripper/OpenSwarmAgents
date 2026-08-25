@@ -134,7 +134,31 @@ python3 apps/connector/connector.py \
   --goal goal-id
 ```
 
-Run that command in another terminal. The connector will register, heartbeat, claim tasks, submit stub results, and participate in reviews.
+Run that command in another terminal. The connector will register, heartbeat, claim tasks, submit results, and participate in reviews.
+
+To run real provider-backed tasks instead of the deterministic stub, set the matching API key in that terminal and use `--runner provider`:
+
+```bash
+export OPENAI_API_KEY=...
+python3 apps/connector/connector.py \
+  --server http://127.0.0.1:8788 \
+  --connector-token osa_conn_... \
+  --goal goal-id \
+  --runner provider \
+  --provider openai
+```
+
+Supported local provider env vars:
+
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+- `GEMINI_API_KEY`
+
+Optional model overrides:
+
+- `OPENAI_MODEL`
+- `ANTHROPIC_MODEL`
+- `GEMINI_MODEL`
 
 ## Docker Compose
 
@@ -251,6 +275,7 @@ The current MVP uses the safest BYOK variant:
 - Keys are stored in `localStorage`.
 - Keys are not sent to the OSA server.
 - The server stores only non-secret provider metadata such as `openai`, `anthropic`, or `gemini`.
+- The local connector may also read provider keys from environment variables. Those keys stay on the user's machine and are not submitted to the OSA server.
 
 If future server-side workflows need provider calls, use encrypted secret storage or short-lived delegated credentials. Do not store raw user API keys in plaintext databases.
 
@@ -291,7 +316,7 @@ The production compose file persists uploaded files in a named Docker volume. Fo
 
 ## Roadmap
 
-- Replace the stub connector with real OpenAI, Anthropic, Gemini, OpenClaw, and Codex adapters.
+- Add richer OpenClaw and Codex adapters around the provider-capable connector.
 - Replace local artifact uploads with signed S3 or MinIO uploads.
 - Move from Postgres snapshot storage to normalized tables.
 - Add Redis or NATS for task queues, leases, and scheduling.

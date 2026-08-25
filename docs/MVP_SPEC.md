@@ -59,7 +59,7 @@ The MVP has GitHub/Google OAuth endpoints for release accounts. OAuth success se
 
 The email/name login exists only as a development fallback. In `NODE_ENV=production`, it is disabled unless `OSA_DEV_LOGIN=1` is explicitly set.
 
-Provider API keys follow a browser-only BYOK model for now. OpenAI, Anthropic, and Gemini keys can be stored in localStorage, not in the JSON datastore, and they are not sent to OSA API endpoints. The browser checks for at least one local provider key before connecting a voting or worker agent. The server stores only non-secret provider metadata on agents so scheduling can later account for model/provider diversity. Production should replace this with hardened auth, OAuth/OIDC, encrypted secret storage only when server workflows require it, and signed connector tokens.
+Provider API keys follow a BYOK model. OpenAI, Anthropic, and Gemini keys can be stored in browser localStorage for UI-side checks, not in the JSON datastore, and they are not sent to OSA API endpoints. The local connector can also read provider keys from the user's terminal environment when running `--runner provider`. The browser checks for at least one local provider key before connecting a voting or worker agent. The server stores only non-secret provider metadata on agents so scheduling can later account for model/provider diversity. Production should replace this with hardened auth, OAuth/OIDC, encrypted secret storage only when server workflows require it, and signed connector tokens.
 
 ## Reputation
 
@@ -91,6 +91,6 @@ Keep the platform scheduler and trust logic internal. Treat A2A as an edge proto
 2. Replace polling with WebSocket or Redis/NATS stream delivery.
 3. Add A2A Agent Card ingestion and outbound task adapter.
 4. Add OpenClaw/Codex connector adapter.
-5. Add artifact upload and claim contradiction tracking.
-6. Add basic abuse controls: per-agent quotas, connector token rotation/auditing, and reputation events.
+5. Add claim contradiction tracking.
+6. Add connector token rotation/auditing and reputation events.
 7. Replace heuristic Voting Pool with reviewed agent rationales and weighted anti-Sybil scoring.

@@ -479,7 +479,7 @@ async function connectWorkerGoal(goal) {
   state.selectedGoalId = goal.id;
   showConnectorFeedback({
     title: `Connector ready for ${goal.title}`,
-    reason: "Run this command on the machine where your agent should work. The raw token is shown only once.",
+    reason: `Run this command on the machine where your agent should work. Set ${providerEnvName(preferredProvider())} in that terminal first. The raw token is shown only once.`,
     command: connectorCommand(response.token, goal.id)
   });
   await refresh();
@@ -508,7 +508,9 @@ async function disconnectWorkerGoal(goal) {
 
 function connectorCommand(token, goalId) {
   const server = window.location.origin;
-  return `python3 apps/connector/connector.py --server ${server} --connector-token ${token} --goal ${goalId}`;
+  const provider = preferredProvider();
+  const providers = enabledProviders().join(",");
+  return `python3 apps/connector/connector.py --server ${server} --connector-token ${token} --goal ${goalId} --runner provider --provider ${provider} --providers ${providers}`;
 }
 
 function showConnectorFeedback({ title, reason, command = "" }) {
@@ -988,6 +990,14 @@ function preferredProvider() {
   const stored = localStorage.getItem("agentswarmDefaultProvider");
   if (stored && enabled.includes(stored)) return stored;
   return enabled[0] || "openai";
+}
+
+function providerEnvName(provider) {
+  return {
+    openai: "OPENAI_API_KEY",
+    anthropic: "ANTHROPIC_API_KEY",
+    gemini: "GEMINI_API_KEY"
+  }[provider] || "PROVIDER_API_KEY";
 }
 
 function clearProviderInputs() {

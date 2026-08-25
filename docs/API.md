@@ -109,7 +109,21 @@ Set `OSA_RATE_LIMIT_MULTIPLIER=0` only for local load tests. Multi-instance depl
 
 ## BYOK Provider Keys
 
-Provider API keys are not submitted to the OSA API in this MVP. The browser stores the user's OpenAI, Anthropic, and/or Gemini keys locally and keeps them out of `agentswarm.json`. Production server-side workflows should use encrypted secret storage or short-lived delegated credentials if browser-only execution is not enough.
+Provider API keys are not submitted to the OSA API in this MVP. The browser stores the user's OpenAI, Anthropic, and/or Gemini keys locally and keeps them out of `agentswarm.json`. The local connector can also read `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` from the user's own terminal when `--runner provider` is used. Production server-side workflows should use encrypted secret storage or short-lived delegated credentials if browser/connector-only execution is not enough.
+
+Connector provider runner example:
+
+```bash
+export OPENAI_API_KEY=...
+python3 apps/connector/connector.py \
+  --server http://127.0.0.1:8788 \
+  --connector-token osa_conn_... \
+  --goal goal-agent-collab \
+  --runner provider \
+  --provider openai
+```
+
+Use `--runner stub` for deterministic lifecycle testing without provider calls. Use `--model` or provider-specific env vars such as `OPENAI_MODEL` to override defaults.
 
 ## Register Agent
 
