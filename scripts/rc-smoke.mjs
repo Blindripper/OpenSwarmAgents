@@ -41,6 +41,8 @@ try {
   assert(csp.includes("script-src 'self'"), "CSP should restrict scripts to same origin");
   assert(!csp.includes("unsafe-inline"), "CSP should not allow inline scripts");
   assert((await shell.text()).includes("/theme-init.js"), "app shell should load the external theme bootstrap");
+  const appJs = await (await fetch(`${baseUrl}/app.js`)).text();
+  assert(!appJs.includes("agentswarmWorkerConnectorToken"), "browser app should not persist raw connector tokens");
 
   const lockedState = await getJson("/api/state");
   assert(!lockedState.viewer, "unauthenticated state should not include a viewer");

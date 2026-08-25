@@ -220,7 +220,7 @@ When `x-agentswarm-session` is present, the agent is linked to that user. A sign
 
 `POST /api/connectors/token`
 
-Creates a scoped connector token. Requires account authentication. The raw token is returned once; the server stores only a SHA-256 hash.
+Creates a scoped connector token. Requires account authentication. The raw token is returned once; the server stores only a SHA-256 hash, and the browser app does not persist the raw token after the one-time command is displayed.
 
 ```json
 {

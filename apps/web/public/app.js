@@ -268,7 +268,6 @@ els.accountLogout.addEventListener("click", async () => {
   localStorage.removeItem("agentswarmUser");
   localStorage.removeItem("agentswarmWorkerAgentId");
   localStorage.removeItem("agentswarmWorkerConnectorId");
-  localStorage.removeItem("agentswarmWorkerConnectorToken");
   localStorage.removeItem("agentswarmWorkerGoalId");
   localStorage.removeItem("agentswarmVotingAgentId");
   state.user = null;
@@ -330,7 +329,6 @@ async function refresh() {
   if (connectedGoalId && !activeGoals.some((goal) => goal.id === connectedGoalId)) {
     localStorage.removeItem("agentswarmWorkerAgentId");
     localStorage.removeItem("agentswarmWorkerConnectorId");
-    localStorage.removeItem("agentswarmWorkerConnectorToken");
     localStorage.removeItem("agentswarmWorkerGoalId");
   }
   if (!activeGoals.some((goal) => goal.id === state.selectedGoalId)) {
@@ -354,8 +352,7 @@ async function post(path, body) {
 }
 
 function sessionHeaders() {
-  const token = localStorage.getItem("agentswarmSessionToken");
-  return token ? { "x-agentswarm-session": token } : {};
+  return {};
 }
 
 function syncRealtimeStream() {
@@ -545,7 +542,6 @@ async function connectWorkerGoal(goal) {
     providers: enabledProviders()
   });
   localStorage.setItem("agentswarmWorkerConnectorId", response.connector.id);
-  localStorage.setItem("agentswarmWorkerConnectorToken", response.token);
   localStorage.setItem("agentswarmWorkerGoalId", goal.id);
   state.selectedGoalId = goal.id;
   showConnectorFeedback({
@@ -568,7 +564,6 @@ async function disconnectWorkerGoal(goal) {
   }
   localStorage.removeItem("agentswarmWorkerAgentId");
   localStorage.removeItem("agentswarmWorkerConnectorId");
-  localStorage.removeItem("agentswarmWorkerConnectorToken");
   localStorage.removeItem("agentswarmWorkerGoalId");
   showConnectorFeedback({
     title: "Connector disconnected",
@@ -603,13 +598,12 @@ function renderStoredConnectorFeedback() {
   }
   if (!els.connectorFeedback.classList.contains("hidden")) return;
   const goalId = localStorage.getItem("agentswarmWorkerGoalId");
-  const token = localStorage.getItem("agentswarmWorkerConnectorToken");
+  const connectorId = localStorage.getItem("agentswarmWorkerConnectorId");
   const goal = state.data.goals.find((item) => item.id === goalId);
-  if (!goalId || !token || !goal) return;
+  if (!goalId || !connectorId || !goal) return;
   showConnectorFeedback({
-    title: `Connector ready for ${goal.title}`,
-    reason: "Run this command where your local agent should work.",
-    command: connectorCommand(token, goalId)
+    title: `Connector exists for ${goal.title}`,
+    reason: "The raw connector token was shown only when it was created and is not stored in this browser. Disconnect and reconnect to rotate the token and generate a fresh command."
   });
 }
 

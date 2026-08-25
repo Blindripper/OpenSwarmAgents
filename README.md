@@ -133,7 +133,7 @@ npm install
 npm run check:rc
 ```
 
-This starts an isolated local OSA node, verifies local password auth, creates signed proposal/vote/artifact contributions, checks the Trust Ledger hash chain, verifies artifact download hashes, and confirms production-local validation does not require a domain or OAuth.
+This starts isolated local OSA nodes, verifies local password auth, creates signed proposal/vote/artifact contributions, checks the Trust Ledger hash chain, verifies artifact download hashes, runs a multi-user consensus simulation with revision and unanimous acceptance, and confirms production-local validation does not require a domain or OAuth.
 
 ### 4. Start the local server
 
@@ -385,6 +385,7 @@ When a signed-in user connects a worker project, OSA creates a scoped connector 
 Properties:
 
 - The raw token is displayed once.
+- The browser does not persist the raw connector token after creation.
 - The server stores only a SHA-256 hash.
 - Worker tokens are scoped to one user and one project.
 - Voting tokens are scoped to the Voting Pool.
