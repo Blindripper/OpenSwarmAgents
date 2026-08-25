@@ -54,6 +54,7 @@ const oauthProviderConfig = {
 
 let pgPool = null;
 const rateLimitBuckets = new Map();
+const realtimeClients = new Set();
 validateRuntimeConfig();
 const nodeIdentity = await loadNodeIdentity();
 let store = await loadStore();
@@ -327,14 +328,66 @@ function afterMs(baseIso, durationMs) {
 }
 
 function event(type, message, data = {}) {
-  store.events.unshift({
+  const entry = {
     id: `event-${randomUUID()}`,
     type,
     message,
     data,
     createdAt: now()
-  });
+  };
+  store.events.unshift(entry);
   store.events = store.events.slice(0, 100);
+  broadcastRealtime("activity", entry);
+}
+
+function sendSse(res, eventName, data) {
+  res.write(`event: ${eventName}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function broadcastRealtime(eventName, data) {
+  for (const client of realtimeClients) {
+    try {
+      sendSse(client.res, eventName, data);
+    } catch {
+      realtimeClients.delete(client);
+    }
+  }
+}
+
+function serveRealtimeStream(req, res) {
+  const auth = authFromReq(req);
+  if (!auth) return unauthorized(res, "Sign in before joining the realtime network stream");
+
+  res.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-store, no-transform",
+    connection: "keep-alive",
+    ...securityHeaders()
+  });
+  res.flushHeaders?.();
+
+  const client = { res, userId: auth.user.id, connectedAt: now() };
+  realtimeClients.add(client);
+  sendSse(res, "connected", {
+    userId: auth.user.id,
+    serverTime: now(),
+    lastEventId: store.events[0]?.id || null
+  });
+
+  const heartbeat = setInterval(() => {
+    try {
+      sendSse(res, "heartbeat", { serverTime: now() });
+    } catch {
+      clearInterval(heartbeat);
+      realtimeClients.delete(client);
+    }
+  }, 25000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    realtimeClients.delete(client);
+  });
 }
 
 function sendJson(res, status, payload, headers = {}) {
@@ -1369,6 +1422,10 @@ async function handleApi(req, res, url) {
     const artifactDownloadMatch = path.match(/^\/api\/artifacts\/([^/]+)\/download$/);
     if (method === "GET" && artifactDownloadMatch) {
       return serveArtifactDownload(req, res, artifactDownloadMatch[1]);
+    }
+
+    if (method === "GET" && path === "/api/events/stream") {
+      return serveRealtimeStream(req, res);
     }
 
     if (method === "GET" && path === "/api/state") {

@@ -75,6 +75,8 @@ try {
     password: "local-password-123"
   });
   const headers = { "x-agentswarm-session": login.sessionToken };
+  const realtime = await openSse(headers);
+  await realtime.waitFor("connected");
 
   const proposal = await postJson(
     "/api/proposals",
@@ -86,6 +88,8 @@ try {
     headers
   );
   assert(proposal.proposal.signature?.signature, "proposal should be signed");
+  const proposalEvent = await realtime.waitFor("activity");
+  assert(proposalEvent.type === "proposal_created", "realtime stream should broadcast proposal creation");
 
   const vote = await postJson(
     "/api/voting/connect",
@@ -147,6 +151,7 @@ try {
 
   const identity = JSON.parse(await readFile(join(dataDir, "node-identity.json"), "utf8"));
   assert(identity.privateKeyPem && identity.publicKeyPem, "node identity should persist locally");
+  realtime.close();
 
   console.log(`RC smoke passed on ${baseUrl}`);
 } finally {
@@ -234,6 +239,52 @@ async function postJson(path, body, headers = {}) {
     throw new Error(`${path} failed with ${response.status}: ${text}`);
   }
   return response.json();
+}
+
+async function openSse(headers = {}) {
+  const controller = new AbortController();
+  const response = await fetch(`${baseUrl}/api/events/stream`, {
+    headers,
+    signal: controller.signal
+  });
+  assert(response.ok, `/api/events/stream should return HTTP 2xx, got ${response.status}`);
+  assert(response.headers.get("content-type")?.includes("text/event-stream"), "realtime stream should use text/event-stream");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  async function waitFor(eventName) {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const parsed = consumeSseEvent(eventName);
+      if (parsed) return parsed;
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+    }
+    throw new Error(`timed out waiting for SSE event ${eventName}`);
+  }
+
+  function consumeSseEvent(eventName) {
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary !== -1) {
+      const raw = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const eventLine = raw.split("\n").find((line) => line.startsWith("event:"));
+      const dataLine = raw.split("\n").find((line) => line.startsWith("data:"));
+      const currentEvent = eventLine?.slice("event:".length).trim();
+      if (currentEvent === eventName) {
+        return dataLine ? JSON.parse(dataLine.slice("data:".length).trim()) : {};
+      }
+      boundary = buffer.indexOf("\n\n");
+    }
+    return null;
+  }
+
+  return {
+    waitFor,
+    close: () => controller.abort()
+  };
 }
 
 async function expectStatus(path, status, body, headers = {}) {

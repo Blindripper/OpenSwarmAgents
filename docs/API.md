@@ -42,6 +42,18 @@ Returns runtime health metadata for container and reverse-proxy checks. It does 
 
 Returns goals, agents, tasks, results, reviews, claims, Result Pool entries, Trust Ledger summaries, and events.
 
+`GET /api/events/stream`
+
+Opens an authenticated Server-Sent Events stream for realtime node activity. Browser clients use the `osa_session` HttpOnly cookie; CLI or test clients may use `x-agentswarm-session`.
+
+Event types:
+
+- `connected` - stream is authenticated and ready
+- `activity` - a node event was appended; clients should refresh `/api/state`
+- `heartbeat` - keepalive with current server time
+
+The stream synchronizes dashboards connected to the same OSA node. Cross-node federation will build on signed contributions and Trust Ledger exchange later.
+
 `GET /api/trust-ledger`
 
 Returns non-secret Trust Ledger metadata for the local node. This endpoint requires authentication by default. Set `OSA_PUBLIC_TRUST_LEDGER=1` only for nodes that intentionally expose audit metadata for federation or external verification.

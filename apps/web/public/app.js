@@ -8,6 +8,10 @@ const THEME_STORAGE_KEY = "osaTheme";
 const DONATION_ADDRESS = "0x0D92d175943336E3Ad099e55FBe4248dC6fA947b";
 const DONATION_AMOUNT_WEI = 2_000_000_000_000_000n;
 
+let realtimeSource = null;
+let realtimeConnected = false;
+let realtimeRefreshTimer = null;
+
 const state = {
   selectedGoalId: null,
   view: "worker",
@@ -268,6 +272,7 @@ els.accountLogout.addEventListener("click", async () => {
   localStorage.removeItem("agentswarmWorkerGoalId");
   localStorage.removeItem("agentswarmVotingAgentId");
   state.user = null;
+  closeRealtimeStream();
   showAccountFeedback("Signed out", "Local session cleared. Your BYOK API key remains local until you clear it.");
   render();
 });
@@ -331,6 +336,7 @@ async function refresh() {
   if (!activeGoals.some((goal) => goal.id === state.selectedGoalId)) {
     state.selectedGoalId = activeGoals[0]?.id || null;
   }
+  syncRealtimeStream();
   render();
 }
 
@@ -350,6 +356,55 @@ async function post(path, body) {
 function sessionHeaders() {
   const token = localStorage.getItem("agentswarmSessionToken");
   return token ? { "x-agentswarm-session": token } : {};
+}
+
+function syncRealtimeStream() {
+  if (!isAuthenticated()) {
+    closeRealtimeStream();
+    return;
+  }
+  if (realtimeSource || typeof EventSource === "undefined") return;
+
+  realtimeSource = new EventSource("/api/events/stream");
+  realtimeSource.addEventListener("open", () => {
+    realtimeConnected = true;
+  });
+  realtimeSource.addEventListener("connected", () => {
+    realtimeConnected = true;
+  });
+  realtimeSource.addEventListener("activity", () => {
+    realtimeConnected = true;
+    scheduleRealtimeRefresh();
+  });
+  realtimeSource.addEventListener("heartbeat", () => {
+    realtimeConnected = true;
+  });
+  realtimeSource.addEventListener("error", () => {
+    realtimeConnected = false;
+    if (realtimeSource?.readyState === EventSource.CLOSED) {
+      closeRealtimeStream();
+    }
+  });
+}
+
+function closeRealtimeStream() {
+  if (realtimeSource) {
+    realtimeSource.close();
+    realtimeSource = null;
+  }
+  realtimeConnected = false;
+  if (realtimeRefreshTimer) {
+    clearTimeout(realtimeRefreshTimer);
+    realtimeRefreshTimer = null;
+  }
+}
+
+function scheduleRealtimeRefresh() {
+  if (realtimeRefreshTimer) return;
+  realtimeRefreshTimer = setTimeout(async () => {
+    realtimeRefreshTimer = null;
+    await refresh();
+  }, 120);
 }
 
 function render() {
@@ -375,7 +430,7 @@ function render() {
   els.proposalCount.textContent = `${state.data.proposals.length} proposals`;
   els.voteCount.textContent = `${(state.data.proposalVotes || []).length} votes`;
   els.resultPoolCount.textContent = `${(state.data.resultPool || []).length} results`;
-  els.serverTime.textContent = new Date(state.data.serverTime).toLocaleTimeString();
+  els.serverTime.textContent = `${new Date(state.data.serverTime).toLocaleTimeString()} · ${realtimeConnected ? "Live" : "Polling"}`;
 
   renderWorkerProjects(activeWorkerGoals());
   renderStoredConnectorFeedback();
@@ -1171,4 +1226,6 @@ if (oauthParams.get("oauth") && oauthParams.get("error")) {
 applyTheme();
 await loadAuthConfig();
 await refresh();
-setInterval(refresh, 5000);
+setInterval(() => {
+  if (!realtimeConnected) refresh();
+}, 5000);

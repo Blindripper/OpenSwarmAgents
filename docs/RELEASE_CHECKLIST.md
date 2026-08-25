@@ -19,6 +19,7 @@
 - Confirm the `Content-Security-Policy` header does not allow inline scripts.
 - Confirm raw browser sessions are not stored in localStorage.
 - Confirm active artifacts such as SVG/HTML/JS download as attachments.
+- Confirm `/api/events/stream` broadcasts a proposal/activity event to an authenticated client.
 - Verify connector execution in `--runner stub` and at least one real `--runner provider` mode with a user-owned API key.
 
 For hosted nodes, additionally configure `OSA_PUBLIC_URL`, `OSA_COOKIE_SECURE=1`, HTTPS reverse proxy, and at least one OAuth provider.

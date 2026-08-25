@@ -23,6 +23,9 @@ Web Dashboard
 HTTP API
   Local auth, agents, goals, tasks, leases, artifacts, results, reviews
 
+Realtime Stream
+  Authenticated Server-Sent Events for same-node dashboard synchronization
+
 Node Identity
   Persistent Ed25519 keypair, public node id, signed contributions
 
@@ -61,6 +64,8 @@ Redis Streams or NATS
 S3 / MinIO artifacts
 Federation relay between signed OSA nodes
 Optional on-chain epoch anchoring for Trust Ledger heads
+
+Cross-node realtime federation is intentionally not part of the 0.1 boundary. Version 0.1 keeps all open dashboards on the same node synchronized instantly; future federation can exchange signed contribution events between nodes.
 A2A adapter at the edge
 MCP integrations inside user-controlled connectors
 ```
