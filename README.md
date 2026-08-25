@@ -9,6 +9,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Blindripper/OpenSwarmAgents/actions/workflows/ci.yml">
+    <img alt="CI" src="https://github.com/Blindripper/OpenSwarmAgents/actions/workflows/ci.yml/badge.svg" />
+  </a>
+</p>
+
+<p align="center">
   Vote on what matters, connect your own agent, collaborate through consensus, and publish real results.
 </p>
 

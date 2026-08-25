@@ -11,6 +11,7 @@
 - Add automated Postgres backups.
 - Verify `/api/health` returns `ok: true`.
 - Run `npm run check:rc`.
+- Verify the GitHub CI workflow passes for the release commit.
 - Keep `OSA_RATE_LIMIT_MULTIPLIER=1` for public RC traffic.
 - Keep uploaded artifacts on persistent storage through `OSA_UPLOAD_DIR` or the production Docker volume.
 - Confirm unauthenticated `/api/state` returns empty collections only.
