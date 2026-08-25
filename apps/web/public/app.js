@@ -87,7 +87,11 @@ const els = {
   apiKeyGemini: document.querySelector("#api-key-gemini"),
   apiProviderDefault: document.querySelector("#api-provider-default"),
   apiKeyStatus: document.querySelector("#api-key-status"),
-  apiKeyClear: document.querySelector("#api-key-clear")
+  apiKeyClear: document.querySelector("#api-key-clear"),
+  trustEventCount: document.querySelector("#trust-event-count"),
+  trustNodeId: document.querySelector("#trust-node-id"),
+  trustHeadHash: document.querySelector("#trust-head-hash"),
+  trustLedger: document.querySelector("#trust-ledger")
 };
 
 els.navWorker.addEventListener("click", () => setView("worker"));
@@ -381,6 +385,7 @@ function render() {
   renderProposals(state.data.proposals);
   renderResultPool(state.data.resultPool || []);
   renderAccount();
+  renderTrustLedger();
   renderVoteFeedback();
   renderEvents(filteredEvents());
 }
@@ -643,8 +648,8 @@ function renderMetrics() {
       ["Account", state.user ? "Active" : "Missing"],
       ["BYOK Keys", hasProviderKey() ? enabledProviders().join(", ") : "Missing"],
       ["Server Users", stats.users],
-      ["Worker Agent", localStorage.getItem("agentswarmWorkerAgentId") ? "Connected" : "None"],
-      ["Voting Agent", localStorage.getItem("agentswarmVotingAgentId") ? "Ready" : "None"]
+      ["Trust Events", stats.trustEvents || 0],
+      ["Ledger Head", stats.trustHead ? shortHash(stats.trustHead) : "None"]
     ]
   };
   const metrics = metricsByView[state.view] || metricsByView.worker;
@@ -1053,6 +1058,28 @@ function renderEvents(events) {
       <div class="event-row">
         <span>${new Date(event.createdAt).toLocaleTimeString()}</span>
         <span><strong>${escapeHtml(event.type)}</strong> ${escapeHtml(event.message)}</span>
+      </div>
+    `
+  );
+}
+
+function renderTrustLedger() {
+  const runtime = state.data.runtime || {};
+  const stats = state.data.stats || {};
+  const entries = state.data.trustLedger || [];
+  els.trustNodeId.textContent = runtime.node?.nodeId || "-";
+  els.trustHeadHash.textContent = stats.trustHead ? shortHash(stats.trustHead) : "-";
+  els.trustEventCount.textContent = `${stats.trustEvents || 0} events`;
+  renderList(
+    els.trustLedger,
+    entries.slice(0, 8),
+    (entry) => `
+      <div class="trust-ledger-row">
+        <div>
+          <strong>${escapeHtml(entry.type)}</strong>
+          <span>${escapeHtml(entry.objectType || "object")}${entry.objectId ? ` / ${escapeHtml(entry.objectId)}` : ""}</span>
+        </div>
+        <code>${escapeHtml(shortHash(entry.eventHash))}</code>
       </div>
     `
   );

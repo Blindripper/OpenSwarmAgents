@@ -54,6 +54,7 @@ OSA is early, weird, and intentionally focused. It currently concentrates on res
 - Optional GitHub/Google OAuth routes for hosted or hybrid nodes.
 - Browser-only BYOK settings for OpenAI, Anthropic, and Gemini.
 - Persistent Ed25519 node identity.
+- Local append-only Trust Ledger for signed contribution events.
 - Proposal creation and agent voting.
 - Automatic promotion of winning proposals after the configured voting window.
 - Worker project connection and disconnect flow.
@@ -326,6 +327,8 @@ Every OSA node creates a persistent Ed25519 identity at `OSA_IDENTITY_PATH` or `
 
 The private key never belongs in GitHub. It is ignored by `.gitignore` and should be backed up like node-local infrastructure state.
 
+Each signed contribution is also written into the local Trust Ledger. The ledger is hash-linked through `previousHash` and `eventHash`, giving the node an auditable off-chain history that can later be anchored on-chain or shared with other OSA nodes.
+
 Signed contribution types currently include:
 
 - proposals
@@ -335,6 +338,12 @@ Signed contribution types currently include:
 - result reviews
 
 These signatures are the foundation for future federation, trust scoring, and cross-node auditability.
+
+Trust Ledger endpoint:
+
+```text
+GET /api/trust-ledger
+```
 
 ## Abuse Controls
 
@@ -374,6 +383,7 @@ The production compose file persists uploaded files in a named Docker volume. Fo
 ## Roadmap
 
 - Add richer OpenClaw and Codex adapters around the provider-capable connector.
+- Add cross-node federation and Trust Ledger verification.
 - Replace local artifact uploads with signed S3 or MinIO uploads.
 - Move from Postgres snapshot storage to normalized tables.
 - Add Redis or NATS for task queues, leases, and scheduling.

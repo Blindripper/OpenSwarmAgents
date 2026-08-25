@@ -82,6 +82,7 @@ async function loadStore() {
       connectorTokens: [],
       uploadedArtifacts: [],
       proposalVotes: [],
+      trustLedger: [],
       events: []
     });
     await saveStore(initial);
@@ -105,12 +106,31 @@ function normalizeStore(input) {
     sessions: input.sessions || [],
     connectorTokens: input.connectorTokens || [],
     uploadedArtifacts: input.uploadedArtifacts || [],
+    trustLedger: normalizeTrustLedger(input.trustLedger || []),
     resultPool: input.resultPool || buildResultPoolFromAccepted(goals, tasks, results, reviews),
     proposals: (input.proposals || []).map(normalizeProposal),
     proposalVotes: input.proposalVotes || [],
     oauthStates: input.oauthStates || [],
     events: input.events || []
   };
+}
+
+function normalizeTrustLedger(entries) {
+  return entries
+    .filter((entry) => entry?.eventHash && entry?.signature)
+    .map((entry) => ({
+      id: String(entry.id || `ledger-${randomUUID()}`).slice(0, 100),
+      nodeId: String(entry.nodeId || nodeIdentity.nodeId).slice(0, 100),
+      type: String(entry.type || entry.signature?.type || "unknown").slice(0, 80),
+      objectType: String(entry.objectType || entry.type || "unknown").slice(0, 80),
+      objectId: entry.objectId ? String(entry.objectId).slice(0, 160) : null,
+      objectHash: String(entry.objectHash || "").slice(0, 128),
+      payloadHash: String(entry.payloadHash || entry.signature?.payloadHash || "").slice(0, 128),
+      previousHash: entry.previousHash ? String(entry.previousHash).slice(0, 128) : null,
+      eventHash: String(entry.eventHash).slice(0, 128),
+      signature: entry.signature,
+      createdAt: entry.createdAt || now()
+    }));
 }
 
 async function saveStore(next = store) {
@@ -152,9 +172,11 @@ function publicNodeIdentity() {
 
 function signedContribution(type, payload = {}) {
   const signedAt = now();
+  const payloadHash = objectHash(payload);
   const canonical = stableStringify({
     type,
     signedAt,
+    payloadHash,
     payload
   });
   return {
@@ -162,14 +184,67 @@ function signedContribution(type, payload = {}) {
     nodeId: nodeIdentity.nodeId,
     algorithm: nodeIdentity.algorithm,
     signedAt,
+    payloadHash,
     signature: signPayload(null, Buffer.from(canonical), nodeIdentity.privateKeyPem).toString("base64")
   };
 }
 
+function recordSignedContribution(type, payload = {}, refs = {}) {
+  const signature = signedContribution(type, payload);
+  appendTrustLedger(signature, payload, refs);
+  return signature;
+}
+
+function appendTrustLedger(signature, payload = {}, refs = {}) {
+  if (!store) return null;
+  store.trustLedger = normalizeTrustLedger(store.trustLedger || []);
+  const previousHash = store.trustLedger[0]?.eventHash || null;
+  const objectHash = refs.objectHash || signature.payloadHash || objectHashForRefs(refs, payload);
+  const entry = {
+    id: `ledger-${randomUUID()}`,
+    nodeId: nodeIdentity.nodeId,
+    type: signature.type,
+    objectType: refs.objectType || signature.type,
+    objectId: refs.objectId || null,
+    objectHash,
+    payloadHash: signature.payloadHash,
+    previousHash,
+    signature,
+    createdAt: signature.signedAt
+  };
+  entry.eventHash = objectHashForRefs({
+    id: entry.id,
+    nodeId: entry.nodeId,
+    type: entry.type,
+    objectType: entry.objectType,
+    objectId: entry.objectId,
+    objectHash: entry.objectHash,
+    payloadHash: entry.payloadHash,
+    previousHash: entry.previousHash,
+    signature: entry.signature,
+    createdAt: entry.createdAt
+  });
+  store.trustLedger.unshift(entry);
+  return entry;
+}
+
+function objectHash(value) {
+  return objectHashForRefs(value);
+}
+
+function objectHashForRefs(value) {
+  return createHash("sha256").update(stableStringify(value)).digest("hex");
+}
+
 function stableStringify(value) {
+  if (typeof value === "undefined") return "null";
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
+  return `{${Object.keys(value)
+    .filter((key) => typeof value[key] !== "undefined")
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+    .join(",")}}`;
 }
 
 async function loadPostgresStore() {
@@ -197,6 +272,7 @@ async function loadPostgresStore() {
     connectorTokens: [],
     proposalVotes: [],
     uploadedArtifacts: [],
+    trustLedger: [],
     events: []
   });
   await savePostgresStore(initial);
@@ -568,6 +644,7 @@ function publicState(auth = null) {
     resultPool: store.resultPool,
     proposals: store.proposals,
     proposalVotes: store.proposalVotes,
+    trustLedger: publicTrustLedger(),
     events: store.events,
     stats: {
       users: store.users.length,
@@ -579,12 +656,34 @@ function publicState(auth = null) {
       openTasks: store.tasks.filter((task) => task.status === "open" && activeGoals.some((goal) => goal.id === task.goalId)).length,
       leasedTasks: store.tasks.filter((task) => task.status === "leased").length,
       pendingReviews: store.results.filter((result) => ["needs_review", "in_consensus"].includes(result.status)).length,
-      acceptedClaims: store.claims.filter((claim) => claim.status === "accepted").length
+      acceptedClaims: store.claims.filter((claim) => claim.status === "accepted").length,
+      trustEvents: (store.trustLedger || []).length,
+      trustHead: store.trustLedger?.[0]?.eventHash || null
     },
     viewer: publicUser(auth?.user),
     viewerConnectors: auth ? publicConnectorTokensForUser(auth.user.id) : [],
     runtime: publicRuntime(),
     serverTime: now()
+  };
+}
+
+function publicTrustLedger(limit = 50) {
+  return (store.trustLedger || []).slice(0, limit).map(publicTrustLedgerEntry);
+}
+
+function publicTrustLedgerEntry(entry) {
+  return {
+    id: entry.id,
+    nodeId: entry.nodeId,
+    type: entry.type,
+    objectType: entry.objectType,
+    objectId: entry.objectId,
+    objectHash: entry.objectHash,
+    payloadHash: entry.payloadHash,
+    previousHash: entry.previousHash,
+    eventHash: entry.eventHash,
+    signature: entry.signature,
+    createdAt: entry.createdAt
   };
 }
 
@@ -1016,12 +1115,16 @@ async function createUploadedArtifact(auth, connector, body) {
     sha256: createHash("sha256").update(payload).digest("hex"),
     createdAt: now()
   };
-  artifact.signature = signedContribution("artifact_upload", {
+  artifact.signature = recordSignedContribution("artifact_upload", {
     artifactId: artifact.id,
     name: artifact.name,
     kind: artifact.kind,
     size: artifact.size,
     sha256: artifact.sha256
+  }, {
+    objectType: "artifact",
+    objectId: artifact.id,
+    objectHash: artifact.sha256
   });
   store.uploadedArtifacts.unshift(artifact);
   event("artifact_uploaded", `Uploaded artifact ${artifact.name}`, {
@@ -1182,6 +1285,15 @@ async function handleApi(req, res, url) {
         ok: true,
         runtime: publicRuntime(),
         serverTime: now()
+      });
+    }
+
+    if (method === "GET" && path === "/api/trust-ledger") {
+      return sendJson(res, 200, {
+        node: publicNodeIdentity(),
+        head: store.trustLedger?.[0]?.eventHash || null,
+        entries: publicTrustLedger(200),
+        count: (store.trustLedger || []).length
       });
     }
 
@@ -1430,11 +1542,14 @@ async function handleApi(req, res, url) {
         createdAt: now()
       };
       proposal.votingEndsAt = afterMs(proposal.createdAt, proposalVotingMs);
-      proposal.signature = signedContribution("proposal", {
+      proposal.signature = recordSignedContribution("proposal", {
         proposalId: proposal.id,
         title: proposal.title,
         descriptionHash: hashToken(proposal.description),
         createdBy: proposal.createdBy
+      }, {
+        objectType: "proposal",
+        objectId: proposal.id
       });
       store.proposals.unshift(proposal);
       event("proposal_created", `New proposal: ${proposal.title}`, { proposalId: proposal.id });
@@ -1634,7 +1749,7 @@ async function handleApi(req, res, url) {
         consensus: createConsensusSnapshot(task.goalId, agent.id),
         createdAt: now()
       };
-      result.signature = signedContribution("task_result", {
+      result.signature = recordSignedContribution("task_result", {
         resultId: result.id,
         taskId: result.taskId,
         goalId: result.goalId,
@@ -1642,6 +1757,9 @@ async function handleApi(req, res, url) {
         summaryHash: hashToken(result.summary),
         contentHash: hashToken(result.content),
         artifactIds: result.artifacts.map((artifact) => artifact.id).filter(Boolean)
+      }, {
+        objectType: "result",
+        objectId: result.id
       });
 
       task.status = "in_consensus";
@@ -1699,7 +1817,7 @@ async function handleApi(req, res, url) {
         reason: String(body.reason || "").slice(0, 2000),
         createdAt: now()
       };
-      review.signature = signedContribution("result_review", {
+      review.signature = recordSignedContribution("result_review", {
         reviewId: review.id,
         resultId: review.resultId,
         taskId: review.taskId,
@@ -1707,6 +1825,9 @@ async function handleApi(req, res, url) {
         decision: review.decision,
         score: review.score,
         reasonHash: hashToken(review.reason)
+      }, {
+        objectType: "review",
+        objectId: review.id
       });
 
       store.reviews.push(review);
@@ -1841,12 +1962,15 @@ function addProposalVote(proposal, agent, score, reason) {
     reason: reason.slice(0, 1000),
     createdAt: now()
   };
-  vote.signature = signedContribution("proposal_vote", {
+  vote.signature = recordSignedContribution("proposal_vote", {
     voteId: vote.id,
     proposalId: proposal.id,
     agentId: agent.id,
     score: vote.score,
     reasonHash: hashToken(vote.reason)
+  }, {
+    objectType: "proposal_vote",
+    objectId: vote.id
   });
   store.proposalVotes.push(vote);
   proposal.votes += 1;
@@ -2323,7 +2447,7 @@ function runDemoCycle() {
     },
     createdAt: now()
   };
-  result.signature = signedContribution("task_result", {
+  result.signature = recordSignedContribution("task_result", {
     resultId: result.id,
     taskId: result.taskId,
     goalId: result.goalId,
@@ -2331,6 +2455,9 @@ function runDemoCycle() {
     summaryHash: hashToken(result.summary),
     contentHash: hashToken(result.content),
     artifactIds: []
+  }, {
+    objectType: "result",
+    objectId: result.id
   });
   store.results.push(result);
   createConsensusReviewTasks(openTask, result);
@@ -2345,7 +2472,7 @@ function runDemoCycle() {
     reason: "The result is bounded, implementable, and aligned with the local-first node constraints.",
     createdAt: now()
   };
-  review.signature = signedContribution("result_review", {
+  review.signature = recordSignedContribution("result_review", {
     reviewId: review.id,
     resultId: review.resultId,
     taskId: review.taskId,
@@ -2353,6 +2480,9 @@ function runDemoCycle() {
     decision: review.decision,
     score: review.score,
     reasonHash: hashToken(review.reason)
+  }, {
+    objectType: "review",
+    objectId: review.id
   });
   store.reviews.push(review);
   applyReviewDecision(result, review);

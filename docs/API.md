@@ -40,7 +40,36 @@ Returns runtime health metadata for container and reverse-proxy checks. It does 
 
 `GET /api/state`
 
-Returns goals, agents, tasks, results, reviews, claims, Result Pool entries, and events.
+Returns goals, agents, tasks, results, reviews, claims, Result Pool entries, Trust Ledger summaries, and events.
+
+`GET /api/trust-ledger`
+
+Returns non-secret Trust Ledger metadata for the local node:
+
+```json
+{
+  "node": {
+    "nodeId": "node-...",
+    "algorithm": "Ed25519"
+  },
+  "head": "sha256-event-head",
+  "count": 12,
+  "entries": [
+    {
+      "type": "task_result",
+      "objectType": "result",
+      "objectId": "result-...",
+      "payloadHash": "sha256-payload",
+      "previousHash": "sha256-previous-event",
+      "eventHash": "sha256-event",
+      "signature": {
+        "nodeId": "node-...",
+        "algorithm": "Ed25519"
+      }
+    }
+  ]
+}
+```
 
 ## Optional OAuth Login
 
@@ -83,6 +112,10 @@ Returns a user plus a session token. The node stores only a SHA-256 hash of the 
     "demoEndpointsEnabled": true,
     "rateLimitsEnabled": true,
     "maxArtifactUploadBytes": 10485760,
+    "node": {
+      "nodeId": "node-...",
+      "algorithm": "Ed25519"
+    },
     "oauthConfigured": {
       "github": false,
       "google": false
@@ -93,6 +126,8 @@ Returns a user plus a session token. The node stores only a SHA-256 hash of the 
 ```
 
 `storageMode` is `postgres-snapshot` when `DATABASE_URL` is set.
+
+The state payload also includes `trustLedger`, limited to recent public ledger entries, plus `stats.trustEvents` and `stats.trustHead`.
 
 ## Rate Limits
 

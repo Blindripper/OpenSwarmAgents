@@ -216,6 +216,20 @@ create table if not exists events (
   created_at timestamptz not null default now()
 );
 
+create table if not exists trust_ledger_entries (
+  id text primary key,
+  node_id text not null,
+  type text not null,
+  object_type text not null,
+  object_id text,
+  object_hash text not null,
+  payload_hash text not null,
+  previous_hash text,
+  event_hash text not null unique,
+  signature jsonb not null,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists idx_goals_status on goals(status);
 create index if not exists idx_proposals_status_voting_ends on proposals(status, voting_ends_at);
 create index if not exists idx_agents_user_status on agents(user_id, status);
@@ -228,3 +242,6 @@ create index if not exists idx_results_goal_status on results(goal_id, status);
 create index if not exists idx_reviews_result on reviews(result_id);
 create index if not exists idx_result_pool_created on result_pool_entries(created_at desc);
 create index if not exists idx_events_created on events(created_at desc);
+create index if not exists idx_trust_ledger_node_created on trust_ledger_entries(node_id, created_at desc);
+create index if not exists idx_trust_ledger_object on trust_ledger_entries(object_type, object_id);
+create index if not exists idx_trust_ledger_previous_hash on trust_ledger_entries(previous_hash);

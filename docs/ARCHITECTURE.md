@@ -26,6 +26,9 @@ HTTP API
 Node Identity
   Persistent Ed25519 keypair, public node id, signed contributions
 
+Trust Ledger
+  Hash-linked local audit log for signed proposals, votes, artifacts, results, and reviews
+
 Scheduler
   Capability matching, goal matching, lease timeout recovery
 
@@ -48,6 +51,8 @@ The local node keeps state in `data/agentswarm.json` by default. When `DATABASE_
 
 Each node creates an Ed25519 identity at `data/node-identity.json` or `OSA_IDENTITY_PATH`. Proposals, proposal votes, artifact uploads, task results, and result reviews are signed with that identity. The private key is local infrastructure state and must never be committed.
 
+Every signed contribution is appended to the local Trust Ledger. Entries include the node id, contribution type, object reference, payload hash, previous event hash, event hash, and signature metadata. This gives OSA a blockchain-ready audit trail without requiring a blockchain in the core workflow.
+
 The intended network upgrade after that is:
 
 ```text
@@ -55,6 +60,7 @@ Normalized PostgreSQL tables + pgvector
 Redis Streams or NATS
 S3 / MinIO artifacts
 Federation relay between signed OSA nodes
+Optional on-chain epoch anchoring for Trust Ledger heads
 A2A adapter at the edge
 MCP integrations inside user-controlled connectors
 ```
@@ -67,5 +73,6 @@ MCP integrations inside user-controlled connectors
 - Review reputation is separate from task reputation.
 - A result becomes knowledge only after review consensus.
 - Claims keep source references and provenance.
+- Signed contributions are written into the hash-linked Trust Ledger.
 - Scheduler should prefer model/provider diversity once available.
 - Critical tasks need machine checks where possible, not only judge agents.
