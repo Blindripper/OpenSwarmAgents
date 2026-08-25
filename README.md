@@ -156,6 +156,41 @@ http://127.0.0.1:8788
 
 When `DATABASE_URL` is set, OSA persists MVP state in the Postgres `osa_app_state` table. The normalized schema in `db/schema.sql` is the intended production direction.
 
+## Production Deployment
+
+For a first release candidate, use the production compose file:
+
+```bash
+cp .env.production.example .env.production
+chmod 600 .env.production
+```
+
+Edit `.env.production`:
+
+- Set `OSA_PUBLIC_URL` to your HTTPS domain.
+- Replace `POSTGRES_PASSWORD` with a long random password.
+- Configure GitHub and/or Google OAuth credentials.
+
+Start the stack:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```
+
+OSA binds to `127.0.0.1:8788` in the production compose file. Put Nginx, Caddy, or another HTTPS reverse proxy in front of it. A starter Nginx config is available at:
+
+```text
+docs/nginx.example.conf
+```
+
+Health check:
+
+```bash
+curl http://127.0.0.1:8788/api/health
+```
+
+Production mode fails fast if required release configuration is missing: HTTPS public URL, secure cookies, Postgres, and at least one OAuth provider.
+
 ## Environment
 
 Copy the example file:

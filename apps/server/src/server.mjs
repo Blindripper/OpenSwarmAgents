@@ -16,6 +16,7 @@ const host = process.env.HOST || "127.0.0.1";
 const leaseMs = Number(process.env.AGENTSWARM_LEASE_MS || 10 * 60 * 1000);
 const proposalVotingMs = Number(process.env.AGENTSWARM_PROPOSAL_VOTING_MS || 72 * 60 * 60 * 1000);
 const storageMode = process.env.DATABASE_URL ? "postgres-snapshot" : "json";
+const isProduction = process.env.NODE_ENV === "production";
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -25,7 +26,27 @@ const contentTypes = {
   ".svg": "image/svg+xml; charset=utf-8"
 };
 
+const oauthProviderConfig = {
+  github: {
+    label: "GitHub",
+    clientIdEnv: "OSA_GITHUB_CLIENT_ID",
+    clientSecretEnv: "OSA_GITHUB_CLIENT_SECRET",
+    authorizeUrl: "https://github.com/login/oauth/authorize",
+    tokenUrl: "https://github.com/login/oauth/access_token",
+    scope: "read:user user:email"
+  },
+  google: {
+    label: "Google",
+    clientIdEnv: "OSA_GOOGLE_CLIENT_ID",
+    clientSecretEnv: "OSA_GOOGLE_CLIENT_SECRET",
+    authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    scope: "openid email profile"
+  }
+};
+
 let pgPool = null;
+validateRuntimeConfig();
 let store = await loadStore();
 
 async function loadStore() {
@@ -387,12 +408,61 @@ function publicConnectorToken(token) {
 function publicRuntime() {
   return {
     storageMode,
+    nodeEnv: process.env.NODE_ENV || "development",
     devLoginEnabled: isDevLoginEnabled(),
     demoEndpointsEnabled: areDemoEndpointsEnabled(),
     oauthConfigured: Object.fromEntries(
       Object.keys(oauthProviderConfig).map((provider) => [provider, Boolean(providerCredentials(provider))])
-    )
+    ),
+    productionReady: runtimeReadiness().ok
   };
+}
+
+function validateRuntimeConfig() {
+  const readiness = runtimeReadiness();
+  if (!readiness.ok) {
+    throw new Error(`OpenSwarmAgents configuration error:\n- ${readiness.errors.join("\n- ")}`);
+  }
+}
+
+function runtimeReadiness() {
+  const errors = [];
+  if (!isProduction || process.env.OSA_SKIP_ENV_VALIDATION === "1") {
+    return { ok: true, errors };
+  }
+
+  const publicUrl = process.env.OSA_PUBLIC_URL || "";
+  const hasOAuthProvider = Object.keys(oauthProviderConfig).some((provider) => Boolean(providerCredentials(provider)));
+
+  if (!process.env.DATABASE_URL) {
+    errors.push("DATABASE_URL is required in production.");
+  }
+  if (!publicUrl) {
+    errors.push("OSA_PUBLIC_URL is required in production.");
+  } else {
+    try {
+      const parsed = new URL(publicUrl);
+      if (parsed.protocol !== "https:" && process.env.OSA_ALLOW_INSECURE_PUBLIC_URL !== "1") {
+        errors.push("OSA_PUBLIC_URL must use https:// in production.");
+      }
+    } catch {
+      errors.push("OSA_PUBLIC_URL must be a valid absolute URL.");
+    }
+  }
+  if (process.env.OSA_COOKIE_SECURE !== "1" && process.env.OSA_ALLOW_INSECURE_COOKIES !== "1") {
+    errors.push("OSA_COOKIE_SECURE=1 is required in production.");
+  }
+  if (!hasOAuthProvider && !isDevLoginEnabled()) {
+    errors.push("Configure at least one OAuth provider, or explicitly enable OSA_DEV_LOGIN=1 for a private development deployment.");
+  }
+  if (process.env.OSA_DEV_LOGIN === "1" && process.env.OSA_ALLOW_DEV_LOGIN_IN_PRODUCTION !== "1") {
+    errors.push("OSA_DEV_LOGIN=1 is not allowed in production unless OSA_ALLOW_DEV_LOGIN_IN_PRODUCTION=1 is also set.");
+  }
+  if (process.env.OSA_DEMO_ENDPOINTS === "1" && process.env.OSA_ALLOW_DEMO_ENDPOINTS_IN_PRODUCTION !== "1") {
+    errors.push("OSA_DEMO_ENDPOINTS=1 is not allowed in production unless OSA_ALLOW_DEMO_ENDPOINTS_IN_PRODUCTION=1 is also set.");
+  }
+
+  return { ok: errors.length === 0, errors };
 }
 
 function isDevLoginEnabled() {
@@ -406,25 +476,6 @@ function areDemoEndpointsEnabled() {
   if (process.env.OSA_DEMO_ENDPOINTS === "0") return false;
   return process.env.NODE_ENV !== "production";
 }
-
-const oauthProviderConfig = {
-  github: {
-    label: "GitHub",
-    clientIdEnv: "OSA_GITHUB_CLIENT_ID",
-    clientSecretEnv: "OSA_GITHUB_CLIENT_SECRET",
-    authorizeUrl: "https://github.com/login/oauth/authorize",
-    tokenUrl: "https://github.com/login/oauth/access_token",
-    scope: "read:user user:email"
-  },
-  google: {
-    label: "Google",
-    clientIdEnv: "OSA_GOOGLE_CLIENT_ID",
-    clientSecretEnv: "OSA_GOOGLE_CLIENT_SECRET",
-    authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-    tokenUrl: "https://oauth2.googleapis.com/token",
-    scope: "openid email profile"
-  }
-};
 
 function publicOAuthProviders(req) {
   return {
@@ -759,6 +810,14 @@ async function handleApi(req, res, url) {
 
   try {
     const maintenanceChanged = runMaintenance();
+
+    if (method === "GET" && path === "/api/health") {
+      return sendJson(res, 200, {
+        ok: true,
+        runtime: publicRuntime(),
+        serverTime: now()
+      });
+    }
 
     if (method === "GET" && path === "/api/state") {
       const auth = authFromReq(req);

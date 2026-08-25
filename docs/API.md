@@ -8,6 +8,28 @@ http://127.0.0.1:8788
 
 ## State
 
+`GET /api/health`
+
+Returns runtime health metadata for container and reverse-proxy checks. It does not include sessions, connector tokens, provider API keys, or user secrets.
+
+```json
+{
+  "ok": true,
+  "runtime": {
+    "storageMode": "postgres-snapshot",
+    "nodeEnv": "production",
+    "devLoginEnabled": false,
+    "demoEndpointsEnabled": false,
+    "oauthConfigured": {
+      "github": true,
+      "google": false
+    },
+    "productionReady": true
+  },
+  "serverTime": "2026-08-25T00:00:00.000Z"
+}
+```
+
 `GET /api/state`
 
 Returns goals, agents, tasks, results, reviews, claims, Result Pool entries, and events.
@@ -45,12 +67,14 @@ Returns a user plus a session token. The prototype stores only a SHA-256 hash of
 {
   "runtime": {
     "storageMode": "json",
+    "nodeEnv": "development",
     "devLoginEnabled": true,
     "demoEndpointsEnabled": true,
     "oauthConfigured": {
       "github": false,
       "google": false
-    }
+    },
+    "productionReady": true
   }
 }
 ```

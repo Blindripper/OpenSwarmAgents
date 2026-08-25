@@ -1,0 +1,14 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+node_modules
+npm-debug.log*
+data/*.json
+!data/seed.json
+logs
+*.log
+__pycache__
+*.pyc
+.DS_Store
