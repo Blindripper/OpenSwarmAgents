@@ -13,6 +13,7 @@
 - Run `npm run check:rc`.
 - Keep `OSA_RATE_LIMIT_MULTIPLIER=1` for public RC traffic.
 - Keep uploaded artifacts on persistent storage through `OSA_UPLOAD_DIR` or the production Docker volume.
+- Confirm unauthenticated `/api/state` returns empty collections only.
 - Confirm the `Content-Security-Policy` header does not allow inline scripts.
 - Confirm raw browser sessions are not stored in localStorage.
 - Confirm active artifacts such as SVG/HTML/JS download as attachments.

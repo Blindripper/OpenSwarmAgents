@@ -99,7 +99,24 @@ Returns a user plus a session token. The node stores only a SHA-256 hash of the 
 
 ## Runtime
 
-`GET /api/state` includes non-secret runtime metadata:
+`GET /api/state` returns a locked shell until the request is authenticated. Unauthenticated responses include runtime metadata and empty collections so the login screen can render without exposing node data:
+
+```json
+{
+  "goals": [],
+  "tasks": [],
+  "proposals": [],
+  "viewer": null,
+  "runtime": {
+    "storageMode": "json",
+    "nodeEnv": "development",
+    "authMode": "local",
+    "devLoginEnabled": true
+  }
+}
+```
+
+Authenticated responses include the node state and non-secret runtime metadata:
 
 ```json
 {

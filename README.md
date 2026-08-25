@@ -361,6 +361,7 @@ OSA includes basic server-side protection:
 - Proposal creation is limited per signed-in user.
 - Voting, connector-token creation, agent registration, task claiming, result submission, and review submission are rate limited.
 - Static and API responses include basic security headers.
+- `/api/state` returns only a locked empty shell until the request is authenticated.
 - Browser sessions use the `osa_session` HttpOnly cookie; the web app does not persist raw session tokens in localStorage.
 - The app shell uses a strict same-origin CSP without inline scripts.
 

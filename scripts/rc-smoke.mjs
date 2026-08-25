@@ -42,6 +42,13 @@ try {
   assert(!csp.includes("unsafe-inline"), "CSP should not allow inline scripts");
   assert((await shell.text()).includes("/theme-init.js"), "app shell should load the external theme bootstrap");
 
+  const lockedState = await getJson("/api/state");
+  assert(!lockedState.viewer, "unauthenticated state should not include a viewer");
+  assert(lockedState.goals.length === 0, "unauthenticated state should not expose goals");
+  assert(lockedState.tasks.length === 0, "unauthenticated state should not expose tasks");
+  assert(lockedState.proposals.length === 0, "unauthenticated state should not expose proposals");
+  assert(lockedState.stats.users === 0, "unauthenticated state should not expose user counts");
+
   await expectStatus("/api/auth/login", 400, {
     email: "rc@example.com",
     name: "RC",

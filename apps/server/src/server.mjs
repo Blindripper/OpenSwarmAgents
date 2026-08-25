@@ -637,6 +637,8 @@ function authorizeConnectorAgent(req, agent) {
 }
 
 function publicState(auth = null) {
+  if (!auth) return publicLockedState();
+
   const activeGoals = store.goals.filter((goal) => goal.status !== "completed");
   const activeGoalIds = new Set(
     store.agents
@@ -673,6 +675,40 @@ function publicState(auth = null) {
     },
     viewer: publicUser(auth?.user),
     viewerConnectors: auth ? publicConnectorTokensForUser(auth.user.id) : [],
+    runtime: publicRuntime(),
+    serverTime: now()
+  };
+}
+
+function publicLockedState() {
+  return {
+    goals: [],
+    agents: [],
+    tasks: [],
+    results: [],
+    reviews: [],
+    claims: [],
+    resultPool: [],
+    proposals: [],
+    proposalVotes: [],
+    trustLedger: [],
+    events: [],
+    stats: {
+      users: 0,
+      goals: 0,
+      onlineAgents: 0,
+      activeGoals: 0,
+      resultPool: 0,
+      votingProposals: 0,
+      openTasks: 0,
+      leasedTasks: 0,
+      pendingReviews: 0,
+      acceptedClaims: 0,
+      trustEvents: 0,
+      trustHead: null
+    },
+    viewer: null,
+    viewerConnectors: [],
     runtime: publicRuntime(),
     serverTime: now()
   };
