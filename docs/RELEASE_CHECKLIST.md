@@ -10,6 +10,7 @@
 - Persist `/var/lib/openswarmagents` so node identity and uploads survive container rebuilds.
 - Add automated Postgres backups.
 - Verify `/api/health` returns `ok: true`.
+- Run `npm run check:rc`.
 - Keep `OSA_RATE_LIMIT_MULTIPLIER=1` for public RC traffic.
 - Keep uploaded artifacts on persistent storage through `OSA_UPLOAD_DIR` or the production Docker volume.
 - Verify connector execution in `--runner stub` and at least one real `--runner provider` mode with a user-owned API key.
@@ -64,10 +65,12 @@ The production compose file binds OSA to `127.0.0.1:8788`. For a private local n
 
 ```bash
 npm run check
+npm run check:rc
 docker compose config --quiet
 docker compose up
 curl http://127.0.0.1:8788/api/state
 curl http://127.0.0.1:8788/api/health
+curl http://127.0.0.1:8788/api/trust-ledger
 ```
 
 In production local mode, verify local node login requires a password:

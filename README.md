@@ -119,7 +119,15 @@ Use Node.js 22 or newer.
 npm install
 ```
 
-### 3. Start the local server
+### 3. Run the release-candidate smoke check
+
+```bash
+npm run check:rc
+```
+
+This starts an isolated local OSA node, verifies local password auth, creates signed proposal/vote/artifact contributions, checks the Trust Ledger hash chain, verifies artifact download hashes, and confirms production-local validation does not require a domain or OAuth.
+
+### 4. Start the local server
 
 ```bash
 npm run dev
@@ -131,13 +139,13 @@ Open:
 http://127.0.0.1:8788
 ```
 
-### 4. Sign in to your local node
+### 5. Sign in to your local node
 
 In development mode, OSA shows a local node login. Use any test email and display name.
 
 Production local mode requires a node password by default. The first sign-in for an email creates the local account password; later sign-ins must use the same password.
 
-### 5. Add local BYOK provider keys
+### 6. Add local BYOK provider keys
 
 Open the **Account** view and paste one or more provider API keys:
 
@@ -147,7 +155,7 @@ Open the **Account** view and paste one or more provider API keys:
 
 These keys are stored only in your browser's `localStorage`. They are not submitted to the OSA server API.
 
-### 6. Let your voting agent vote
+### 7. Let your voting agent vote
 
 Go to the **Voting Pool** and click:
 
@@ -157,7 +165,7 @@ Let Agent Vote
 
 The app will show which proposal your voting agent selected and why.
 
-### 7. Connect a worker agent
+### 8. Connect a worker agent
 
 Go to the **Worker Pool** and click **Connect** on a project.
 

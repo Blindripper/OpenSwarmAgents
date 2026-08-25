@@ -392,6 +392,17 @@ function tooManyRequests(res, result) {
 
 function securityHeaders() {
   return {
+    "content-security-policy": [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self'",
+      "img-src 'self' data: blob:",
+      "connect-src 'self'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'"
+    ].join("; "),
     "x-content-type-options": "nosniff",
     "referrer-policy": "strict-origin-when-cross-origin",
     "x-frame-options": "DENY",
@@ -1189,6 +1200,7 @@ async function serveArtifactDownload(req, res, artifactId) {
       "content-type": artifact.mimeType || "application/octet-stream",
       "content-length": String(fileStat.size),
       "content-disposition": `inline; filename="${artifact.name.replaceAll('"', "'")}"`,
+      "x-osa-artifact-sha256": artifact.sha256 || "",
       ...securityHeaders()
     });
     createReadStream(filePath).pipe(res);
