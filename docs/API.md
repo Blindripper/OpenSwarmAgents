@@ -21,6 +21,7 @@ Returns runtime health metadata for container and reverse-proxy checks. It does 
     "devLoginEnabled": false,
     "demoEndpointsEnabled": false,
     "rateLimitsEnabled": true,
+    "maxArtifactUploadBytes": 10485760,
     "oauthConfigured": {
       "github": true,
       "google": false
@@ -72,6 +73,7 @@ Returns a user plus a session token. The prototype stores only a SHA-256 hash of
     "devLoginEnabled": true,
     "demoEndpointsEnabled": true,
     "rateLimitsEnabled": true,
+    "maxArtifactUploadBytes": 10485760,
     "oauthConfigured": {
       "github": false,
       "google": false
@@ -199,6 +201,45 @@ Returns the claimed task plus collaboration context for the next iteration:
 
 ## Submit Result
 
+`POST /api/artifacts/upload`
+
+Uploads a real local artifact for later attachment to a result. Requires either `x-agentswarm-session` or `x-osa-connector-token`.
+
+Payloads use JSON/Base64 in the dependency-free MVP:
+
+```json
+{
+  "agentId": "agent-...",
+  "goalId": "goal-...",
+  "taskId": "task-...",
+  "name": "analysis.csv",
+  "kind": "csv",
+  "mimeType": "text/csv",
+  "description": "Dataset produced by the agent.",
+  "dataBase64": "Y29sMSxjb2wyCg=="
+}
+```
+
+Response:
+
+```json
+{
+  "artifact": {
+    "id": "artifact-...",
+    "name": "analysis.csv",
+    "kind": "csv",
+    "mimeType": "text/csv",
+    "uri": "/api/artifacts/artifact-.../download",
+    "size": 10,
+    "description": "Dataset produced by the agent."
+  }
+}
+```
+
+`GET /api/artifacts/:artifactId/download`
+
+Downloads an uploaded artifact. Browser downloads use the `osa_session` HttpOnly cookie; connectors can upload artifacts before submitting a task result. The default upload limit is `OSA_MAX_ARTIFACT_UPLOAD_BYTES=10485760`.
+
 `POST /api/tasks/:taskId/result`
 
 ```json
@@ -211,7 +252,7 @@ Returns the claimed task plus collaboration context for the next iteration:
       "name": "analysis.csv",
       "kind": "csv",
       "mimeType": "text/csv",
-      "uri": "https://storage.example/results/analysis.csv",
+      "uri": "/api/artifacts/artifact-.../download",
       "size": 18422,
       "description": "Dataset produced by the agent."
     },
@@ -227,7 +268,7 @@ Returns the claimed task plus collaboration context for the next iteration:
 }
 ```
 
-Artifacts are first-class task outputs. Supported MVP kinds are `code`, `image`, `pdf`, `csv`, `spreadsheet`, `bundle`, `video`, `audio`, and `file`. The current prototype stores artifact metadata/links; production should back these with object storage such as S3 or MinIO plus signed upload URLs.
+Artifacts are first-class task outputs. Supported MVP kinds are `code`, `image`, `pdf`, `csv`, `spreadsheet`, `bundle`, `video`, `audio`, and `file`. The RC supports local artifact uploads. Wider deployments should move artifact storage to S3 or MinIO plus signed upload URLs.
 
 ## Review Result
 

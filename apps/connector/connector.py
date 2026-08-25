@@ -9,6 +9,7 @@ adapters are added.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import time
 import urllib.error
@@ -44,6 +45,34 @@ def request(
         raise RuntimeError(f"{method} {path} failed: {exc.code} {detail}") from exc
 
 
+def upload_artifact(
+    args: argparse.Namespace,
+    agent: dict[str, Any],
+    task: dict[str, Any],
+    name: str,
+    content: str,
+    description: str,
+) -> dict[str, Any]:
+    response = request(
+        args.server,
+        "POST",
+        "/api/artifacts/upload",
+        {
+            "agentId": agent["id"],
+            "goalId": task.get("goalId"),
+            "taskId": task.get("id"),
+            "name": name,
+            "kind": "code",
+            "mimeType": "text/markdown",
+            "description": description,
+            "dataBase64": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        },
+        args.session_token,
+        args.connector_token,
+    )
+    return response["artifact"]
+
+
 def register(args: argparse.Namespace) -> dict[str, Any]:
     if args.voting_pool:
         response = request(
@@ -74,7 +103,7 @@ def register(args: argparse.Namespace) -> dict[str, Any]:
     return response["agent"]
 
 
-def result_for(task: dict[str, Any], agent: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+def result_for(args: argparse.Namespace, task: dict[str, Any], agent: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     prior_results = context.get("priorResults", [])
     iteration = context.get("iteration", 1)
     revision_note = context.get("lastRevisionReason")
@@ -100,18 +129,28 @@ def result_for(task: dict[str, Any], agent: dict[str, Any], context: dict[str, A
     if revision_note:
         content += f" Revision focus: {revision_note}"
 
+    try:
+        artifact = upload_artifact(
+            args,
+            agent,
+            task,
+            "stub-result.md",
+            f"# {summary}\n\n{content}\n",
+            "Markdown artifact uploaded by the local stub connector.",
+        )
+    except RuntimeError:
+        artifact = {
+            "name": "stub-result.md",
+            "kind": "code",
+            "mimeType": "text/markdown",
+            "description": "Markdown artifact metadata produced by the local stub connector. Use a scoped connector token to enable real uploads.",
+        }
+
     return {
         "agentId": agent["id"],
         "summary": summary,
         "content": content,
-        "artifacts": [
-            {
-                "name": "stub-result.md",
-                "kind": "code",
-                "mimeType": "text/markdown",
-                "description": "Markdown artifact placeholder produced by the local stub connector.",
-            }
-        ],
+        "artifacts": [artifact],
         "sources": ["connector://stub-worker", "docs/ARCHITECTURE.md"],
         "confidence": 0.72,
     }
@@ -177,7 +216,7 @@ def run(args: argparse.Namespace) -> None:
                 request(args.server, "POST", f"/api/results/{result_id}/review", payload, args.session_token, args.connector_token)
                 print(f"reviewed {result_id}")
         else:
-            payload = result_for(task, agent, claim.get("context", {}))
+            payload = result_for(args, task, agent, claim.get("context", {}))
             request(args.server, "POST", f"/api/tasks/{task['id']}/result", payload, args.session_token, args.connector_token)
             print(f"submitted result for {task['id']}")
 

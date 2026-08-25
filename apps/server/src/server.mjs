@@ -9,6 +9,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "../../..");
 const publicDir = join(rootDir, "apps/web/public");
 const dataDir = process.env.OSA_DATA_DIR || join(rootDir, "data");
+const uploadDir = process.env.OSA_UPLOAD_DIR || join(dataDir, "uploads");
 const seedPath = join(rootDir, "data/seed.json");
 const storePath = join(dataDir, "agentswarm.json");
 const port = Number(process.env.PORT || 8788);
@@ -18,6 +19,8 @@ const proposalVotingMs = Number(process.env.AGENTSWARM_PROPOSAL_VOTING_MS || 72 
 const storageMode = process.env.DATABASE_URL ? "postgres-snapshot" : "json";
 const isProduction = process.env.NODE_ENV === "production";
 const rateLimitMultiplier = Math.max(0, Number(process.env.OSA_RATE_LIMIT_MULTIPLIER || 1));
+const maxJsonBytes = Number(process.env.OSA_MAX_JSON_BYTES || 1024 * 1024);
+const maxArtifactUploadBytes = Number(process.env.OSA_MAX_ARTIFACT_UPLOAD_BYTES || 10 * 1024 * 1024);
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -74,6 +77,7 @@ async function loadStore() {
       users: [],
       sessions: [],
       connectorTokens: [],
+      uploadedArtifacts: [],
       proposalVotes: [],
       events: []
     });
@@ -97,6 +101,7 @@ function normalizeStore(input) {
     users: input.users || [],
     sessions: input.sessions || [],
     connectorTokens: input.connectorTokens || [],
+    uploadedArtifacts: input.uploadedArtifacts || [],
     resultPool: input.resultPool || buildResultPoolFromAccepted(goals, tasks, results, reviews),
     proposals: (input.proposals || []).map(normalizeProposal),
     proposalVotes: input.proposalVotes || [],
@@ -132,7 +137,9 @@ async function loadPostgresStore() {
     claims: [],
     users: [],
     sessions: [],
+    connectorTokens: [],
     proposalVotes: [],
+    uploadedArtifacts: [],
     events: []
   });
   await savePostgresStore(initial);
@@ -228,6 +235,10 @@ function forbidden(res, message = "Forbidden") {
   sendJson(res, 403, { error: "forbidden", message });
 }
 
+function payloadTooLarge(res, message = "Payload too large") {
+  sendJson(res, 413, { error: "payload_too_large", message });
+}
+
 function tooManyRequests(res, result) {
   sendJson(
     res,
@@ -255,11 +266,26 @@ function securityHeaders() {
   };
 }
 
-async function readJson(req) {
+async function readJson(req, maxBytes = maxJsonBytes) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > maxBytes) {
+      const error = new Error(`JSON body exceeds ${maxBytes} bytes`);
+      error.statusCode = 413;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
   if (!chunks.length) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch (error) {
+    error.statusCode = 400;
+    error.message = "Invalid JSON body";
+    throw error;
+  }
 }
 
 function hashToken(token) {
@@ -475,6 +501,25 @@ function publicState(auth = null) {
   };
 }
 
+function publicArtifact(artifact) {
+  if (!artifact) return null;
+  return {
+    id: artifact.id,
+    name: artifact.name,
+    kind: artifact.kind,
+    mimeType: artifact.mimeType,
+    uri: artifact.uri,
+    size: artifact.size,
+    description: artifact.description || "",
+    uploadedBy: artifact.uploadedBy || null,
+    agentId: artifact.agentId || null,
+    goalId: artifact.goalId || null,
+    taskId: artifact.taskId || null,
+    resultId: artifact.resultId || null,
+    createdAt: artifact.createdAt
+  };
+}
+
 function publicConnectorTokensForUser(userId) {
   return store.connectorTokens
     .filter((token) => token.userId === userId)
@@ -508,6 +553,7 @@ function publicRuntime() {
     devLoginEnabled: isDevLoginEnabled(),
     demoEndpointsEnabled: areDemoEndpointsEnabled(),
     rateLimitsEnabled: rateLimitMultiplier > 0,
+    maxArtifactUploadBytes,
     oauthConfigured: Object.fromEntries(
       Object.keys(oauthProviderConfig).map((provider) => [provider, Boolean(providerCredentials(provider))])
     ),
@@ -828,6 +874,116 @@ function revokeConnectorToken(connector, reason = "user_disconnect") {
   return agent;
 }
 
+async function createUploadedArtifact(auth, connector, body) {
+  const name = sanitizeArtifactName(body.name || body.filename || "artifact.bin");
+  const mimeType = String(body.mimeType || body.mime || "application/octet-stream").trim().slice(0, 120);
+  const kind = normalizeArtifactKind(body.kind || body.type || mimeType || name);
+  const description = String(body.description || body.summary || "").trim().slice(0, 1000);
+  const payload = decodeArtifactPayload(body.dataBase64 || body.base64 || body.data || "");
+  if (!payload.length) {
+    const error = new Error("Artifact payload is empty");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (payload.length > maxArtifactUploadBytes) {
+    const error = new Error(`Artifact exceeds ${maxArtifactUploadBytes} bytes`);
+    error.statusCode = 413;
+    throw error;
+  }
+
+  const id = `artifact-${randomUUID()}`;
+  const storedName = `${id}${safeArtifactExtension(name, mimeType)}`;
+  await mkdir(uploadDir, { recursive: true });
+  await writeFile(join(uploadDir, storedName), payload);
+
+  const artifact = {
+    id,
+    name,
+    kind,
+    mimeType,
+    uri: `/api/artifacts/${id}/download`,
+    size: payload.length,
+    description,
+    storage: "local",
+    storedName,
+    uploadedBy: auth?.user?.id || connector?.user?.id || null,
+    agentId: body.agentId ? String(body.agentId).slice(0, 100) : connector?.token?.agentId || null,
+    goalId: body.goalId ? String(body.goalId).slice(0, 140) : connector?.token?.goalId || null,
+    taskId: body.taskId ? String(body.taskId).slice(0, 140) : null,
+    resultId: body.resultId ? String(body.resultId).slice(0, 140) : null,
+    createdAt: now()
+  };
+  store.uploadedArtifacts.unshift(artifact);
+  event("artifact_uploaded", `Uploaded artifact ${artifact.name}`, {
+    artifactId: artifact.id,
+    kind: artifact.kind,
+    size: artifact.size
+  });
+  return artifact;
+}
+
+function decodeArtifactPayload(value) {
+  let encoded = String(value || "").trim();
+  const dataUrlMatch = encoded.match(/^data:[^;]+;base64,(.*)$/is);
+  if (dataUrlMatch) encoded = dataUrlMatch[1];
+  encoded = encoded.replace(/\s/g, "");
+  if (!encoded) return Buffer.alloc(0);
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
+    const error = new Error("Artifact payload must be base64 encoded");
+    error.statusCode = 400;
+    throw error;
+  }
+  return Buffer.from(encoded, "base64");
+}
+
+function sanitizeArtifactName(value) {
+  const name = String(value || "artifact.bin")
+    .split(/[\\/]/)
+    .pop()
+    .replace(/[\r\n\t]/g, " ")
+    .trim()
+    .slice(0, 180);
+  return name || "artifact.bin";
+}
+
+function safeArtifactExtension(name, mimeType) {
+  const extension = extname(name).toLowerCase();
+  if (/^\.[a-z0-9]{1,12}$/.test(extension)) return extension;
+  return {
+    "text/markdown": ".md",
+    "text/plain": ".txt",
+    "text/csv": ".csv",
+    "application/json": ".json",
+    "application/pdf": ".pdf",
+    "application/zip": ".zip",
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/svg+xml": ".svg"
+  }[mimeType] || ".bin";
+}
+
+async function serveArtifactDownload(req, res, artifactId) {
+  const auth = authFromReq(req);
+  if (!auth) return unauthorized(res, "Sign in before downloading artifacts");
+  const artifact = store.uploadedArtifacts.find((item) => item.id === artifactId);
+  if (!artifact || artifact.storage !== "local" || !artifact.storedName) return notFound(res);
+  const filePath = join(uploadDir, artifact.storedName);
+  try {
+    const fileStat = await stat(filePath);
+    if (!fileStat.isFile()) return notFound(res);
+    res.writeHead(200, {
+      "content-type": artifact.mimeType || "application/octet-stream",
+      "content-length": String(fileStat.size),
+      "content-disposition": `inline; filename="${artifact.name.replaceAll('"', "'")}"`,
+      ...securityHeaders()
+    });
+    createReadStream(filePath).pipe(res);
+  } catch {
+    return notFound(res);
+  }
+}
+
 function releaseAgentLeases(agentId) {
   for (const task of store.tasks) {
     if (task.status === "leased" && task.assignedAgentId === agentId) {
@@ -919,6 +1075,11 @@ async function handleApi(req, res, url) {
       });
     }
 
+    const artifactDownloadMatch = path.match(/^\/api\/artifacts\/([^/]+)\/download$/);
+    if (method === "GET" && artifactDownloadMatch) {
+      return serveArtifactDownload(req, res, artifactDownloadMatch[1]);
+    }
+
     if (method === "GET" && path === "/api/state") {
       const auth = authFromReq(req);
       if (maintenanceChanged || auth) await saveStore();
@@ -991,6 +1152,20 @@ async function handleApi(req, res, url) {
       } catch (error) {
         return badRequest(res, error.message);
       }
+    }
+
+    if (method === "POST" && path === "/api/artifacts/upload") {
+      const auth = authFromReq(req);
+      const connector = connectorTokenFromReq(req);
+      if (!auth && !connector) return unauthorized(res, "Sign in or use a connector token before uploading artifacts");
+      const actorIdentity = connector ? `connector:${connector.token.id}` : rateIdentity(req, auth);
+      if (!enforceRateLimit(req, res, "artifact-upload", actorIdentity, { limit: 40, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
+      const body = await readJson(req, Math.ceil(maxArtifactUploadBytes * 1.4) + 4096);
+      const artifact = await createUploadedArtifact(auth, connector, body);
+      await saveStore();
+      return sendJson(res, 201, { artifact: publicArtifact(artifact), state: publicState(auth) });
     }
 
     const connectorRevokeMatch = path.match(/^\/api\/connectors\/([^/]+)\/revoke$/);
@@ -1401,6 +1576,8 @@ async function handleApi(req, res, url) {
 
     return notFound(res);
   } catch (error) {
+    if (error.statusCode === 413) return payloadTooLarge(res, error.message);
+    if (error.statusCode === 400) return badRequest(res, error.message);
     console.error(error);
     return sendJson(res, 500, { error: "internal_error", message: error.message });
   }
