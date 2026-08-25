@@ -7,8 +7,12 @@
   "scripts": {
     "dev": "node apps/server/src/server.mjs",
     "start": "node apps/server/src/server.mjs",
-    "check": "node --check apps/server/src/server.mjs && node --check apps/web/public/theme-init.js && node --check apps/web/public/app.js && python3 -m py_compile apps/connector/connector.py",
-    "check:rc": "npm run check && node scripts/rc-smoke.mjs && node scripts/consensus-sim.mjs",
+    "check": "node --check apps/server/src/server.mjs && node --check apps/web/public/theme-init.js && node --check apps/web/public/app.js && node --check scripts/print-schema-path.mjs && node --check scripts/export-json-to-sql.mjs && node --check scripts/rc-smoke.mjs && node --check scripts/consensus-sim.mjs && node --check scripts/federation-sim.mjs && node --check scripts/postgres-smoke.mjs && python3 -m py_compile apps/connector/connector.py",
+    "check:rc": "npm run check && node scripts/rc-smoke.mjs && node scripts/consensus-sim.mjs && node scripts/federation-sim.mjs",
+    "check:postgres": "node scripts/postgres-smoke.mjs",
+    "audit:prod": "npm audit --omit=dev",
+    "compose:config": "docker compose config --quiet && docker compose -f docker-compose.prod.yml --env-file .env.production.example config --quiet",
+    "check:release": "npm run check:rc && npm run check:postgres && npm run audit:prod && npm run compose:config",
     "db:schema": "node scripts/print-schema-path.mjs",
     "export:sql": "node scripts/export-json-to-sql.mjs"
   },

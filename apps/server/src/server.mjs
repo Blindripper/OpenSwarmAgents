@@ -3,7 +3,15 @@ import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { join, extname, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash, generateKeyPairSync, pbkdf2Sync, randomBytes, randomUUID, sign as signPayload, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  generateKeyPairSync,
+  pbkdf2Sync,
+  randomBytes,
+  randomUUID,
+  sign as signPayload,
+  timingSafeEqual
+} from "node:crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "../../..");
@@ -24,6 +32,14 @@ const rateLimitMultiplier = Math.max(0, Number(process.env.OSA_RATE_LIMIT_MULTIP
 const maxJsonBytes = Number(process.env.OSA_MAX_JSON_BYTES || 1024 * 1024);
 const maxArtifactUploadBytes = Number(process.env.OSA_MAX_ARTIFACT_UPLOAD_BYTES || 10 * 1024 * 1024);
 const publicTrustLedgerEnabled = process.env.OSA_PUBLIC_TRUST_LEDGER === "1";
+const trustProxyHeaders = process.env.OSA_TRUST_PROXY === "1";
+const maxRealtimeClients = Math.max(1, Number(process.env.OSA_MAX_SSE_CLIENTS || 100));
+const maxRealtimeClientsPerUser = Math.max(1, Number(process.env.OSA_MAX_SSE_CLIENTS_PER_USER || 5));
+const federationEnabled = process.env.OSA_FEDERATION_ENABLED === "1";
+const federationToken = process.env.OSA_FEDERATION_TOKEN || "";
+const federationTokenHash = federationToken ? hashToken(federationToken) : "";
+const federationPeers = normalizeFederationPeers(process.env.OSA_FEDERATION_PEERS || "");
+const federationSyncMs = Math.max(1000, Number(process.env.OSA_FEDERATION_SYNC_MS || 5000));
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -358,6 +374,18 @@ function broadcastRealtime(eventName, data) {
 function serveRealtimeStream(req, res) {
   const auth = authFromReq(req);
   if (!auth) return unauthorized(res, "Sign in before joining the realtime network stream");
+  if (!enforceRateLimit(req, res, "events-stream", rateIdentity(req, auth), { limit: 20, windowMs: 60 * 1000 })) {
+    return;
+  }
+  const userRealtimeClients = [...realtimeClients].filter((client) => client.userId === auth.user.id).length;
+  if (realtimeClients.size >= maxRealtimeClients || userRealtimeClients >= maxRealtimeClientsPerUser) {
+    return tooManyRequests(res, {
+      limit: userRealtimeClients >= maxRealtimeClientsPerUser ? maxRealtimeClientsPerUser : maxRealtimeClients,
+      remaining: 0,
+      resetAt: Math.ceil((Date.now() + 60 * 1000) / 1000),
+      retryAfterSeconds: 60
+    });
+  }
 
   res.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
@@ -598,7 +626,7 @@ function authFromReq(req) {
 }
 
 function clientIdentity(req) {
-  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  const forwarded = trustProxyHeaders ? String(req.headers["x-forwarded-for"] || "").split(",")[0].trim() : "";
   return forwarded || req.socket.remoteAddress || "unknown";
 }
 
@@ -688,6 +716,35 @@ function authorizeConnectorAgent(req, agent) {
     return { ok: false, connector, message: "Connector token is not scoped to this agent" };
   }
   return { ok: true, connector };
+}
+
+function authorizeAgentAccess(req, agent) {
+  const connectorAccess = authorizeConnectorAgent(req, agent);
+  if (!connectorAccess.ok) return { ...connectorAccess, statusCode: 403 };
+  if (connectorAccess.connector) return { ...connectorAccess, auth: null, user: connectorAccess.connector.user };
+
+  const auth = authFromReq(req);
+  if (!auth) {
+    return {
+      ok: false,
+      statusCode: 401,
+      message: "Authenticate with the owning session or scoped connector token before controlling this agent"
+    };
+  }
+  if (!agent.userId || agent.userId !== auth.user.id) {
+    return {
+      ok: false,
+      statusCode: 403,
+      auth,
+      message: "Authenticated user does not own this agent"
+    };
+  }
+  return { ok: true, connector: null, auth, user: auth.user };
+}
+
+function rejectAgentAccess(res, access) {
+  if (access.statusCode === 401) return unauthorized(res, access.message);
+  return forbidden(res, access.message);
 }
 
 function publicState(auth = null) {
@@ -809,6 +866,429 @@ function publicArtifact(artifact) {
   };
 }
 
+function federationAccessFromReq(req) {
+  if (!federationEnabled) {
+    return { ok: false, status: 404, message: "Federation is disabled on this node" };
+  }
+  if (!federationTokenHash) {
+    return process.env.OSA_ALLOW_INSECURE_FEDERATION === "1"
+      ? { ok: true }
+      : { ok: false, status: 403, message: "Federation token is not configured" };
+  }
+  const rawHeader = req.headers["x-osa-federation-token"] || req.headers.authorization || "";
+  const token = String(Array.isArray(rawHeader) ? rawHeader[0] : rawHeader).replace(/^Bearer\s+/i, "").trim();
+  if (!token) return { ok: false, status: 401, message: "Federation token required" };
+  const expected = Buffer.from(federationTokenHash);
+  const actual = Buffer.from(hashToken(token));
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+    return { ok: false, status: 403, message: "Invalid federation token" };
+  }
+  return { ok: true };
+}
+
+function publicFederationSnapshot() {
+  return {
+    protocol: "osa-federation-snapshot",
+    version: 1,
+    generatedAt: now(),
+    node: publicNodeIdentity(),
+    head: store.trustLedger?.[0]?.eventHash || null,
+    collections: {
+      goals: store.goals.map(publicFederatedGoal),
+      agents: store.agents.map(publicFederatedAgent),
+      tasks: store.tasks.map(publicFederatedTask),
+      results: store.results.map(publicFederatedResult),
+      reviews: store.reviews.map(publicFederatedReview),
+      claims: store.claims.map(publicFederatedClaim),
+      resultPool: store.resultPool.map(publicFederatedResultPoolEntry),
+      proposals: store.proposals.map(publicFederatedProposal),
+      proposalVotes: store.proposalVotes.map(publicFederatedProposalVote),
+      uploadedArtifacts: store.uploadedArtifacts.map(publicFederatedArtifact),
+      trustLedger: publicTrustLedger(500),
+      events: store.events
+        .filter((entry) => !["federation_imported", "user_signed_in"].includes(entry.type))
+        .slice(0, 100)
+        .map(publicFederatedEvent)
+    }
+  };
+}
+
+function publicFederatedGoal(goal) {
+  return pick(goal, [
+    "id",
+    "title",
+    "description",
+    "status",
+    "supporters",
+    "sourceProposalId",
+    "createdAt",
+    "completedAt",
+    "finalResultId"
+  ]);
+}
+
+function publicFederatedAgent(agent) {
+  return {
+    ...pick(agent, [
+      "id",
+      "name",
+      "goalId",
+      "capabilities",
+      "models",
+      "provider",
+      "providers",
+      "maxConcurrentTasks",
+      "reputation",
+      "status",
+      "lastSeen",
+      "createdAt"
+    ]),
+    userId: null,
+    connectorTokenId: null
+  };
+}
+
+function publicFederatedTask(task) {
+  return pick(task, [
+    "id",
+    "goalId",
+    "type",
+    "title",
+    "description",
+    "requiredCapabilities",
+    "priority",
+    "status",
+    "assignedAgentId",
+    "leaseId",
+    "leaseUntil",
+    "iteration",
+    "lastRevisionReason",
+    "reviewForResultId",
+    "assignedReviewerId",
+    "assignedReviewerName",
+    "createdAt",
+    "updatedAt"
+  ]);
+}
+
+function publicFederatedResult(result) {
+  return pick(result, [
+    "id",
+    "taskId",
+    "goalId",
+    "agentId",
+    "summary",
+    "content",
+    "artifacts",
+    "sources",
+    "confidence",
+    "status",
+    "iteration",
+    "consensus",
+    "signature",
+    "createdAt"
+  ]);
+}
+
+function publicFederatedReview(review) {
+  return pick(review, [
+    "id",
+    "resultId",
+    "goalId",
+    "taskId",
+    "agentId",
+    "decision",
+    "score",
+    "reason",
+    "signature",
+    "createdAt"
+  ]);
+}
+
+function publicFederatedClaim(claim) {
+  return pick(claim, [
+    "id",
+    "goalId",
+    "resultId",
+    "title",
+    "statement",
+    "sources",
+    "confidence",
+    "proposedBy",
+    "verifiedBy",
+    "status",
+    "createdAt"
+  ]);
+}
+
+function publicFederatedResultPoolEntry(entry) {
+  return pick(entry, [
+    "id",
+    "goalId",
+    "goalTitle",
+    "taskId",
+    "taskTitle",
+    "resultId",
+    "agentId",
+    "reviewerAgentId",
+    "consensus",
+    "summary",
+    "content",
+    "artifacts",
+    "sources",
+    "confidence",
+    "status",
+    "createdAt"
+  ]);
+}
+
+function publicFederatedProposal(proposal) {
+  return {
+    ...pick(proposal, [
+    "id",
+    "title",
+    "description",
+    "createdByName",
+    "status",
+    "score",
+    "votes",
+    "createdAt",
+    "votingEndsAt",
+    "promotedAt",
+    "promotionMode",
+    "signature"
+    ]),
+    createdBy: null
+  };
+}
+
+function publicFederatedProposalVote(vote) {
+  return pick(vote, ["id", "proposalId", "agentId", "score", "reason", "signature", "createdAt"]);
+}
+
+function publicFederatedArtifact(artifact) {
+  return {
+    ...publicArtifact(artifact),
+    uploadedBy: null
+  };
+}
+
+function publicFederatedEvent(eventEntry) {
+  return {
+    ...pick(eventEntry, ["id", "type", "message", "createdAt"]),
+    data: sanitizeFederatedEventData(eventEntry.data)
+  };
+}
+
+function sanitizeFederatedEventData(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+  const output = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (["userId", "sessionId", "connectorTokenId", "token", "rawToken"].includes(key)) continue;
+    if (value === null || ["string", "number", "boolean"].includes(typeof value)) output[key] = value;
+  }
+  return output;
+}
+
+function pick(input, keys) {
+  const output = {};
+  for (const key of keys) {
+    if (typeof input?.[key] !== "undefined") output[key] = input[key];
+  }
+  return output;
+}
+
+function importFederationSnapshot(snapshot) {
+  if (!snapshot || snapshot.protocol !== "osa-federation-snapshot" || !snapshot.collections) {
+    throw new Error("Invalid federation snapshot");
+  }
+  const collections = snapshot.collections;
+  const changed = {
+    goals: mergeFederatedCollection("goals", collections.goals, publicFederatedGoal),
+    agents: mergeFederatedCollection("agents", collections.agents, publicFederatedAgent),
+    tasks: mergeFederatedCollection("tasks", collections.tasks, publicFederatedTask),
+    results: mergeFederatedCollection("results", collections.results, publicFederatedResult),
+    reviews: mergeFederatedCollection("reviews", collections.reviews, publicFederatedReview),
+    claims: mergeFederatedCollection("claims", collections.claims, publicFederatedClaim),
+    resultPool: mergeFederatedCollection("resultPool", collections.resultPool, publicFederatedResultPoolEntry),
+    proposals: mergeFederatedCollection("proposals", collections.proposals, publicFederatedProposal),
+    proposalVotes: mergeFederatedCollection("proposalVotes", collections.proposalVotes, publicFederatedProposalVote),
+    uploadedArtifacts: mergeFederatedCollection("uploadedArtifacts", collections.uploadedArtifacts, publicArtifact),
+    trustLedger: mergeFederatedTrustLedger(collections.trustLedger),
+    events: mergeFederatedEvents(collections.events)
+  };
+  recomputeProposalTallies();
+  reconcileImportedCompletedGoals();
+  return changed;
+}
+
+function mergeFederatedCollection(name, incoming, sanitize) {
+  if (!Array.isArray(incoming)) return 0;
+  if (!Array.isArray(store[name])) store[name] = [];
+  let merged = 0;
+  for (const rawItem of incoming.slice(0, 2000)) {
+    if (!rawItem?.id) continue;
+    const item = sanitize(rawItem);
+    if (!item.id) continue;
+    const existingIndex = store[name].findIndex((candidate) => candidate.id === item.id);
+    if (existingIndex === -1) {
+      store[name].push(item);
+      merged += 1;
+      continue;
+    }
+    const existing = store[name][existingIndex];
+    const chosen = chooseFederatedItem(name, existing, item);
+    if (chosen !== existing) {
+      store[name][existingIndex] = preserveLocalPrivateFields(name, existing, chosen);
+      merged += 1;
+    }
+  }
+  return merged;
+}
+
+function chooseFederatedItem(name, existing, incoming) {
+  if (name === "tasks") {
+    const existingIteration = Number(existing.iteration || 1);
+    const incomingIteration = Number(incoming.iteration || 1);
+    if (incomingIteration !== existingIteration) return incomingIteration > existingIteration ? incoming : existing;
+    const existingRank = taskStatusRank(existing.status);
+    const incomingRank = taskStatusRank(incoming.status);
+    if (incomingRank !== existingRank) return incomingRank > existingRank ? incoming : existing;
+  }
+  if (name === "results") {
+    const existingRank = resultStatusRank(existing.status);
+    const incomingRank = resultStatusRank(incoming.status);
+    if (incomingRank !== existingRank) return incomingRank > existingRank ? incoming : existing;
+  }
+  if (name === "proposals") {
+    const existingRank = proposalStatusRank(existing.status);
+    const incomingRank = proposalStatusRank(incoming.status);
+    if (incomingRank !== existingRank) return incomingRank > existingRank ? incoming : existing;
+  }
+  const existingTime = Date.parse(existing.updatedAt || existing.completedAt || existing.promotedAt || existing.createdAt || 0);
+  const incomingTime = Date.parse(incoming.updatedAt || incoming.completedAt || incoming.promotedAt || incoming.createdAt || 0);
+  return incomingTime > existingTime ? incoming : existing;
+}
+
+function preserveLocalPrivateFields(name, existing, incoming) {
+  if (name !== "agents") return incoming;
+  return {
+    ...incoming,
+    connectorTokenId: existing.connectorTokenId || incoming.connectorTokenId || null
+  };
+}
+
+function taskStatusRank(status) {
+  return {
+    open: 1,
+    leased: 2,
+    in_consensus: 3,
+    needs_review: 3,
+    needs_revision: 4,
+    done: 5
+  }[status] || 0;
+}
+
+function resultStatusRank(status) {
+  return {
+    in_consensus: 1,
+    needs_review: 1,
+    needs_revision: 2,
+    rejected: 2,
+    accepted: 3
+  }[status] || 0;
+}
+
+function proposalStatusRank(status) {
+  return {
+    voting: 1,
+    promoted: 2,
+    archived: 2
+  }[status] || 0;
+}
+
+function mergeFederatedTrustLedger(incoming) {
+  if (!Array.isArray(incoming)) return 0;
+  store.trustLedger = normalizeTrustLedger(store.trustLedger || []);
+  let merged = 0;
+  for (const entry of normalizeTrustLedger(incoming).slice(0, 1000)) {
+    if (store.trustLedger.some((item) => item.eventHash === entry.eventHash)) continue;
+    store.trustLedger.push(entry);
+    merged += 1;
+  }
+  store.trustLedger.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return merged;
+}
+
+function mergeFederatedEvents(incoming) {
+  if (!Array.isArray(incoming)) return 0;
+  let merged = 0;
+  for (const eventEntry of incoming.slice(0, 200)) {
+    if (!eventEntry?.id || store.events.some((item) => item.id === eventEntry.id)) continue;
+    store.events.push(pick(eventEntry, ["id", "type", "message", "data", "createdAt"]));
+    merged += 1;
+  }
+  store.events.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  store.events = store.events.slice(0, 100);
+  return merged;
+}
+
+function recomputeProposalTallies() {
+  for (const proposal of store.proposals) {
+    const votes = store.proposalVotes.filter((vote) => vote.proposalId === proposal.id);
+    proposal.votes = votes.length;
+    proposal.score = Number(votes.reduce((total, vote) => total + Number(vote.score || 0), 0).toFixed(2));
+  }
+}
+
+function reconcileImportedCompletedGoals() {
+  for (const goal of store.goals) {
+    if (goal.status !== "completed") continue;
+    for (const agent of store.agents.filter((item) => item.goalId === goal.id && item.status === "online")) {
+      agent.status = "offline";
+      agent.lastSeen = now();
+      releaseAgentLeases(agent.id);
+    }
+  }
+}
+
+function startFederationPeerSync() {
+  if (!federationEnabled || !federationPeers.length) return;
+  if (!federationTokenHash) {
+    console.warn("OSA federation peers configured but OSA_FEDERATION_TOKEN is missing; peer sync disabled.");
+    return;
+  }
+
+  const tick = () => {
+    for (const peer of federationPeers) {
+      syncFederationPeer(peer).catch((error) => {
+        console.warn(`OSA federation sync failed for ${peer}: ${error.message}`);
+      });
+    }
+  };
+  setTimeout(tick, 250).unref?.();
+  setInterval(tick, federationSyncMs).unref?.();
+}
+
+async function syncFederationPeer(peer) {
+  const response = await fetch(`${peer}/api/federation/snapshot`, {
+    headers: { "x-osa-federation-token": federationToken },
+    signal: AbortSignal.timeout(8000)
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`snapshot HTTP ${response.status}: ${text.slice(0, 240)}`);
+  const snapshot = JSON.parse(text);
+  const changed = importFederationSnapshot(snapshot);
+  const totalChanged = Object.values(changed).reduce((total, count) => total + Number(count || 0), 0);
+  if (!totalChanged) return;
+  event("federation_imported", `Imported ${totalChanged} federated changes from ${snapshot.node?.nodeId || peer}`, {
+    changed,
+    peer,
+    peerNodeId: snapshot.node?.nodeId || null
+  });
+  await saveStore();
+}
+
 function publicConnectorTokensForUser(userId) {
   return store.connectorTokens
     .filter((token) => token.userId === userId)
@@ -846,6 +1326,8 @@ function publicRuntime() {
     publicTrustLedgerEnabled,
     rateLimitsEnabled: rateLimitMultiplier > 0,
     maxArtifactUploadBytes,
+    federationEnabled,
+    federationPeerCount: federationPeers.length,
     node: publicNodeIdentity(),
     oauthConfigured: Object.fromEntries(
       Object.keys(oauthProviderConfig).map((provider) => [provider, Boolean(providerCredentials(provider))])
@@ -900,6 +1382,9 @@ function runtimeReadiness() {
   if (process.env.OSA_DEMO_ENDPOINTS === "1" && process.env.OSA_ALLOW_DEMO_ENDPOINTS_IN_PRODUCTION !== "1") {
     errors.push("OSA_DEMO_ENDPOINTS=1 is not allowed in production unless OSA_ALLOW_DEMO_ENDPOINTS_IN_PRODUCTION=1 is also set.");
   }
+  if (federationEnabled && !federationTokenHash && process.env.OSA_ALLOW_INSECURE_FEDERATION !== "1") {
+    errors.push("OSA_FEDERATION_TOKEN is required when OSA_FEDERATION_ENABLED=1 in production.");
+  }
 
   return { ok: errors.length === 0, errors };
 }
@@ -907,6 +1392,28 @@ function runtimeReadiness() {
 function normalizeAuthMode(value) {
   const mode = String(value || "local").toLowerCase();
   return ["local", "oauth", "hybrid"].includes(mode) ? mode : "local";
+}
+
+function normalizeFederationPeers(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      try {
+        const url = new URL(item);
+        if (!["http:", "https:"].includes(url.protocol)) return null;
+        url.pathname = url.pathname.replace(/\/$/, "");
+        url.search = "";
+        url.hash = "";
+        return url.toString().replace(/\/$/, "");
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .filter((item, index, list) => list.indexOf(item) === index)
+    .slice(0, 20);
 }
 
 function isDevLoginEnabled() {
@@ -1196,6 +1703,7 @@ async function createUploadedArtifact(auth, connector, body) {
 
   const id = `artifact-${randomUUID()}`;
   const storedName = `${id}${safeArtifactExtension(name, mimeType)}`;
+  const refs = validateArtifactRefs(auth, connector, body);
   await mkdir(uploadDir, { recursive: true });
   await writeFile(join(uploadDir, storedName), payload);
 
@@ -1209,11 +1717,11 @@ async function createUploadedArtifact(auth, connector, body) {
     description,
     storage: "local",
     storedName,
-    uploadedBy: auth?.user?.id || connector?.user?.id || null,
-    agentId: body.agentId ? String(body.agentId).slice(0, 100) : connector?.token?.agentId || null,
-    goalId: body.goalId ? String(body.goalId).slice(0, 140) : connector?.token?.goalId || null,
-    taskId: body.taskId ? String(body.taskId).slice(0, 140) : null,
-    resultId: body.resultId ? String(body.resultId).slice(0, 140) : null,
+    uploadedBy: refs.uploadedBy,
+    agentId: refs.agentId,
+    goalId: refs.goalId,
+    taskId: refs.taskId,
+    resultId: refs.resultId,
     sha256: createHash("sha256").update(payload).digest("hex"),
     createdAt: now()
   };
@@ -1235,6 +1743,90 @@ async function createUploadedArtifact(auth, connector, body) {
     size: artifact.size
   });
   return artifact;
+}
+
+function validateArtifactRefs(auth, connector, body) {
+  const refs = {
+    uploadedBy: auth?.user?.id || connector?.user?.id || null,
+    agentId: body.agentId ? String(body.agentId).slice(0, 100) : null,
+    goalId: body.goalId ? String(body.goalId).slice(0, 140) : null,
+    taskId: body.taskId ? String(body.taskId).slice(0, 140) : null,
+    resultId: body.resultId ? String(body.resultId).slice(0, 140) : null
+  };
+
+  if (connector) {
+    const requestedAgentId = body.agentId ? String(body.agentId).slice(0, 100) : null;
+    const requestedGoalId = body.goalId ? String(body.goalId).slice(0, 140) : null;
+    if (requestedAgentId && requestedAgentId !== connector.token.agentId) {
+      const error = new Error("Artifact agentId is not scoped to this connector token");
+      error.statusCode = 403;
+      throw error;
+    }
+    if (requestedGoalId && requestedGoalId !== connector.token.goalId) {
+      const error = new Error("Artifact goalId is not scoped to this connector token");
+      error.statusCode = 403;
+      throw error;
+    }
+    refs.agentId = connector.token.agentId || null;
+    refs.goalId = connector.token.goalId || null;
+  }
+
+  if (refs.agentId) {
+    const agent = findAgent(refs.agentId);
+    if (!agent) {
+      const error = new Error("Unknown artifact agentId");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (connector && agent.connectorTokenId !== connector.token.id) {
+      const error = new Error("Artifact agentId is not scoped to this connector token");
+      error.statusCode = 403;
+      throw error;
+    }
+    if (auth && !connector && agent.userId !== auth.user.id) {
+      const error = new Error("Artifact agentId is not owned by the authenticated user");
+      error.statusCode = 403;
+      throw error;
+    }
+    refs.goalId = refs.goalId || agent.goalId;
+  }
+
+  if (refs.taskId) {
+    const task = store.tasks.find((item) => item.id === refs.taskId);
+    if (!task) {
+      const error = new Error("Unknown artifact taskId");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (refs.goalId && task.goalId !== refs.goalId) {
+      const error = new Error("Artifact taskId is outside the scoped goal");
+      error.statusCode = 403;
+      throw error;
+    }
+    if (connector && refs.agentId && task.assignedAgentId !== refs.agentId) {
+      const error = new Error("Connector may only upload artifacts for its leased task");
+      error.statusCode = 403;
+      throw error;
+    }
+    refs.goalId = task.goalId;
+  }
+
+  if (refs.resultId) {
+    const result = store.results.find((item) => item.id === refs.resultId);
+    if (!result) {
+      const error = new Error("Unknown artifact resultId");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (refs.goalId && result.goalId !== refs.goalId) {
+      const error = new Error("Artifact resultId is outside the scoped goal");
+      error.statusCode = 403;
+      throw error;
+    }
+    refs.goalId = result.goalId;
+  }
+
+  return refs;
 }
 
 function decodeArtifactPayload(value) {
@@ -1419,6 +2011,40 @@ async function handleApi(req, res, url) {
       });
     }
 
+    if (method === "GET" && path === "/api/federation/snapshot") {
+      const access = federationAccessFromReq(req);
+      if (!access.ok) return sendJson(res, access.status, { error: access.status === 404 ? "not_found" : "forbidden", message: access.message });
+      if (!enforceRateLimit(req, res, "federation-snapshot", `peer:${clientIdentity(req)}`, { limit: 120, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
+      return sendJson(res, 200, publicFederationSnapshot());
+    }
+
+    if (method === "POST" && path === "/api/federation/import") {
+      const access = federationAccessFromReq(req);
+      if (!access.ok) return sendJson(res, access.status, { error: access.status === 404 ? "not_found" : "forbidden", message: access.message });
+      if (!enforceRateLimit(req, res, "federation-import", `peer:${clientIdentity(req)}`, { limit: 120, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
+      const body = await readJson(req, maxJsonBytes * 4);
+      const changed = importFederationSnapshot(body.snapshot || body);
+      const totalChanged = Object.values(changed).reduce((total, count) => total + Number(count || 0), 0);
+      if (totalChanged) {
+        event("federation_imported", `Imported ${totalChanged} federated changes`, {
+          changed,
+          peerNodeId: (body.snapshot || body)?.node?.nodeId || null
+        });
+        await saveStore();
+      }
+      return sendJson(res, 200, {
+        ok: true,
+        changed,
+        changedTotal: totalChanged,
+        node: publicNodeIdentity(),
+        head: store.trustLedger?.[0]?.eventHash || null
+      });
+    }
+
     const artifactDownloadMatch = path.match(/^\/api\/artifacts\/([^/]+)\/download$/);
     if (method === "GET" && artifactDownloadMatch) {
       return serveArtifactDownload(req, res, artifactDownloadMatch[1]);
@@ -1577,6 +2203,7 @@ async function handleApi(req, res, url) {
       const body = await readJson(req);
       const auth = authFromReq(req);
       const connector = connectorTokenFromReq(req);
+      if (!auth && !connector) return unauthorized(res, "Sign in or use a scoped connector token before registering agents");
       const actorIdentity = connector ? `connector:${connector.token.id}` : rateIdentity(req, auth);
       if (!enforceRateLimit(req, res, "agent-register", actorIdentity, { limit: 30, windowMs: 60 * 60 * 1000 })) {
         return;
@@ -1687,6 +2314,7 @@ async function handleApi(req, res, url) {
       const body = await readJson(req);
       const auth = authFromReq(req);
       const connector = connectorTokenFromReq(req);
+      if (!auth && !connector) return unauthorized(res, "Sign in or use a scoped Voting Pool connector token before connecting a voting agent");
       const actorIdentity = connector ? `connector:${connector.token.id}` : rateIdentity(req, auth);
       if (!enforceRateLimit(req, res, "voting-connect", actorIdentity, { limit: 20, windowMs: 60 * 60 * 1000 })) {
         return;
@@ -1752,6 +2380,9 @@ async function handleApi(req, res, url) {
       if (!proposal) return notFound(res);
       const agent = findAgent(body.agentId);
       if (!agent) return badRequest(res, "Unknown agentId");
+      const access = authorizeAgentAccess(req, agent);
+      if (!access.ok) return rejectAgentAccess(res, access);
+      if (agent.goalId !== "voting-pool") return forbidden(res, "Only Voting Pool agents can vote on proposals");
       if (!enforceRateLimit(req, res, "proposal-vote", `agent:${agent.id}`, { limit: 10, windowMs: 60 * 60 * 1000 })) {
         return;
       }
@@ -1766,8 +2397,8 @@ async function handleApi(req, res, url) {
     if (method === "POST" && heartbeatMatch) {
       const agent = findAgent(heartbeatMatch[1]);
       if (!agent) return notFound(res);
-      const connectorAccess = authorizeConnectorAgent(req, agent);
-      if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+      const access = authorizeAgentAccess(req, agent);
+      if (!access.ok) return rejectAgentAccess(res, access);
       if (!enforceRateLimit(req, res, "agent-heartbeat", `agent:${agent.id}`, { limit: 240, windowMs: 60 * 60 * 1000 })) {
         return;
       }
@@ -1781,8 +2412,8 @@ async function handleApi(req, res, url) {
     if (method === "POST" && disconnectMatch) {
       const agent = findAgent(disconnectMatch[1]);
       if (!agent) return notFound(res);
-      const connectorAccess = authorizeConnectorAgent(req, agent);
-      if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+      const access = authorizeAgentAccess(req, agent);
+      if (!access.ok) return rejectAgentAccess(res, access);
       if (!enforceRateLimit(req, res, "agent-disconnect", `agent:${agent.id}`, { limit: 30, windowMs: 60 * 60 * 1000 })) {
         return;
       }
@@ -1802,8 +2433,8 @@ async function handleApi(req, res, url) {
       const body = await readJson(req);
       const agent = findAgent(body.agentId);
       if (!agent) return badRequest(res, "Unknown agentId");
-      const connectorAccess = authorizeConnectorAgent(req, agent);
-      if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+      const access = authorizeAgentAccess(req, agent);
+      if (!access.ok) return rejectAgentAccess(res, access);
       if (!enforceRateLimit(req, res, "task-claim", `agent:${agent.id}`, { limit: 120, windowMs: 60 * 60 * 1000 })) {
         return;
       }
@@ -1819,7 +2450,7 @@ async function handleApi(req, res, url) {
         return sendJson(res, 200, { task: null, reason: "max_concurrent_tasks_reached" });
       }
 
-      const goalId = body.goalId || agent.goalId;
+      const goalId = agent.goalId;
       const task = store.tasks
         .filter((item) => item.status === "open")
         .filter((item) => item.goalId === goalId)
@@ -1853,8 +2484,8 @@ async function handleApi(req, res, url) {
       const body = await readJson(req);
       const agent = findAgent(body.agentId);
       if (!agent) return badRequest(res, "Unknown agentId");
-      const connectorAccess = authorizeConnectorAgent(req, agent);
-      if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+      const access = authorizeAgentAccess(req, agent);
+      if (!access.ok) return rejectAgentAccess(res, access);
       if (!enforceRateLimit(req, res, "result-submit", `agent:${agent.id}`, { limit: 30, windowMs: 60 * 60 * 1000 })) {
         return;
       }
@@ -1916,8 +2547,8 @@ async function handleApi(req, res, url) {
       const body = await readJson(req);
       const agent = findAgent(body.agentId);
       if (!agent) return badRequest(res, "Unknown agentId");
-      const connectorAccess = authorizeConnectorAgent(req, agent);
-      if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+      const access = authorizeAgentAccess(req, agent);
+      if (!access.ok) return rejectAgentAccess(res, access);
       if (!enforceRateLimit(req, res, "review-submit", `agent:${agent.id}`, { limit: 60, windowMs: 60 * 60 * 1000 })) {
         return;
       }
@@ -1971,6 +2602,7 @@ async function handleApi(req, res, url) {
   } catch (error) {
     if (error.statusCode === 413) return payloadTooLarge(res, error.message);
     if (error.statusCode === 400) return badRequest(res, error.message);
+    if (error.statusCode === 403) return forbidden(res, error.message);
     console.error(error);
     return sendJson(res, 500, { error: "internal_error", message: error.message });
   }
@@ -2668,4 +3300,5 @@ const server = createServer(async (req, res) => {
 
 server.listen(port, host, () => {
   console.log(`OpenSwarmAgents node listening on http://${host}:${port}`);
+  startFederationPeerSync();
 });

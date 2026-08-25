@@ -30,10 +30,11 @@ jobs:
       - name: Run RC smoke checks
         run: npm run check:rc
 
+      - name: Run production Postgres smoke
+        run: npm run check:postgres
+
       - name: Audit production dependencies
-        run: npm audit --omit=dev
+        run: npm run audit:prod
 
       - name: Validate Docker Compose files
-        run: |
-          docker compose config --quiet
-          docker compose -f docker-compose.prod.yml --env-file .env.production.example config --quiet
+        run: npm run compose:config

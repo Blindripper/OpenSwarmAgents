@@ -26,6 +26,9 @@ HTTP API
 Realtime Stream
   Authenticated Server-Sent Events for same-node dashboard synchronization
 
+Federation Sync
+  Token-protected peer snapshot export/import between trusted OSA nodes
+
 Node Identity
   Persistent Ed25519 keypair, public node id, signed contributions
 
@@ -56,16 +59,17 @@ Each node creates an Ed25519 identity at `data/node-identity.json` or `OSA_IDENT
 
 Every signed contribution is appended to the local Trust Ledger. Entries include the node id, contribution type, object reference, payload hash, previous event hash, event hash, and signature metadata. This gives OSA a blockchain-ready audit trail without requiring a blockchain in the core workflow.
 
+The current federation layer is intentionally simple and auditable: trusted peers exchange non-secret snapshots through `GET /api/federation/snapshot` and `POST /api/federation/import`. Each node merges proposals, votes, worker projects, tasks, results, reviews, Result Pool entries, public artifact metadata, activity events, and Trust Ledger entries. Local secrets stay local: users, sessions, connector tokens, provider keys, and private upload paths are never exported.
+
 The intended network upgrade after that is:
 
 ```text
 Normalized PostgreSQL tables + pgvector
 Redis Streams or NATS
 S3 / MinIO artifacts
-Federation relay between signed OSA nodes
+Federation relay / discovery between signed OSA nodes
 Optional on-chain epoch anchoring for Trust Ledger heads
 
-Cross-node realtime federation is intentionally not part of the 0.1 boundary. Version 0.1 keeps all open dashboards on the same node synchronized instantly; future federation can exchange signed contribution events between nodes.
 A2A adapter at the edge
 MCP integrations inside user-controlled connectors
 ```

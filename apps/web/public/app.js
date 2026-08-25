@@ -364,20 +364,20 @@ function syncRealtimeStream() {
 
   realtimeSource = new EventSource("/api/events/stream");
   realtimeSource.addEventListener("open", () => {
-    realtimeConnected = true;
+    setRealtimeConnected(true);
   });
   realtimeSource.addEventListener("connected", () => {
-    realtimeConnected = true;
+    setRealtimeConnected(true);
   });
   realtimeSource.addEventListener("activity", () => {
-    realtimeConnected = true;
+    setRealtimeConnected(true);
     scheduleRealtimeRefresh();
   });
   realtimeSource.addEventListener("heartbeat", () => {
-    realtimeConnected = true;
+    setRealtimeConnected(true);
   });
   realtimeSource.addEventListener("error", () => {
-    realtimeConnected = false;
+    setRealtimeConnected(false);
     if (realtimeSource?.readyState === EventSource.CLOSED) {
       closeRealtimeStream();
     }
@@ -389,11 +389,16 @@ function closeRealtimeStream() {
     realtimeSource.close();
     realtimeSource = null;
   }
-  realtimeConnected = false;
+  setRealtimeConnected(false);
   if (realtimeRefreshTimer) {
     clearTimeout(realtimeRefreshTimer);
     realtimeRefreshTimer = null;
   }
+}
+
+function setRealtimeConnected(connected) {
+  realtimeConnected = connected;
+  renderRealtimeStatus();
 }
 
 function scheduleRealtimeRefresh() {
@@ -427,7 +432,7 @@ function render() {
   els.proposalCount.textContent = `${state.data.proposals.length} proposals`;
   els.voteCount.textContent = `${(state.data.proposalVotes || []).length} votes`;
   els.resultPoolCount.textContent = `${(state.data.resultPool || []).length} results`;
-  els.serverTime.textContent = `${new Date(state.data.serverTime).toLocaleTimeString()} · ${realtimeConnected ? "Live" : "Polling"}`;
+  renderRealtimeStatus();
 
   renderWorkerProjects(activeWorkerGoals());
   renderStoredConnectorFeedback();
@@ -440,6 +445,18 @@ function render() {
   renderTrustLedger();
   renderVoteFeedback();
   renderEvents(filteredEvents());
+}
+
+function renderRealtimeStatus() {
+  if (!state.data || !els.serverTime) return;
+  const realtimeLabel = realtimeConnected ? "Realtime live" : "Polling fallback";
+  els.serverTime.textContent = `${new Date(state.data.serverTime).toLocaleTimeString()} · ${realtimeLabel}`;
+  els.serverTime.classList.toggle("live", realtimeConnected);
+  els.serverTime.classList.toggle("polling", !realtimeConnected);
+  els.serverTime.setAttribute("aria-label", realtimeConnected ? "Realtime updates connected" : "Realtime disconnected, polling every five seconds");
+  els.serverTime.title = realtimeConnected
+    ? "Realtime SSE stream connected"
+    : "Realtime SSE stream is disconnected; refreshing every 5 seconds.";
 }
 
 function renderShell() {
@@ -456,10 +473,10 @@ function renderShell() {
   els.navVoting.disabled = !authenticated;
   els.navResults.disabled = !authenticated;
   els.navAccount.disabled = !authenticated;
-  els.navWorker.classList.toggle("active", isWorker);
-  els.navVoting.classList.toggle("active", isVoting);
-  els.navResults.classList.toggle("active", isResults);
-  els.navAccount.classList.toggle("active", isAccount);
+  setNavButtonState(els.navWorker, authenticated && isWorker);
+  setNavButtonState(els.navVoting, authenticated && isVoting);
+  setNavButtonState(els.navResults, authenticated && isResults);
+  setNavButtonState(els.navAccount, authenticated && isAccount);
   els.workerView.classList.toggle("active", authenticated && isWorker);
   els.votingView.classList.toggle("active", authenticated && isVoting);
   els.resultsView.classList.toggle("active", authenticated && isResults);
@@ -469,6 +486,15 @@ function renderShell() {
   els.accountSidebar.classList.toggle("hidden", !authenticated || !isAccount);
   renderAuthControls();
   renderThemeToggle();
+}
+
+function setNavButtonState(button, active) {
+  button.classList.toggle("active", active);
+  if (active) {
+    button.setAttribute("aria-current", "page");
+  } else {
+    button.removeAttribute("aria-current");
+  }
 }
 
 function renderAuthControls() {
@@ -771,6 +797,10 @@ function renderProposals(proposals) {
           </div>
         </div>
       `;
+    },
+    {
+      title: "No proposals are open",
+      detail: "Submit a project brief above to start the Voting Pool."
     }
   );
 }
@@ -804,8 +834,12 @@ function showVoteFeedback({ label, title, reason }) {
 function renderWorkerProjects(goals) {
   const sortedGoals = sortedWorkerGoals(goals);
   if (!sortedGoals.length) {
-    const empty = document.querySelector("#empty-template").content.cloneNode(true);
-    els.tasks.replaceChildren(empty);
+    els.tasks.replaceChildren(
+      createEmptyState({
+        title: "No active worker projects",
+        detail: "Submit and rank a proposal in the Voting Pool to create work."
+      })
+    );
     return;
   }
 
@@ -822,15 +856,16 @@ function renderWorkerProjects(goals) {
       const connectedWorkers = goalWorkerCount(goal.id);
       const card = document.createElement("article");
       card.className = `worker-project item ${isSelected ? "active" : ""} ${isConnected ? "connected" : ""}`;
+      card.setAttribute("aria-label", `${goal.title} worker project`);
       card.innerHTML = `
         <div class="worker-project-head">
-          <button class="worker-project-main" type="button">
+          <button class="worker-project-main" type="button" aria-pressed="${isSelected}" aria-label="Select ${escapeHtml(goal.title)}">
             <strong>${escapeHtml(goal.title)}</strong>
             <span>${connectedWorkers} connected workers · ${projectTasks.length} tasks</span>
           </button>
           <div class="worker-project-actions">
-            <button class="project-connect primary" type="button" ${hasConnection ? "disabled" : ""}>Connect</button>
-            <button class="project-disconnect" type="button" ${isConnected ? "" : "disabled"}>Disconnect</button>
+            <button class="project-connect primary" type="button" aria-label="Connect worker to ${escapeHtml(goal.title)}" ${hasConnection ? "disabled" : ""}>Connect</button>
+            <button class="project-disconnect" type="button" aria-label="Disconnect worker from ${escapeHtml(goal.title)}" ${isConnected ? "" : "disabled"}>Disconnect</button>
           </div>
         </div>
         <p>${escapeHtml(goal.description)}</p>
@@ -840,7 +875,7 @@ function renderWorkerProjects(goals) {
               <strong>${escapeHtml(task.title)}</strong>
               <span class="chip ${task.status}">${escapeHtml(task.status)}</span>
             </div>
-          `).join("") || `<div class="empty compact">No tasks yet</div>`}
+          `).join("") || `<div class="empty compact"><strong>No active tasks</strong><span>This project is waiting for new work.</span></div>`}
         </div>
       `;
       card.querySelector(".worker-project-main").addEventListener("click", () => {
@@ -872,7 +907,11 @@ function renderAgents(agents) {
           <span class="chip">review ${agent.reputation?.review || 0}</span>
         </div>
       </div>
-    `
+    `,
+    {
+      title: "No agents on this project",
+      detail: "Create a scoped connector token to bring a worker online."
+    }
   );
 }
 
@@ -900,6 +939,10 @@ function renderResults(results) {
           ${renderArtifactList(result.artifacts || [])}
         </div>
       `;
+    },
+    {
+      title: "No submitted results yet",
+      detail: "Worker outputs appear here when agents submit tasks for review."
     }
   );
 }
@@ -927,7 +970,11 @@ function renderResultPool(results) {
           ${(result.sources || []).map((source) => `<span class="chip">${escapeHtml(source)}</span>`).join("")}
         </div>
       </div>
-    `
+    `,
+    {
+      title: "No published results yet",
+      detail: "Accepted consensus outputs will collect here."
+    }
   );
 }
 
@@ -1095,7 +1142,11 @@ function renderClaims(claims) {
           ${(claim.sources || []).map((source) => `<span class="chip">${escapeHtml(source)}</span>`).join("")}
         </div>
       </div>
-    `
+    `,
+    {
+      title: "No accepted claims yet",
+      detail: "Reviewed, source-backed knowledge appears here."
+    }
   );
 }
 
@@ -1108,7 +1159,11 @@ function renderEvents(events) {
         <span>${new Date(event.createdAt).toLocaleTimeString()}</span>
         <span><strong>${escapeHtml(event.type)}</strong> ${escapeHtml(event.message)}</span>
       </div>
-    `
+    `,
+    {
+      title: "No activity for this view",
+      detail: "Realtime events will appear as the node changes."
+    }
   );
 }
 
@@ -1130,7 +1185,11 @@ function renderTrustLedger() {
         </div>
         <code>${escapeHtml(shortHash(entry.eventHash))}</code>
       </div>
-    `
+    `,
+    {
+      title: "No visible ledger entries",
+      detail: "Signed local node events will appear here when available."
+    }
   );
 }
 
@@ -1150,13 +1209,27 @@ function filteredEvents() {
     .slice(0, 12);
 }
 
-function renderList(container, items, renderItem) {
+function renderList(container, items, renderItem, emptyCopy = {}) {
   if (!items.length) {
-    const empty = document.querySelector("#empty-template").content.cloneNode(true);
-    container.replaceChildren(empty);
+    const copy = typeof emptyCopy === "string" ? { title: emptyCopy } : emptyCopy;
+    container.replaceChildren(createEmptyState(copy));
     return;
   }
   container.innerHTML = items.map(renderItem).join("");
+}
+
+function createEmptyState({ title = "No records yet", detail = "", compact = false } = {}) {
+  const node = document.createElement("div");
+  node.className = `empty${compact ? " compact" : ""}`;
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+  node.append(heading);
+  if (detail) {
+    const description = document.createElement("span");
+    description.textContent = detail;
+    node.append(description);
+  }
+  return node;
 }
 
 function selectedGoal() {

@@ -11,6 +11,8 @@
 - Add automated Postgres backups.
 - Verify `/api/health` returns `ok: true`.
 - Run `npm run check:rc`.
+- Run `npm run check:postgres` against either a temporary Docker Postgres container or an explicit throwaway `DATABASE_URL`.
+- Run `npm run check:release` locally before tagging; it mirrors the syntax, RC smoke, Postgres persistence, dependency audit, and Compose validation gates used by CI.
 - Verify the GitHub CI workflow passes for the release commit.
 - Confirm the included consensus simulation covers promotion, multiple user nodes, revision, unanimous acceptance, result publication, and project completion.
 - Keep `OSA_RATE_LIMIT_MULTIPLIER=1` for public RC traffic.
@@ -20,7 +22,11 @@
 - Confirm the `Content-Security-Policy` header does not allow inline scripts.
 - Confirm raw browser sessions are not stored in localStorage.
 - Confirm active artifacts such as SVG/HTML/JS download as attachments.
+- Confirm agent lifecycle endpoints reject bare `agentId` requests without the owning session or scoped connector token.
+- Confirm connector artifact uploads cannot spoof another agent, project, task, or result.
 - Confirm `/api/events/stream` broadcasts a proposal/activity event to an authenticated client.
+- Keep `OSA_MAX_SSE_CLIENTS` and `OSA_MAX_SSE_CLIENTS_PER_USER` at conservative defaults unless load testing proves higher values are safe.
+- Set `OSA_TRUST_PROXY=1` only behind a trusted reverse proxy that overwrites `X-Forwarded-For`; leave it unset for direct public binds.
 - Verify connector execution in `--runner stub` and at least one real `--runner provider` mode with a user-owned API key.
 
 For hosted nodes, additionally configure `OSA_PUBLIC_URL`, `OSA_COOKIE_SECURE=1`, HTTPS reverse proxy, and at least one OAuth provider.
@@ -32,6 +38,7 @@ Production startup fails fast unless the required release environment is present
 - `OSA_ALLOW_INSECURE_COOKIES=1`
 - `OSA_ALLOW_PASSWORDLESS_LOCAL_AUTH=1`
 - `OSA_ALLOW_DEMO_ENDPOINTS_IN_PRODUCTION=1`
+- `OSA_ALLOW_INSECURE_FEDERATION=1`
 
 Do not use those flags for a public release candidate.
 
@@ -74,6 +81,10 @@ The production compose file binds OSA to `127.0.0.1:8788`. For a private local n
 ```bash
 npm run check
 npm run check:rc
+npm run check:release
+npm run check:postgres
+npm run audit:prod
+npm run compose:config
 docker compose config --quiet
 docker compose up
 curl http://127.0.0.1:8788/api/state

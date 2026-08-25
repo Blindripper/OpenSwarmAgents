@@ -51,6 +51,16 @@ try {
   assert(lockedState.proposals.length === 0, "unauthenticated state should not expose proposals");
   assert(lockedState.stats.users === 0, "unauthenticated state should not expose user counts");
   await expectGetStatus("/api/trust-ledger", 401);
+  await expectGetStatus("/api/events/stream", 401);
+  await expectStatus("/api/agents/register", 401, {
+    name: "Unauthenticated Agent",
+    goalId: "goal-agent-collab",
+    capabilities: ["research"],
+    models: ["smoke"]
+  });
+  await expectStatus("/api/voting/connect", 401, {
+    name: "Unauthenticated Voting Agent"
+  });
 
   await expectStatus("/api/auth/login", 400, {
     email: "rc@example.com",
@@ -103,6 +113,70 @@ try {
     headers
   );
   assert(vote.vote.signature?.signature, "proposal vote should be signed");
+  await expectStatus(`/api/agents/${vote.agent.id}/heartbeat`, 401, {});
+  await expectStatus(`/api/proposals/${proposal.proposal.id}/vote`, 401, {
+    agentId: vote.agent.id,
+    score: 1,
+    reason: "Bare agent IDs must not authorize proposal votes."
+  });
+  await expectStatus(`/api/agents/${vote.agent.id}/heartbeat`, 200, {}, headers);
+
+  const workerToken = await postJson(
+    "/api/connectors/token",
+    {
+      mode: "worker",
+      goalId: "goal-agent-collab",
+      name: "RC Worker Agent",
+      capabilities: ["research", "review"],
+      models: ["connector:stub"]
+    },
+    headers
+  );
+  assert(workerToken.token.startsWith("osa_conn_"), "connector token should be returned once");
+  const connectorHeaders = { "x-osa-connector-token": workerToken.token };
+  const worker = await postJson(
+    "/api/agents/register",
+    {
+      name: "RC Worker Agent",
+      goalId: "goal-agent-collab",
+      capabilities: ["research", "review"],
+      models: ["connector:stub"]
+    },
+    connectorHeaders
+  );
+  const claimed = await postJson(
+    "/api/tasks/claim",
+    {
+      agentId: worker.agent.id,
+      goalId: "goal-water"
+    },
+    connectorHeaders
+  );
+  assert(claimed.task?.goalId === "goal-agent-collab", "task claim should stay scoped to the agent goal");
+  await expectStatus("/api/artifacts/upload", 403, {
+    agentId: vote.agent.id,
+    goalId: "goal-agent-collab",
+    taskId: claimed.task.id,
+    name: "spoofed.md",
+    kind: "code",
+    mimeType: "text/markdown",
+    dataBase64: Buffer.from("spoofed").toString("base64")
+  }, connectorHeaders);
+  const scopedArtifact = await postJson(
+    "/api/artifacts/upload",
+    {
+      agentId: worker.agent.id,
+      goalId: "goal-agent-collab",
+      taskId: claimed.task.id,
+      name: "scoped-worker.md",
+      kind: "code",
+      mimeType: "text/markdown",
+      dataBase64: Buffer.from("scoped").toString("base64")
+    },
+    connectorHeaders
+  );
+  assert(scopedArtifact.artifact.agentId === worker.agent.id, "connector artifact should be attributed to its agent");
+  assert(scopedArtifact.artifact.goalId === "goal-agent-collab", "connector artifact should stay in its scoped goal");
 
   const artifact = await postJson(
     "/api/artifacts/upload",
