@@ -44,7 +44,7 @@ Returns goals, agents, tasks, results, reviews, claims, Result Pool entries, Tru
 
 `GET /api/trust-ledger`
 
-Returns non-secret Trust Ledger metadata for the local node:
+Returns non-secret Trust Ledger metadata for the local node. This endpoint requires authentication by default. Set `OSA_PUBLIC_TRUST_LEDGER=1` only for nodes that intentionally expose audit metadata for federation or external verification.
 
 ```json
 {

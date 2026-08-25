@@ -48,6 +48,7 @@ try {
   assert(lockedState.tasks.length === 0, "unauthenticated state should not expose tasks");
   assert(lockedState.proposals.length === 0, "unauthenticated state should not expose proposals");
   assert(lockedState.stats.users === 0, "unauthenticated state should not expose user counts");
+  await expectGetStatus("/api/trust-ledger", 401);
 
   await expectStatus("/api/auth/login", 400, {
     email: "rc@example.com",
@@ -131,7 +132,7 @@ try {
   assert(svgDownload.ok, "svg artifact download should be authorized");
   assert(svgDownload.headers.get("content-disposition")?.startsWith("attachment;"), "active artifact types should download as attachments");
 
-  const ledger = await getJson("/api/trust-ledger");
+  const ledger = await getJson("/api/trust-ledger", headers);
   assert(ledger.head, "trust ledger should expose a head hash");
   assert(ledger.count >= 4, "trust ledger should contain proposal, vote, and artifact events");
   assert(ledger.entries[0].eventHash === ledger.head, "first ledger entry should be the head");
@@ -241,6 +242,11 @@ async function expectStatus(path, status, body, headers = {}) {
     headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body)
   });
+  assert(response.status === status, `${path} should return ${status}, got ${response.status}`);
+}
+
+async function expectGetStatus(path, status, headers = {}) {
+  const response = await fetch(`${baseUrl}${path}`, { headers });
   assert(response.status === status, `${path} should return ${status}, got ${response.status}`);
 }
 

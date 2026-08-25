@@ -353,6 +353,8 @@ Trust Ledger endpoint:
 GET /api/trust-ledger
 ```
 
+By default this endpoint requires a signed-in user. Set `OSA_PUBLIC_TRUST_LEDGER=1` only when the node is meant to expose audit metadata for federation or external verification.
+
 ## Abuse Controls
 
 OSA includes basic server-side protection:
@@ -362,6 +364,7 @@ OSA includes basic server-side protection:
 - Voting, connector-token creation, agent registration, task claiming, result submission, and review submission are rate limited.
 - Static and API responses include basic security headers.
 - `/api/state` returns only a locked empty shell until the request is authenticated.
+- `/api/trust-ledger` also requires authentication unless `OSA_PUBLIC_TRUST_LEDGER=1` is explicitly set for audit/federation use.
 - Browser sessions use the `osa_session` HttpOnly cookie; the web app does not persist raw session tokens in localStorage.
 - The app shell uses a strict same-origin CSP without inline scripts.
 

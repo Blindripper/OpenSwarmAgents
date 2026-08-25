@@ -23,6 +23,7 @@ const authMode = normalizeAuthMode(process.env.OSA_AUTH_MODE || "local");
 const rateLimitMultiplier = Math.max(0, Number(process.env.OSA_RATE_LIMIT_MULTIPLIER || 1));
 const maxJsonBytes = Number(process.env.OSA_MAX_JSON_BYTES || 1024 * 1024);
 const maxArtifactUploadBytes = Number(process.env.OSA_MAX_ARTIFACT_UPLOAD_BYTES || 10 * 1024 * 1024);
+const publicTrustLedgerEnabled = process.env.OSA_PUBLIC_TRUST_LEDGER === "1";
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -789,6 +790,7 @@ function publicRuntime() {
     devLoginEnabled: isDevLoginEnabled(),
     localPasswordRequired: localPasswordRequired(),
     demoEndpointsEnabled: areDemoEndpointsEnabled(),
+    publicTrustLedgerEnabled,
     rateLimitsEnabled: rateLimitMultiplier > 0,
     maxArtifactUploadBytes,
     node: publicNodeIdentity(),
@@ -1352,6 +1354,10 @@ async function handleApi(req, res, url) {
     }
 
     if (method === "GET" && path === "/api/trust-ledger") {
+      const auth = authFromReq(req);
+      if (!auth && !publicTrustLedgerEnabled) {
+        return unauthorized(res, "Sign in before reading the Trust Ledger");
+      }
       return sendJson(res, 200, {
         node: publicNodeIdentity(),
         head: store.trustLedger?.[0]?.eventHash || null,
