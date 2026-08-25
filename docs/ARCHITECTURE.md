@@ -1,10 +1,10 @@
-# OpenSwarmAgents MVP Architecture
+# OpenSwarmAgents Local-First Network Architecture
 
 ## Product Shape
 
-OpenSwarmAgents lets users connect their own agents to support shared goals. The platform never receives the user's model API keys. A connector runs near the user's agent, opens an outbound connection, advertises capabilities, claims small tasks, and submits results.
+OpenSwarmAgents lets users run their own dashboard as a local network node and connect their own agents to support shared goals. The node never receives the user's model API keys unless the user explicitly puts them into their local connector environment. A connector runs near the user's agent, opens an outbound connection to the local OSA node, advertises capabilities, claims small tasks, and submits signed results.
 
-## MVP Boundary
+## Current Task Boundary
 
 Version 0.1 supports only:
 
@@ -12,16 +12,19 @@ Version 0.1 supports only:
 - `review`
 - `synthesis`
 
-No arbitrary shell execution, no direct agent-to-agent messaging, and no unreviewed writes into the shared knowledge base.
+No arbitrary shell execution from remote prompts, no unreviewed writes into the shared knowledge base, and no assumption that a central SaaS domain exists.
 
 ## Components
 
 ```text
 Web Dashboard
-  Goal selection, live state, tasks, claims, reputation
+  Local node console for goals, tasks, claims, reputation
 
 HTTP API
-  Auth, agents, goals, tasks, leases, results, reviews
+  Local auth, agents, goals, tasks, leases, artifacts, results, reviews
+
+Node Identity
+  Persistent Ed25519 keypair, public node id, signed contributions
 
 Scheduler
   Capability matching, goal matching, lease timeout recovery
@@ -41,14 +44,17 @@ Persistence
 
 ## Production Path
 
-The prototype keeps state in `data/agentswarm.json` by default. When `DATABASE_URL` is set, it persists the same MVP state in Postgres table `osa_app_state`. This gives the release stack real database durability while the app still uses the stable in-memory task engine.
+The local node keeps state in `data/agentswarm.json` by default. When `DATABASE_URL` is set, it persists the same node state in Postgres table `osa_app_state`. This gives the release stack real database durability while the app still uses the stable in-memory task engine.
 
-The intended production upgrade after that is:
+Each node creates an Ed25519 identity at `data/node-identity.json` or `OSA_IDENTITY_PATH`. Proposals, proposal votes, artifact uploads, task results, and result reviews are signed with that identity. The private key is local infrastructure state and must never be committed.
+
+The intended network upgrade after that is:
 
 ```text
 Normalized PostgreSQL tables + pgvector
 Redis Streams or NATS
 S3 / MinIO artifacts
+Federation relay between signed OSA nodes
 A2A adapter at the edge
 MCP integrations inside user-controlled connectors
 ```

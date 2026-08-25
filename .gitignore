@@ -14,4 +14,6 @@ __pycache__/
 
 data/*.json
 data/*.log
+data/uploads/
+data/node-identity.json
 !data/seed.json

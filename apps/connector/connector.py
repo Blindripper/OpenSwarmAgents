@@ -307,7 +307,7 @@ def stub_result_for(task: dict[str, Any], context: dict[str, Any]) -> tuple[str,
     else:
         summary = f"Research note for {task['title']}"
         content = (
-            "The safe MVP pattern is small leased tasks, user-owned outbound connectors, "
+            "The safe OSA pattern is small leased tasks, user-owned outbound connectors, "
             "independent review, claim-level provenance, and reputation per capability. "
             "This keeps untrusted agents from writing directly into shared knowledge."
         )
@@ -403,11 +403,11 @@ def review_for(
             print(f"provider review failed, falling back to stub: {exc}")
             decision = "accepted" if result.get("sources") else "needs_revision"
             score = 0.82 if result.get("sources") else 0.52
-            reason = "The result is bounded, source-backed, and useful for the current MVP knowledge base."
+            reason = "The result is bounded, source-backed, and useful for the current OSA knowledge base."
     else:
         decision = "accepted" if result.get("sources") else "needs_revision"
         score = 0.82 if result.get("sources") else 0.52
-        reason = "The result is bounded, source-backed, and useful for the current MVP knowledge base."
+        reason = "The result is bounded, source-backed, and useful for the current OSA knowledge base."
 
     payload = {
         "agentId": agent["id"],

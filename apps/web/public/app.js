@@ -19,6 +19,8 @@ const state = {
     providers: [],
     auth: {
       devLoginEnabled: true,
+      localPasswordRequired: false,
+      authMode: "local",
       oauthRequired: false
     }
   }
@@ -36,6 +38,7 @@ const els = {
   authDevForm: document.querySelector("#auth-dev-form"),
   authEmail: document.querySelector("#auth-email"),
   authName: document.querySelector("#auth-name"),
+  authPassword: document.querySelector("#auth-password"),
   oauthGithub: document.querySelector("#oauth-github"),
   oauthGoogle: document.querySelector("#oauth-google"),
   donateButton: document.querySelector("#donate-button"),
@@ -75,6 +78,7 @@ const els = {
   accountForm: document.querySelector("#account-form"),
   accountEmail: document.querySelector("#account-email"),
   accountName: document.querySelector("#account-name"),
+  accountPassword: document.querySelector("#account-password"),
   accountStatus: document.querySelector("#account-status"),
   accountLogout: document.querySelector("#account-logout"),
   apiKeyForm: document.querySelector("#api-key-form"),
@@ -97,7 +101,7 @@ els.donateButton.addEventListener("click", () => donateEth());
 
 els.authDevForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  await signIn(els.authEmail.value, els.authName.value);
+  await signIn(els.authEmail.value, els.authName.value, els.authPassword.value);
 });
 
 els.connectVotingAgent.addEventListener("click", async () => {
@@ -156,20 +160,22 @@ els.proposalForm.addEventListener("submit", async (event) => {
 
 els.accountForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  await signIn(els.accountEmail.value, els.accountName.value);
+  await signIn(els.accountEmail.value, els.accountName.value, els.accountPassword.value);
 });
 
-async function signIn(email, name) {
+async function signIn(email, name, password = "") {
   if (!state.authConfig.auth.devLoginEnabled) {
-    showAuthFeedback("OAuth required", "Local MVP login is disabled on this server.");
+    showAuthFeedback("Local login disabled", "This node is configured for external authentication.");
     return;
   }
-  const response = await post("/api/auth/login", { email, name });
+  const response = await post("/api/auth/login", { email, name, password });
   localStorage.setItem("agentswarmSessionToken", response.sessionToken);
   localStorage.setItem("agentswarmUser", JSON.stringify(response.user));
   state.user = response.user;
   showAccountFeedback("Signed in", `${response.user.name} is now connected to OpenSwarmAgents.`);
   showAuthFeedback("Signed in", "Opening the OSA network console.");
+  els.authPassword.value = "";
+  els.accountPassword.value = "";
   if (state.view === "account") state.view = "worker";
   await refresh();
   render();
@@ -410,8 +416,13 @@ function renderShell() {
 
 function renderAuthControls() {
   const devLoginEnabled = Boolean(state.authConfig.auth?.devLoginEnabled);
+  const passwordRequired = Boolean(state.authConfig.auth?.localPasswordRequired);
   els.authDevForm.classList.toggle("hidden", !devLoginEnabled);
   els.accountForm.classList.toggle("dev-login-disabled", !devLoginEnabled);
+  els.authPassword.required = passwordRequired;
+  els.accountPassword.required = passwordRequired;
+  els.authPassword.placeholder = passwordRequired ? "At least 12 characters" : "Optional on this node";
+  els.accountPassword.placeholder = passwordRequired ? "At least 12 characters" : "Optional on this node";
   const configuredProviders = state.authConfig.providers?.filter((provider) => provider.configured) || [];
   els.oauthGithub.classList.toggle(
     "not-configured",
@@ -422,7 +433,7 @@ function renderAuthControls() {
     !state.authConfig.providers?.some((provider) => provider.id === "google" && provider.configured)
   );
   if (!devLoginEnabled && !configuredProviders.length && !state.user) {
-    showAuthFeedback("OAuth setup required", "No OAuth provider is configured on this server yet.");
+    showAuthFeedback("External auth setup required", "This node has local login disabled and no external auth provider configured yet.");
   }
 }
 

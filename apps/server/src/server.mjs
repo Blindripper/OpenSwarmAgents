@@ -3,13 +3,14 @@ import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { join, extname, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, generateKeyPairSync, pbkdf2Sync, randomBytes, randomUUID, sign as signPayload, timingSafeEqual } from "node:crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "../../..");
 const publicDir = join(rootDir, "apps/web/public");
 const dataDir = process.env.OSA_DATA_DIR || join(rootDir, "data");
 const uploadDir = process.env.OSA_UPLOAD_DIR || join(dataDir, "uploads");
+const identityPath = process.env.OSA_IDENTITY_PATH || join(dataDir, "node-identity.json");
 const seedPath = join(rootDir, "data/seed.json");
 const storePath = join(dataDir, "agentswarm.json");
 const port = Number(process.env.PORT || 8788);
@@ -18,6 +19,7 @@ const leaseMs = Number(process.env.AGENTSWARM_LEASE_MS || 10 * 60 * 1000);
 const proposalVotingMs = Number(process.env.AGENTSWARM_PROPOSAL_VOTING_MS || 72 * 60 * 60 * 1000);
 const storageMode = process.env.DATABASE_URL ? "postgres-snapshot" : "json";
 const isProduction = process.env.NODE_ENV === "production";
+const authMode = normalizeAuthMode(process.env.OSA_AUTH_MODE || "local");
 const rateLimitMultiplier = Math.max(0, Number(process.env.OSA_RATE_LIMIT_MULTIPLIER || 1));
 const maxJsonBytes = Number(process.env.OSA_MAX_JSON_BYTES || 1024 * 1024);
 const maxArtifactUploadBytes = Number(process.env.OSA_MAX_ARTIFACT_UPLOAD_BYTES || 10 * 1024 * 1024);
@@ -52,6 +54,7 @@ const oauthProviderConfig = {
 let pgPool = null;
 const rateLimitBuckets = new Map();
 validateRuntimeConfig();
+const nodeIdentity = await loadNodeIdentity();
 let store = await loadStore();
 
 async function loadStore() {
@@ -113,6 +116,60 @@ function normalizeStore(input) {
 async function saveStore(next = store) {
   if (process.env.DATABASE_URL) return savePostgresStore(next);
   await writeFile(storePath, `${JSON.stringify(next, null, 2)}\n`);
+}
+
+async function loadNodeIdentity() {
+  await mkdir(dataDir, { recursive: true });
+  try {
+    const loaded = JSON.parse(await readFile(identityPath, "utf8"));
+    if (loaded.nodeId && loaded.publicKeyPem && loaded.privateKeyPem) return loaded;
+  } catch {
+    // Generate below.
+  }
+
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const publicKeyPem = publicKey.export({ type: "spki", format: "pem" });
+  const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" });
+  const identity = {
+    nodeId: `node-${createHash("sha256").update(publicKeyPem).digest("hex").slice(0, 32)}`,
+    publicKeyPem,
+    privateKeyPem,
+    algorithm: "Ed25519",
+    createdAt: now()
+  };
+  await writeFile(identityPath, `${JSON.stringify(identity, null, 2)}\n`, { mode: 0o600 });
+  return identity;
+}
+
+function publicNodeIdentity() {
+  return {
+    nodeId: nodeIdentity.nodeId,
+    publicKeyPem: nodeIdentity.publicKeyPem,
+    algorithm: nodeIdentity.algorithm,
+    createdAt: nodeIdentity.createdAt
+  };
+}
+
+function signedContribution(type, payload = {}) {
+  const signedAt = now();
+  const canonical = stableStringify({
+    type,
+    signedAt,
+    payload
+  });
+  return {
+    type,
+    nodeId: nodeIdentity.nodeId,
+    algorithm: nodeIdentity.algorithm,
+    signedAt,
+    signature: signPayload(null, Buffer.from(canonical), nodeIdentity.privateKeyPem).toString("base64")
+  };
+}
+
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
 }
 
 async function loadPostgresStore() {
@@ -310,6 +367,36 @@ function sessionCookie(token, maxAge = 60 * 60 * 24 * 30) {
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase().slice(0, 180);
+}
+
+function localPasswordRequired() {
+  if (process.env.OSA_LOCAL_PASSWORD_REQUIRED === "1") return true;
+  if (process.env.OSA_LOCAL_PASSWORD_REQUIRED === "0") return false;
+  return isProduction && ["local", "hybrid"].includes(authMode) && process.env.OSA_ALLOW_PASSWORDLESS_LOCAL_AUTH !== "1";
+}
+
+function createPasswordRecord(password) {
+  const salt = randomBytes(16).toString("base64");
+  const hash = pbkdf2Sync(password, salt, 210000, 32, "sha256").toString("base64");
+  return {
+    passwordHash: hash,
+    passwordSalt: salt,
+    passwordAlgorithm: "pbkdf2-sha256",
+    passwordIterations: 210000,
+    passwordUpdatedAt: now()
+  };
+}
+
+function verifyPassword(user, password) {
+  if (!user?.passwordHash || !user?.passwordSalt) return false;
+  const iterations = Number(user.passwordIterations || 210000);
+  const expected = Buffer.from(user.passwordHash, "base64");
+  const actual = pbkdf2Sync(password, user.passwordSalt, iterations, expected.length, "sha256");
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function setUserPassword(user, password) {
+  Object.assign(user, createPasswordRecord(password));
 }
 
 function publicUser(user) {
@@ -516,6 +603,8 @@ function publicArtifact(artifact) {
     goalId: artifact.goalId || null,
     taskId: artifact.taskId || null,
     resultId: artifact.resultId || null,
+    sha256: artifact.sha256 || null,
+    signature: artifact.signature || null,
     createdAt: artifact.createdAt
   };
 }
@@ -550,10 +639,13 @@ function publicRuntime() {
   return {
     storageMode,
     nodeEnv: process.env.NODE_ENV || "development",
+    authMode,
     devLoginEnabled: isDevLoginEnabled(),
+    localPasswordRequired: localPasswordRequired(),
     demoEndpointsEnabled: areDemoEndpointsEnabled(),
     rateLimitsEnabled: rateLimitMultiplier > 0,
     maxArtifactUploadBytes,
+    node: publicNodeIdentity(),
     oauthConfigured: Object.fromEntries(
       Object.keys(oauthProviderConfig).map((provider) => [provider, Boolean(providerCredentials(provider))])
     ),
@@ -580,26 +672,29 @@ function runtimeReadiness() {
   if (!process.env.DATABASE_URL) {
     errors.push("DATABASE_URL is required in production.");
   }
-  if (!publicUrl) {
-    errors.push("OSA_PUBLIC_URL is required in production.");
-  } else {
+  if (["oauth", "hybrid"].includes(authMode) && !publicUrl) {
+    errors.push("OSA_PUBLIC_URL is required in production when OAuth is enabled.");
+  } else if (publicUrl) {
     try {
       const parsed = new URL(publicUrl);
-      if (parsed.protocol !== "https:" && process.env.OSA_ALLOW_INSECURE_PUBLIC_URL !== "1") {
-        errors.push("OSA_PUBLIC_URL must use https:// in production.");
+      if (["oauth", "hybrid"].includes(authMode) && parsed.protocol !== "https:" && process.env.OSA_ALLOW_INSECURE_PUBLIC_URL !== "1") {
+        errors.push("OSA_PUBLIC_URL must use https:// in production when OAuth is enabled.");
       }
     } catch {
       errors.push("OSA_PUBLIC_URL must be a valid absolute URL.");
     }
   }
-  if (process.env.OSA_COOKIE_SECURE !== "1" && process.env.OSA_ALLOW_INSECURE_COOKIES !== "1") {
-    errors.push("OSA_COOKIE_SECURE=1 is required in production.");
+  if (["oauth", "hybrid"].includes(authMode) && process.env.OSA_COOKIE_SECURE !== "1" && process.env.OSA_ALLOW_INSECURE_COOKIES !== "1") {
+    errors.push("OSA_COOKIE_SECURE=1 is required in production when OAuth is enabled.");
   }
-  if (!hasOAuthProvider && !isDevLoginEnabled()) {
-    errors.push("Configure at least one OAuth provider, or explicitly enable OSA_DEV_LOGIN=1 for a private development deployment.");
+  if (authMode === "oauth" && !hasOAuthProvider) {
+    errors.push("Configure at least one OAuth provider when OSA_AUTH_MODE=oauth.");
   }
-  if (process.env.OSA_DEV_LOGIN === "1" && process.env.OSA_ALLOW_DEV_LOGIN_IN_PRODUCTION !== "1") {
-    errors.push("OSA_DEV_LOGIN=1 is not allowed in production unless OSA_ALLOW_DEV_LOGIN_IN_PRODUCTION=1 is also set.");
+  if (authMode === "hybrid" && !hasOAuthProvider) {
+    errors.push("Configure at least one OAuth provider when OSA_AUTH_MODE=hybrid.");
+  }
+  if (authMode === "local" && localPasswordRequired() && process.env.OSA_ALLOW_PASSWORDLESS_LOCAL_AUTH === "1") {
+    errors.push("Passwordless local auth override is not allowed with the current production auth settings.");
   }
   if (process.env.OSA_DEMO_ENDPOINTS === "1" && process.env.OSA_ALLOW_DEMO_ENDPOINTS_IN_PRODUCTION !== "1") {
     errors.push("OSA_DEMO_ENDPOINTS=1 is not allowed in production unless OSA_ALLOW_DEMO_ENDPOINTS_IN_PRODUCTION=1 is also set.");
@@ -608,9 +703,14 @@ function runtimeReadiness() {
   return { ok: errors.length === 0, errors };
 }
 
+function normalizeAuthMode(value) {
+  const mode = String(value || "local").toLowerCase();
+  return ["local", "oauth", "hybrid"].includes(mode) ? mode : "local";
+}
+
 function isDevLoginEnabled() {
-  if (process.env.OSA_DEV_LOGIN === "1") return true;
-  if (process.env.OSA_DEV_LOGIN === "0") return false;
+  if (authMode === "oauth") return false;
+  if (authMode === "local" || authMode === "hybrid") return true;
   return process.env.NODE_ENV !== "production";
 }
 
@@ -633,7 +733,9 @@ function publicOAuthProviders(req) {
     })),
     auth: {
       devLoginEnabled: isDevLoginEnabled(),
-      oauthRequired: !isDevLoginEnabled()
+      localPasswordRequired: localPasswordRequired(),
+      authMode,
+      oauthRequired: authMode === "oauth"
     }
   };
 }
@@ -911,8 +1013,16 @@ async function createUploadedArtifact(auth, connector, body) {
     goalId: body.goalId ? String(body.goalId).slice(0, 140) : connector?.token?.goalId || null,
     taskId: body.taskId ? String(body.taskId).slice(0, 140) : null,
     resultId: body.resultId ? String(body.resultId).slice(0, 140) : null,
+    sha256: createHash("sha256").update(payload).digest("hex"),
     createdAt: now()
   };
+  artifact.signature = signedContribution("artifact_upload", {
+    artifactId: artifact.id,
+    name: artifact.name,
+    kind: artifact.kind,
+    size: artifact.size,
+    sha256: artifact.sha256
+  });
   store.uploadedArtifacts.unshift(artifact);
   event("artifact_uploaded", `Uploaded artifact ${artifact.name}`, {
     artifactId: artifact.id,
@@ -1105,14 +1215,26 @@ async function handleApi(req, res, url) {
         return;
       }
       if (!isDevLoginEnabled()) {
-        return forbidden(res, "Local MVP login is disabled. Use OAuth.");
+        return forbidden(res, "Local node login is disabled on this OSA node.");
       }
       const body = await readJson(req);
       const email = normalizeEmail(body.email);
       const name = String(body.name || email.split("@")[0] || "OSA User").trim().slice(0, 80);
+      const password = String(body.password || "");
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return badRequest(res, "Valid email is required");
+      if (localPasswordRequired() && password.length < 12) {
+        return badRequest(res, "Local node password must be at least 12 characters");
+      }
 
-      const user = upsertUser(email, name);
+      let user = store.users.find((item) => item.email === email);
+      if (user?.passwordHash) {
+        if (!verifyPassword(user, password)) return forbidden(res, "Invalid local node credentials");
+        user.name = name || user.name;
+        user.lastSeen = now();
+      } else {
+        user = upsertUser(email, name);
+        if (password) setUserPassword(user, password);
+      }
       const session = createSession(user);
       await saveStore();
       return sendJson(res, 201, { user: publicUser(user), sessionToken: session.token }, { "set-cookie": sessionCookie(session.token) });
@@ -1308,6 +1430,12 @@ async function handleApi(req, res, url) {
         createdAt: now()
       };
       proposal.votingEndsAt = afterMs(proposal.createdAt, proposalVotingMs);
+      proposal.signature = signedContribution("proposal", {
+        proposalId: proposal.id,
+        title: proposal.title,
+        descriptionHash: hashToken(proposal.description),
+        createdBy: proposal.createdBy
+      });
       store.proposals.unshift(proposal);
       event("proposal_created", `New proposal: ${proposal.title}`, { proposalId: proposal.id });
       await saveStore();
@@ -1506,6 +1634,15 @@ async function handleApi(req, res, url) {
         consensus: createConsensusSnapshot(task.goalId, agent.id),
         createdAt: now()
       };
+      result.signature = signedContribution("task_result", {
+        resultId: result.id,
+        taskId: result.taskId,
+        goalId: result.goalId,
+        agentId: result.agentId,
+        summaryHash: hashToken(result.summary),
+        contentHash: hashToken(result.content),
+        artifactIds: result.artifacts.map((artifact) => artifact.id).filter(Boolean)
+      });
 
       task.status = "in_consensus";
       task.leaseUntil = null;
@@ -1562,6 +1699,15 @@ async function handleApi(req, res, url) {
         reason: String(body.reason || "").slice(0, 2000),
         createdAt: now()
       };
+      review.signature = signedContribution("result_review", {
+        reviewId: review.id,
+        resultId: review.resultId,
+        taskId: review.taskId,
+        agentId: review.agentId,
+        decision: review.decision,
+        score: review.score,
+        reasonHash: hashToken(review.reason)
+      });
 
       store.reviews.push(review);
       agent.reputation.review += decision === "accepted" ? 1 : 0.5;
@@ -1695,6 +1841,13 @@ function addProposalVote(proposal, agent, score, reason) {
     reason: reason.slice(0, 1000),
     createdAt: now()
   };
+  vote.signature = signedContribution("proposal_vote", {
+    voteId: vote.id,
+    proposalId: proposal.id,
+    agentId: agent.id,
+    score: vote.score,
+    reasonHash: hashToken(vote.reason)
+  });
   store.proposalVotes.push(vote);
   proposal.votes += 1;
   proposal.score = Number((proposal.score + vote.score).toFixed(2));
@@ -2154,7 +2307,7 @@ function runDemoCycle() {
     agentId: researchAgent.id,
     summary: `Initial verified direction for ${openTask.title}`,
     content:
-      "The strongest MVP path is a platform-controlled task lifecycle with user-owned connectors, small leased tasks, independent review, and accepted claims written into a shared knowledge base.",
+      "The strongest path is a local-first task lifecycle with user-owned connectors, small leased tasks, independent review, signed contributions, and accepted claims written into a shared knowledge base.",
     sources: ["docs/ARCHITECTURE.md"],
     confidence: 0.78,
     status: "in_consensus",
@@ -2170,6 +2323,15 @@ function runDemoCycle() {
     },
     createdAt: now()
   };
+  result.signature = signedContribution("task_result", {
+    resultId: result.id,
+    taskId: result.taskId,
+    goalId: result.goalId,
+    agentId: result.agentId,
+    summaryHash: hashToken(result.summary),
+    contentHash: hashToken(result.content),
+    artifactIds: []
+  });
   store.results.push(result);
   createConsensusReviewTasks(openTask, result);
   const review = {
@@ -2180,9 +2342,18 @@ function runDemoCycle() {
     agentId: reviewAgent.id,
     decision: "accepted",
     score: 0.84,
-    reason: "The result is bounded, implementable, and aligned with the MVP constraints.",
+    reason: "The result is bounded, implementable, and aligned with the local-first node constraints.",
     createdAt: now()
   };
+  review.signature = signedContribution("result_review", {
+    reviewId: review.id,
+    resultId: review.resultId,
+    taskId: review.taskId,
+    agentId: review.agentId,
+    decision: review.decision,
+    score: review.score,
+    reasonHash: hashToken(review.reason)
+  });
   store.reviews.push(review);
   applyReviewDecision(result, review);
   event("demo", `Completed demo cycle for ${openTask.title}`, {
@@ -2240,5 +2411,5 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`OpenSwarmAgents MVP listening on http://${host}:${port}`);
+  console.log(`OpenSwarmAgents node listening on http://${host}:${port}`);
 });

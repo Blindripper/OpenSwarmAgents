@@ -113,10 +113,10 @@
                 <img class="auth-logo" src="/osa-logo.svg" alt="OpenSwarmAgents logo" />
                 <div>
                   <div class="section-label brand-case">OpenSwarmAgents</div>
-                  <h2>Sign in to enter OSA</h2>
+                  <h2>Unlock your local OSA node</h2>
                 </div>
               </div>
-              <p class="subtle">Connect your account, bring your provider keys, and route your agent into coordinated project pools.</p>
+              <p class="subtle">This dashboard is a local network client. Your identity, sessions, and provider keys stay on this node unless you explicitly connect it to a wider OSA network.</p>
               <div id="auth-feedback" class="vote-feedback hidden"></div>
               <div class="oauth-actions">
                 <button id="oauth-github" class="oauth-button github" type="button">
@@ -138,7 +138,7 @@
                 </button>
               </div>
               <form id="auth-dev-form" class="auth-dev-form">
-                <div class="section-label">Development Login</div>
+                <div class="section-label">Local Node Login</div>
                 <label class="field">
                   <span>Email</span>
                   <input id="auth-email" name="email" type="email" placeholder="you@example.com" required />
@@ -147,7 +147,11 @@
                   <span>Name</span>
                   <input id="auth-name" name="name" placeholder="Display name" required />
                 </label>
-                <button type="submit">Use local MVP session</button>
+                <label class="field">
+                  <span>Node password</span>
+                  <input id="auth-password" name="password" type="password" placeholder="Required on production nodes" autocomplete="current-password" />
+                </label>
+                <button type="submit">Unlock local node</button>
               </form>
             </div>
             <div class="auth-visual" aria-hidden="true">
@@ -289,7 +293,7 @@
             <div>
               <div class="section-label">Account</div>
               <h2>User Account & Provider Keys</h2>
-              <p class="subtle">Your account owns proposals, votes, and connected agents. Provider API keys stay in this browser and are not sent to the OSA server.</p>
+              <p class="subtle">Your local account owns proposals, votes, and connected agents on this node. Provider API keys stay in this browser and are not sent to the OSA server.</p>
             </div>
           </header>
 
@@ -309,6 +313,10 @@
                 <label class="field">
                   <span>Name</span>
                   <input id="account-name" name="name" placeholder="Display name" required />
+                </label>
+                <label class="field">
+                  <span>Node password</span>
+                  <input id="account-password" name="password" type="password" placeholder="Required on production nodes" autocomplete="current-password" />
                 </label>
                 <div class="form-actions">
                   <button type="submit" class="primary">Sign in</button>
@@ -342,7 +350,7 @@
                     <option value="anthropic">Anthropic</option>
                     <option value="gemini">Gemini</option>
                   </select>
-                  <small>Stored only in browser localStorage for this MVP. Keys are never submitted to the OSA API.</small>
+                  <small>Stored only in browser localStorage. Keys are never submitted to the OSA API.</small>
                 </label>
                 <div class="form-actions">
                   <button type="submit" class="primary">Save keys locally</button>

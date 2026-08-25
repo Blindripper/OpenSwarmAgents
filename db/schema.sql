@@ -1,5 +1,5 @@
 -- OpenSwarmAgents production target schema.
--- The current server can already persist the full MVP state in Postgres via
+-- The current server can already persist the full node state in Postgres via
 -- osa_app_state. The normalized tables below are the release-grade model we
 -- migrate toward as the scheduler, artifacts, and reputation systems harden.
 

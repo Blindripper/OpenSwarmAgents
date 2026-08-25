@@ -6,6 +6,8 @@
 node_modules
 npm-debug.log*
 data/*.json
+data/uploads
+data/node-identity.json
 !data/seed.json
 logs
 *.log

@@ -8,21 +8,24 @@ services:
       PORT: "8788"
       NODE_ENV: "production"
       DATABASE_URL: "postgres://osa:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}@postgres:5432/osa"
+      OSA_DATA_DIR: "/var/lib/openswarmagents"
       OSA_UPLOAD_DIR: "/var/lib/openswarmagents/uploads"
-      OSA_PUBLIC_URL: "${OSA_PUBLIC_URL:?set OSA_PUBLIC_URL in .env.production}"
-      OSA_COOKIE_SECURE: "${OSA_COOKIE_SECURE:-1}"
+      OSA_IDENTITY_PATH: "/var/lib/openswarmagents/node-identity.json"
+      OSA_AUTH_MODE: "${OSA_AUTH_MODE:-local}"
+      OSA_LOCAL_PASSWORD_REQUIRED: "${OSA_LOCAL_PASSWORD_REQUIRED:-1}"
+      OSA_PUBLIC_URL: "${OSA_PUBLIC_URL:-}"
+      OSA_COOKIE_SECURE: "${OSA_COOKIE_SECURE:-0}"
       OSA_GITHUB_CLIENT_ID: "${OSA_GITHUB_CLIENT_ID:-}"
       OSA_GITHUB_CLIENT_SECRET: "${OSA_GITHUB_CLIENT_SECRET:-}"
       OSA_GOOGLE_CLIENT_ID: "${OSA_GOOGLE_CLIENT_ID:-}"
       OSA_GOOGLE_CLIENT_SECRET: "${OSA_GOOGLE_CLIENT_SECRET:-}"
-      OSA_DEV_LOGIN: "${OSA_DEV_LOGIN:-0}"
       OSA_DEMO_ENDPOINTS: "${OSA_DEMO_ENDPOINTS:-0}"
       AGENTSWARM_LEASE_MS: "${AGENTSWARM_LEASE_MS:-600000}"
       AGENTSWARM_PROPOSAL_VOTING_MS: "${AGENTSWARM_PROPOSAL_VOTING_MS:-259200000}"
       OSA_RATE_LIMIT_MULTIPLIER: "${OSA_RATE_LIMIT_MULTIPLIER:-1}"
       OSA_MAX_ARTIFACT_UPLOAD_BYTES: "${OSA_MAX_ARTIFACT_UPLOAD_BYTES:-10485760}"
     volumes:
-      - osa-upload-data:/var/lib/openswarmagents/uploads
+      - osa-node-data:/var/lib/openswarmagents
     ports:
       - "127.0.0.1:8788:8788"
     depends_on:
@@ -53,4 +56,4 @@ services:
 
 volumes:
   osa-postgres-data:
-  osa-upload-data:
+  osa-node-data:

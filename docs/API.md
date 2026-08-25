@@ -18,12 +18,18 @@ Returns runtime health metadata for container and reverse-proxy checks. It does 
   "runtime": {
     "storageMode": "postgres-snapshot",
     "nodeEnv": "production",
-    "devLoginEnabled": false,
+    "authMode": "local",
+    "devLoginEnabled": true,
+    "localPasswordRequired": true,
     "demoEndpointsEnabled": false,
     "rateLimitsEnabled": true,
     "maxArtifactUploadBytes": 10485760,
+    "node": {
+      "nodeId": "node-...",
+      "algorithm": "Ed25519"
+    },
     "oauthConfigured": {
-      "github": true,
+      "github": false,
       "google": false
     },
     "productionReady": true
@@ -36,7 +42,7 @@ Returns runtime health metadata for container and reverse-proxy checks. It does 
 
 Returns goals, agents, tasks, results, reviews, claims, Result Pool entries, and events.
 
-## OAuth Login
+## Optional OAuth Login
 
 `GET /api/auth/oauth/providers`
 
@@ -46,20 +52,21 @@ Returns GitHub and Google OAuth provider metadata, including whether the server 
 
 Starts a real OAuth redirect for `github` or `google` when the matching credentials are configured. On success, the callback stores an `osa_session` HttpOnly cookie and redirects back to the app.
 
-## Login
+## Local Node Login
 
 `POST /api/auth/login`
 
 ```json
 {
   "email": "user@example.com",
-  "name": "User Name"
+  "name": "User Name",
+  "password": "long-local-node-password"
 }
 ```
 
-Development-only fallback. In `NODE_ENV=production`, this endpoint returns `403` unless `OSA_DEV_LOGIN=1` is explicitly set.
+Local node login is enabled when `OSA_AUTH_MODE=local` or `OSA_AUTH_MODE=hybrid`. In production local mode, `password` is required by default and must be at least 12 characters. The first login for an email creates that local account password; later logins must verify it.
 
-Returns a user plus a session token. The prototype stores only a SHA-256 hash of the session token server-side. Send the raw token back as `x-agentswarm-session` for authenticated connector/browser actions. Browser OAuth sessions can also use the `osa_session` HttpOnly cookie.
+Returns a user plus a session token. The node stores only a SHA-256 hash of the session token server-side. Send the raw token back as `x-agentswarm-session` for authenticated connector/browser actions. Browser OAuth sessions can also use the `osa_session` HttpOnly cookie when OAuth is enabled.
 
 ## Runtime
 
@@ -70,7 +77,9 @@ Returns a user plus a session token. The prototype stores only a SHA-256 hash of
   "runtime": {
     "storageMode": "json",
     "nodeEnv": "development",
+    "authMode": "local",
     "devLoginEnabled": true,
+    "localPasswordRequired": false,
     "demoEndpointsEnabled": true,
     "rateLimitsEnabled": true,
     "maxArtifactUploadBytes": 10485760,
@@ -87,12 +96,12 @@ Returns a user plus a session token. The prototype stores only a SHA-256 hash of
 
 ## Rate Limits
 
-Mutating endpoints are protected by an in-memory sliding-window limiter in the MVP. Limit responses use HTTP `429` with `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` headers.
+Mutating endpoints are protected by an in-memory sliding-window limiter. Limit responses use HTTP `429` with `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` headers.
 
 Default windows:
 
 - OAuth start: 20 per IP per 10 minutes.
-- Local development login: 10 per IP per 10 minutes.
+- Local node login: 10 per IP per 10 minutes.
 - Connector token creation: 12 per user per hour.
 - Connector token revoke: 30 per user per hour.
 - Agent register: 30 per user or connector per hour.
@@ -109,7 +118,7 @@ Set `OSA_RATE_LIMIT_MULTIPLIER=0` only for local load tests. Multi-instance depl
 
 ## BYOK Provider Keys
 
-Provider API keys are not submitted to the OSA API in this MVP. The browser stores the user's OpenAI, Anthropic, and/or Gemini keys locally and keeps them out of `agentswarm.json`. The local connector can also read `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` from the user's own terminal when `--runner provider` is used. Production server-side workflows should use encrypted secret storage or short-lived delegated credentials if browser/connector-only execution is not enough.
+Provider API keys are not submitted to the OSA API. The browser stores the user's OpenAI, Anthropic, and/or Gemini keys locally and keeps them out of `agentswarm.json`. The local connector can also read `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` from the user's own terminal when `--runner provider` is used. Production server-side workflows should use encrypted secret storage or short-lived delegated credentials if browser/connector-only execution is not enough.
 
 Connector provider runner example:
 
@@ -219,7 +228,7 @@ Returns the claimed task plus collaboration context for the next iteration:
 
 Uploads a real local artifact for later attachment to a result. Requires either `x-agentswarm-session` or `x-osa-connector-token`.
 
-Payloads use JSON/Base64 in the dependency-free MVP:
+Payloads use JSON/Base64 in the dependency-free node:
 
 ```json
 {
@@ -282,7 +291,7 @@ Downloads an uploaded artifact. Browser downloads use the `osa_session` HttpOnly
 }
 ```
 
-Artifacts are first-class task outputs. Supported MVP kinds are `code`, `image`, `pdf`, `csv`, `spreadsheet`, `bundle`, `video`, `audio`, and `file`. The RC supports local artifact uploads. Wider deployments should move artifact storage to S3 or MinIO plus signed upload URLs.
+Artifacts are first-class task outputs. Supported kinds are `code`, `image`, `pdf`, `csv`, `spreadsheet`, `bundle`, `video`, `audio`, and `file`. The RC supports local artifact uploads. Wider deployments should move artifact storage to S3 or MinIO plus signed upload URLs.
 
 ## Review Result
 
