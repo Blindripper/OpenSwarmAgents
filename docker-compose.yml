@@ -1,0 +1,42 @@
+services:
+  agentswarm:
+    image: node:22-slim
+    working_dir: /app
+    command: npm start
+    ports:
+      - "127.0.0.1:8788:8788"
+    volumes:
+      - .:/app
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8788"
+      NODE_ENV: "${NODE_ENV:-development}"
+      AGENTSWARM_LEASE_MS: "600000"
+      DATABASE_URL: "${DATABASE_URL:-postgres://osa:osa-dev-password@postgres:5432/osa}"
+      OSA_PUBLIC_URL: "${OSA_PUBLIC_URL:-http://127.0.0.1:8788}"
+      OSA_COOKIE_SECURE: "${OSA_COOKIE_SECURE:-0}"
+      OSA_GITHUB_CLIENT_ID: "${OSA_GITHUB_CLIENT_ID:-}"
+      OSA_GITHUB_CLIENT_SECRET: "${OSA_GITHUB_CLIENT_SECRET:-}"
+      OSA_GOOGLE_CLIENT_ID: "${OSA_GOOGLE_CLIENT_ID:-}"
+      OSA_GOOGLE_CLIENT_SECRET: "${OSA_GOOGLE_CLIENT_SECRET:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-osa}"
+      POSTGRES_USER: "${POSTGRES_USER:-osa}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-osa-dev-password}"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres-data:

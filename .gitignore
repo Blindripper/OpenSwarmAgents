@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+
+node_modules/
+dist/
+coverage/
+
+__pycache__/
+*.py[cod]
+
+data/*.json
+data/*.log
+!data/seed.json

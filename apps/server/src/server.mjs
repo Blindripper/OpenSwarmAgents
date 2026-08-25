@@ -1,0 +1,1870 @@
+import { createServer } from "node:http";
+import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { join, extname, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createHash, randomUUID } from "node:crypto";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const rootDir = join(__dirname, "../../..");
+const publicDir = join(rootDir, "apps/web/public");
+const dataDir = process.env.OSA_DATA_DIR || join(rootDir, "data");
+const seedPath = join(rootDir, "data/seed.json");
+const storePath = join(dataDir, "agentswarm.json");
+const port = Number(process.env.PORT || 8788);
+const host = process.env.HOST || "127.0.0.1";
+const leaseMs = Number(process.env.AGENTSWARM_LEASE_MS || 10 * 60 * 1000);
+const proposalVotingMs = Number(process.env.AGENTSWARM_PROPOSAL_VOTING_MS || 72 * 60 * 60 * 1000);
+const storageMode = process.env.DATABASE_URL ? "postgres-snapshot" : "json";
+
+const contentTypes = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml; charset=utf-8"
+};
+
+let pgPool = null;
+let store = await loadStore();
+
+async function loadStore() {
+  if (process.env.DATABASE_URL) return loadPostgresStore();
+
+  await mkdir(dataDir, { recursive: true });
+  try {
+    const loaded = normalizeStore(JSON.parse(await readFile(storePath, "utf8")));
+    if (!loaded.proposals.length) {
+      const seed = JSON.parse(await readFile(seedPath, "utf8"));
+      loaded.proposals = seed.proposals || [];
+      await saveStore(loaded);
+    }
+    return loaded;
+  } catch {
+    const seed = JSON.parse(await readFile(seedPath, "utf8"));
+    const initial = normalizeStore({
+      ...seed,
+      agents: [],
+      results: [],
+      reviews: [],
+      claims: [],
+      users: [],
+      sessions: [],
+      connectorTokens: [],
+      proposalVotes: [],
+      events: []
+    });
+    await saveStore(initial);
+    return initial;
+  }
+}
+
+function normalizeStore(input) {
+  const goals = input.goals || [];
+  const tasks = input.tasks || [];
+  const results = input.results || [];
+  const reviews = input.reviews || [];
+  return {
+    goals,
+    agents: input.agents || [],
+    tasks,
+    results,
+    reviews,
+    claims: input.claims || [],
+    users: input.users || [],
+    sessions: input.sessions || [],
+    connectorTokens: input.connectorTokens || [],
+    resultPool: input.resultPool || buildResultPoolFromAccepted(goals, tasks, results, reviews),
+    proposals: (input.proposals || []).map(normalizeProposal),
+    proposalVotes: input.proposalVotes || [],
+    oauthStates: input.oauthStates || [],
+    events: input.events || []
+  };
+}
+
+async function saveStore(next = store) {
+  if (process.env.DATABASE_URL) return savePostgresStore(next);
+  await writeFile(storePath, `${JSON.stringify(next, null, 2)}\n`);
+}
+
+async function loadPostgresStore() {
+  await ensurePostgresSnapshotTable();
+  const result = await postgresQuery("select payload from osa_app_state where id = $1", ["default"]);
+  if (result.rows[0]?.payload) {
+    const loaded = normalizeStore(result.rows[0].payload);
+    if (!loaded.proposals.length) {
+      const seed = JSON.parse(await readFile(seedPath, "utf8"));
+      loaded.proposals = seed.proposals || [];
+      await savePostgresStore(loaded);
+    }
+    return loaded;
+  }
+
+  const seed = JSON.parse(await readFile(seedPath, "utf8"));
+  const initial = normalizeStore({
+    ...seed,
+    agents: [],
+    results: [],
+    reviews: [],
+    claims: [],
+    users: [],
+    sessions: [],
+    proposalVotes: [],
+    events: []
+  });
+  await savePostgresStore(initial);
+  return initial;
+}
+
+async function savePostgresStore(next = store) {
+  await ensurePostgresSnapshotTable();
+  await postgresQuery(
+    `
+      insert into osa_app_state (id, payload, updated_at)
+      values ($1, $2::jsonb, now())
+      on conflict (id)
+      do update set payload = excluded.payload, updated_at = now()
+    `,
+    ["default", JSON.stringify(next)]
+  );
+}
+
+async function ensurePostgresSnapshotTable() {
+  await postgresQuery(`
+    create table if not exists osa_app_state (
+      id text primary key,
+      payload jsonb not null,
+      updated_at timestamptz not null default now()
+    )
+  `);
+}
+
+async function postgresQuery(sql, params = []) {
+  const pool = await postgresPool();
+  return pool.query(sql, params);
+}
+
+async function postgresPool() {
+  if (pgPool) return pgPool;
+  const { Pool } = await import("pg");
+  pgPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.PGSSLMODE === "require" ? { rejectUnauthorized: false } : undefined
+  });
+  return pgPool;
+}
+
+function now() {
+  return new Date().toISOString();
+}
+
+function afterMs(baseIso, durationMs) {
+  return new Date(Date.parse(baseIso) + durationMs).toISOString();
+}
+
+function event(type, message, data = {}) {
+  store.events.unshift({
+    id: `event-${randomUUID()}`,
+    type,
+    message,
+    data,
+    createdAt: now()
+  });
+  store.events = store.events.slice(0, 100);
+}
+
+function sendJson(res, status, payload, headers = {}) {
+  const body = JSON.stringify(payload, null, 2);
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    ...headers
+  });
+  res.end(body);
+}
+
+function redirect(res, location, headers = {}) {
+  res.writeHead(302, { location, ...headers });
+  res.end();
+}
+
+function notFound(res) {
+  sendJson(res, 404, { error: "not_found" });
+}
+
+function badRequest(res, message) {
+  sendJson(res, 400, { error: "bad_request", message });
+}
+
+function unauthorized(res, message = "Authentication required") {
+  sendJson(res, 401, { error: "unauthorized", message });
+}
+
+function forbidden(res, message = "Forbidden") {
+  sendJson(res, 403, { error: "forbidden", message });
+}
+
+async function readJson(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  if (!chunks.length) return {};
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function hashToken(token) {
+  return createHash("sha256").update(String(token)).digest("hex");
+}
+
+function cookieValue(req, name) {
+  const header = String(req.headers.cookie || "");
+  const cookies = header.split(";").map((item) => item.trim()).filter(Boolean);
+  for (const cookie of cookies) {
+    const index = cookie.indexOf("=");
+    if (index === -1) continue;
+    if (cookie.slice(0, index) === name) return decodeURIComponent(cookie.slice(index + 1));
+  }
+  return "";
+}
+
+function sessionCookie(token, maxAge = 60 * 60 * 24 * 30) {
+  const secure = process.env.OSA_COOKIE_SECURE === "1" ? "; Secure" : "";
+  return `osa_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
+}
+
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase().slice(0, 180);
+}
+
+function publicUser(user) {
+  if (!user) return null;
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    createdAt: user.createdAt,
+    lastSeen: user.lastSeen
+  };
+}
+
+function upsertUser(email, name) {
+  let user = store.users.find((item) => item.email === email);
+  if (!user) {
+    user = {
+      id: `user-${randomUUID()}`,
+      email,
+      name,
+      createdAt: now(),
+      lastSeen: now()
+    };
+    store.users.push(user);
+    event("user_created", `${user.name} created an account`, { userId: user.id });
+  } else {
+    user.name = name || user.name;
+    user.lastSeen = now();
+  }
+  return user;
+}
+
+function createSession(user) {
+  const token = `osa_${randomUUID()}_${randomUUID()}`;
+  const session = {
+    id: `session-${randomUUID()}`,
+    userId: user.id,
+    tokenHash: hashToken(token),
+    createdAt: now(),
+    lastSeen: now()
+  };
+  store.sessions.push(session);
+  return { session, token };
+}
+
+function authFromReq(req) {
+  const rawHeader = req.headers["x-agentswarm-session"] || req.headers.authorization || "";
+  const headerToken = String(Array.isArray(rawHeader) ? rawHeader[0] : rawHeader).replace(/^Bearer\s+/i, "").trim();
+  const token = headerToken || cookieValue(req, "osa_session");
+  if (!token) return null;
+  const session = store.sessions.find((item) => item.tokenHash === hashToken(token));
+  if (!session) return null;
+  const user = store.users.find((item) => item.id === session.userId);
+  if (!user) return null;
+  session.lastSeen = now();
+  user.lastSeen = now();
+  return { user, session };
+}
+
+function connectorTokenFromReq(req) {
+  const rawHeader = req.headers["x-osa-connector-token"] || req.headers.authorization || "";
+  const token = String(Array.isArray(rawHeader) ? rawHeader[0] : rawHeader).replace(/^Bearer\s+/i, "").trim();
+  if (!token || !token.startsWith("osa_conn_")) return null;
+  const connector = store.connectorTokens.find((item) => item.tokenHash === hashToken(token));
+  if (!connector || connector.status !== "active") return null;
+  if (connector.expiresAt && Date.parse(connector.expiresAt) < Date.now()) {
+    connector.status = "expired";
+    connector.expiredAt = now();
+    return null;
+  }
+  const user = store.users.find((item) => item.id === connector.userId);
+  if (!user) return null;
+  connector.lastUsedAt = now();
+  user.lastSeen = now();
+  return { token: connector, user };
+}
+
+function authorizeConnectorAgent(req, agent) {
+  const connector = connectorTokenFromReq(req);
+  if (!connector) return { ok: true, connector: null };
+  if (agent.connectorTokenId !== connector.token.id) {
+    return { ok: false, connector, message: "Connector token is not scoped to this agent" };
+  }
+  return { ok: true, connector };
+}
+
+function publicState(auth = null) {
+  const activeGoals = store.goals.filter((goal) => goal.status !== "completed");
+  const activeGoalIds = new Set(
+    store.agents
+      .filter((agent) => agent.status === "online")
+      .filter((agent) => activeGoals.some((goal) => goal.id === agent.goalId))
+      .map((agent) => agent.goalId)
+  );
+
+  return {
+    goals: store.goals,
+    agents: store.agents,
+    tasks: store.tasks,
+    results: store.results,
+    reviews: store.reviews,
+    claims: store.claims,
+    resultPool: store.resultPool,
+    proposals: store.proposals,
+    proposalVotes: store.proposalVotes,
+    events: store.events,
+    stats: {
+      users: store.users.length,
+      goals: activeGoals.length,
+      onlineAgents: store.agents.filter((agent) => agent.status === "online").length,
+      activeGoals: activeGoalIds.size,
+      resultPool: store.resultPool.length,
+      votingProposals: store.proposals.filter((proposal) => proposal.status === "voting").length,
+      openTasks: store.tasks.filter((task) => task.status === "open" && activeGoals.some((goal) => goal.id === task.goalId)).length,
+      leasedTasks: store.tasks.filter((task) => task.status === "leased").length,
+      pendingReviews: store.results.filter((result) => ["needs_review", "in_consensus"].includes(result.status)).length,
+      acceptedClaims: store.claims.filter((claim) => claim.status === "accepted").length
+    },
+    viewer: publicUser(auth?.user),
+    viewerConnectors: auth ? publicConnectorTokensForUser(auth.user.id) : [],
+    runtime: publicRuntime(),
+    serverTime: now()
+  };
+}
+
+function publicConnectorTokensForUser(userId) {
+  return store.connectorTokens
+    .filter((token) => token.userId === userId)
+    .map(publicConnectorToken)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function publicConnectorToken(token) {
+  const goal = store.goals.find((item) => item.id === token.goalId);
+  return {
+    id: token.id,
+    mode: token.mode,
+    goalId: token.goalId,
+    goalTitle: goal?.title || (token.mode === "voting" ? "Voting Pool" : "Unknown project"),
+    agentId: token.agentId || null,
+    name: token.name,
+    status: token.status,
+    provider: token.provider,
+    providers: token.providers || [],
+    createdAt: token.createdAt,
+    lastUsedAt: token.lastUsedAt || null,
+    expiresAt: token.expiresAt || null,
+    revokedAt: token.revokedAt || null
+  };
+}
+
+function publicRuntime() {
+  return {
+    storageMode,
+    devLoginEnabled: isDevLoginEnabled(),
+    demoEndpointsEnabled: areDemoEndpointsEnabled(),
+    oauthConfigured: Object.fromEntries(
+      Object.keys(oauthProviderConfig).map((provider) => [provider, Boolean(providerCredentials(provider))])
+    )
+  };
+}
+
+function isDevLoginEnabled() {
+  if (process.env.OSA_DEV_LOGIN === "1") return true;
+  if (process.env.OSA_DEV_LOGIN === "0") return false;
+  return process.env.NODE_ENV !== "production";
+}
+
+function areDemoEndpointsEnabled() {
+  if (process.env.OSA_DEMO_ENDPOINTS === "1") return true;
+  if (process.env.OSA_DEMO_ENDPOINTS === "0") return false;
+  return process.env.NODE_ENV !== "production";
+}
+
+const oauthProviderConfig = {
+  github: {
+    label: "GitHub",
+    clientIdEnv: "OSA_GITHUB_CLIENT_ID",
+    clientSecretEnv: "OSA_GITHUB_CLIENT_SECRET",
+    authorizeUrl: "https://github.com/login/oauth/authorize",
+    tokenUrl: "https://github.com/login/oauth/access_token",
+    scope: "read:user user:email"
+  },
+  google: {
+    label: "Google",
+    clientIdEnv: "OSA_GOOGLE_CLIENT_ID",
+    clientSecretEnv: "OSA_GOOGLE_CLIENT_SECRET",
+    authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    scope: "openid email profile"
+  }
+};
+
+function publicOAuthProviders(req) {
+  return {
+    providers: Object.entries(oauthProviderConfig).map(([id, config]) => ({
+      id,
+      label: config.label,
+      configured: Boolean(process.env[config.clientIdEnv] && process.env[config.clientSecretEnv]),
+      clientIdEnv: config.clientIdEnv,
+      clientSecretEnv: config.clientSecretEnv,
+      startUrl: `/api/auth/oauth/${id}/start?redirect=${encodeURIComponent("/")}`,
+      callbackUrl: `${originFromReq(req)}/api/auth/oauth/${id}/callback`
+    })),
+    auth: {
+      devLoginEnabled: isDevLoginEnabled(),
+      oauthRequired: !isDevLoginEnabled()
+    }
+  };
+}
+
+function originFromReq(req) {
+  return process.env.OSA_PUBLIC_URL || `http://${req.headers.host || `${host}:${port}`}`;
+}
+
+function cleanOAuthStates() {
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  store.oauthStates = store.oauthStates.filter((item) => Date.parse(item.createdAt) >= cutoff);
+}
+
+function providerCredentials(provider) {
+  const config = oauthProviderConfig[provider];
+  if (!config) return null;
+  const clientId = process.env[config.clientIdEnv];
+  const clientSecret = process.env[config.clientSecretEnv];
+  if (!clientId || !clientSecret) return null;
+  return { config, clientId, clientSecret };
+}
+
+async function startOAuth(req, res, provider, url) {
+  const credentials = providerCredentials(provider);
+  if (!credentials) return redirect(res, `/?oauth=${provider}&error=not_configured#account`);
+  cleanOAuthStates();
+  const stateId = `oauth-${randomUUID()}`;
+  const redirectAfter = String(url.searchParams.get("redirect") || "/").startsWith("/")
+    ? String(url.searchParams.get("redirect") || "/")
+    : "/";
+  store.oauthStates.push({
+    id: stateId,
+    provider,
+    redirectAfter,
+    createdAt: now()
+  });
+  await saveStore();
+
+  const callbackUrl = `${originFromReq(req)}/api/auth/oauth/${provider}/callback`;
+  const authorizeUrl = new URL(credentials.config.authorizeUrl);
+  authorizeUrl.searchParams.set("client_id", credentials.clientId);
+  authorizeUrl.searchParams.set("redirect_uri", callbackUrl);
+  authorizeUrl.searchParams.set("response_type", "code");
+  authorizeUrl.searchParams.set("scope", credentials.config.scope);
+  authorizeUrl.searchParams.set("state", stateId);
+  if (provider === "google") {
+    authorizeUrl.searchParams.set("access_type", "online");
+    authorizeUrl.searchParams.set("prompt", "select_account");
+  }
+  return redirect(res, authorizeUrl.toString());
+}
+
+async function completeOAuth(req, res, provider, url) {
+  const code = String(url.searchParams.get("code") || "");
+  const stateId = String(url.searchParams.get("state") || "");
+  const stateEntry = store.oauthStates.find((item) => item.id === stateId && item.provider === provider);
+  store.oauthStates = store.oauthStates.filter((item) => item.id !== stateId);
+  const credentials = providerCredentials(provider);
+  if (!code || !stateEntry || !credentials) {
+    await saveStore();
+    return redirect(res, `/?oauth=${provider}&error=invalid_callback#account`);
+  }
+
+  try {
+    const callbackUrl = `${originFromReq(req)}/api/auth/oauth/${provider}/callback`;
+    const token = await exchangeOAuthCode(provider, credentials, code, callbackUrl);
+    const profile = await fetchOAuthProfile(provider, token);
+    const user = upsertUser(profile.email, profile.name);
+    const session = createSession(user);
+    event("user_signed_in", `${user.name} signed in with ${credentials.config.label}`, { userId: user.id, provider });
+    await saveStore();
+    return redirect(res, stateEntry.redirectAfter || "/", { "set-cookie": sessionCookie(session.token) });
+  } catch (error) {
+    event("oauth_error", `${credentials.config.label} OAuth failed: ${error.message}`, { provider });
+    await saveStore();
+    return redirect(res, `/?oauth=${provider}&error=provider_failed#account`);
+  }
+}
+
+async function exchangeOAuthCode(provider, credentials, code, redirectUri) {
+  const body = new URLSearchParams({
+    client_id: credentials.clientId,
+    client_secret: credentials.clientSecret,
+    code,
+    redirect_uri: redirectUri
+  });
+  if (provider === "google") body.set("grant_type", "authorization_code");
+  const response = await fetch(credentials.config.tokenUrl, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/x-www-form-urlencoded"
+    },
+    body
+  });
+  const payload = await response.json();
+  if (!response.ok || !payload.access_token) {
+    throw new Error(payload.error_description || payload.error || "OAuth token exchange failed");
+  }
+  return payload.access_token;
+}
+
+async function fetchOAuthProfile(provider, accessToken) {
+  if (provider === "github") return fetchGitHubProfile(accessToken);
+  if (provider === "google") return fetchGoogleProfile(accessToken);
+  throw new Error("Unsupported OAuth provider");
+}
+
+async function fetchGitHubProfile(accessToken) {
+  const headers = {
+    authorization: `Bearer ${accessToken}`,
+    accept: "application/vnd.github+json",
+    "user-agent": "OpenSwarmAgents"
+  };
+  const [userResponse, emailsResponse] = await Promise.all([
+    fetch("https://api.github.com/user", { headers }),
+    fetch("https://api.github.com/user/emails", { headers })
+  ]);
+  const user = await userResponse.json();
+  const emails = emailsResponse.ok ? await emailsResponse.json() : [];
+  const primary = Array.isArray(emails) ? emails.find((item) => item.primary && item.verified) || emails.find((item) => item.verified) : null;
+  const email = normalizeEmail(primary?.email || user.email);
+  if (!email) throw new Error("GitHub account has no verified email");
+  return {
+    email,
+    name: String(user.name || user.login || email.split("@")[0]).slice(0, 80)
+  };
+}
+
+async function fetchGoogleProfile(accessToken) {
+  const response = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+    headers: { authorization: `Bearer ${accessToken}` }
+  });
+  const profile = await response.json();
+  if (!response.ok) throw new Error(profile.error_description || profile.error || "Google profile fetch failed");
+  const email = normalizeEmail(profile.email);
+  if (!email || profile.email_verified === false) throw new Error("Google account has no verified email");
+  return {
+    email,
+    name: String(profile.name || email.split("@")[0]).slice(0, 80)
+  };
+}
+
+function recoverExpiredLeases() {
+  let changed = false;
+  const timestamp = Date.now();
+  for (const task of store.tasks) {
+    if (task.status === "leased" && task.leaseUntil && Date.parse(task.leaseUntil) < timestamp) {
+      const previousAgent = task.assignedAgentId;
+      task.status = "open";
+      task.assignedAgentId = null;
+      task.leaseUntil = null;
+      task.leaseId = null;
+      task.updatedAt = now();
+      event("lease_expired", `Lease expired for ${task.title}`, { taskId: task.id, previousAgent });
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function createConnectorToken(auth, body) {
+  const mode = body.mode === "voting" ? "voting" : "worker";
+  const goalId = mode === "voting" ? "voting-pool" : String(body.goalId || "");
+  if (mode === "worker") {
+    const goal = store.goals.find((item) => item.id === goalId);
+    if (!goal) throw new Error("Unknown goalId");
+    if (goal.status === "completed") throw new Error("Goal is already completed");
+    const activeToken = store.connectorTokens.find(
+      (token) => token.userId === auth.user.id && token.mode === "worker" && token.status === "active"
+    );
+    const activeAgent = store.agents.find(
+      (agent) => agent.userId === auth.user.id && agent.status === "online" && agent.goalId !== "voting-pool"
+    );
+    if ((activeToken && activeToken.goalId !== goalId) || (activeAgent && activeAgent.goalId !== goalId)) {
+      throw new Error("User is already connected to another worker project");
+    }
+    if (activeToken && activeToken.goalId === goalId) {
+      activeToken.status = "revoked";
+      activeToken.revokedAt = now();
+    }
+  }
+
+  if (mode === "voting") {
+    for (const token of store.connectorTokens) {
+      if (token.userId === auth.user.id && token.mode === "voting" && token.status === "active") {
+        token.status = "revoked";
+        token.revokedAt = now();
+      }
+    }
+  }
+
+  const rawToken = `osa_conn_${randomUUID()}_${randomUUID()}`;
+  const connector = {
+    id: `connector-${randomUUID()}`,
+    userId: auth.user.id,
+    mode,
+    goalId,
+    agentId: null,
+    name: String(body.name || (mode === "voting" ? "Voting Agent" : "Worker Agent")).slice(0, 80),
+    tokenHash: hashToken(rawToken),
+    capabilities: mode === "voting" ? ["vote", "review", "research"] : normalizeList(body.capabilities, ["research", "review", "synthesis"]),
+    models: normalizeList(body.models, ["connector-local"]),
+    provider: normalizeProvider(body.provider),
+    providers: normalizeProviders(body.providers),
+    status: "active",
+    createdAt: now(),
+    lastUsedAt: null,
+    expiresAt: body.expiresAt || afterMs(now(), 30 * 24 * 60 * 60 * 1000)
+  };
+  store.connectorTokens.push(connector);
+  event("connector_token_created", `${auth.user.name} created a ${mode} connector token`, {
+    connectorId: connector.id,
+    mode,
+    goalId
+  });
+  return { rawToken, connector };
+}
+
+function revokeConnectorToken(connector, reason = "user_disconnect") {
+  connector.status = "revoked";
+  connector.revokedAt = now();
+  const agent = connector.agentId ? findAgent(connector.agentId) : null;
+  if (agent) {
+    agent.status = "offline";
+    agent.lastSeen = now();
+    releaseAgentLeases(agent.id);
+    reconcileConsensusAfterAgentDisconnect(agent.id);
+  }
+  event("connector_token_revoked", `Connector token revoked`, {
+    connectorId: connector.id,
+    agentId: agent?.id || null,
+    reason
+  });
+  return agent;
+}
+
+function releaseAgentLeases(agentId) {
+  for (const task of store.tasks) {
+    if (task.status === "leased" && task.assignedAgentId === agentId) {
+      task.status = "open";
+      task.assignedAgentId = null;
+      task.leaseUntil = null;
+      task.leaseId = null;
+      task.updatedAt = now();
+    }
+  }
+}
+
+function disconnectGoalAgents(goalId, reason = "project_completed") {
+  let disconnected = 0;
+  for (const agent of store.agents) {
+    if (agent.goalId === goalId && agent.status === "online") {
+      agent.status = "offline";
+      agent.lastSeen = now();
+      releaseAgentLeases(agent.id);
+      reconcileConsensusAfterAgentDisconnect(agent.id);
+      disconnected += 1;
+    }
+  }
+  if (disconnected) {
+    event("agents_disconnected", `${disconnected} agents disconnected from completed project`, {
+      goalId,
+      reason
+    });
+  }
+  return disconnected;
+}
+
+function findAgent(agentId) {
+  return store.agents.find((agent) => agent.id === agentId);
+}
+
+function agentCanRun(agent, task) {
+  const capabilities = new Set(agent.capabilities || []);
+  return (task.requiredCapabilities || []).every((capability) => capabilities.has(capability));
+}
+
+function taskSort(a, b) {
+  return (b.priority || 0) - (a.priority || 0) || a.createdAt.localeCompare(b.createdAt);
+}
+
+function taskCollaborationContext(task) {
+  const priorResults = store.results
+    .filter((result) => result.taskId === task.id)
+    .slice(-5)
+    .map((result) => ({
+      id: result.id,
+      agentId: result.agentId,
+      summary: result.summary,
+      content: result.content,
+      artifacts: result.artifacts || [],
+      status: result.status,
+      consensus: result.consensus || null,
+      createdAt: result.createdAt,
+      reviews: store.reviews
+        .filter((review) => review.resultId === result.id)
+        .map((review) => ({
+          agentId: review.agentId,
+          decision: review.decision,
+          score: review.score,
+          reason: review.reason,
+          createdAt: review.createdAt
+        }))
+    }));
+
+  return {
+    iteration: Number(task.iteration || 1),
+    lastRevisionReason: task.lastRevisionReason || null,
+    priorResults
+  };
+}
+
+async function handleApi(req, res, url) {
+  const method = req.method || "GET";
+  const path = url.pathname;
+
+  try {
+    const maintenanceChanged = runMaintenance();
+
+    if (method === "GET" && path === "/api/state") {
+      const auth = authFromReq(req);
+      if (maintenanceChanged || auth) await saveStore();
+      return sendJson(res, 200, publicState(auth));
+    }
+
+    if (method === "GET" && path === "/api/auth/oauth/providers") {
+      return sendJson(res, 200, publicOAuthProviders(req));
+    }
+
+    const oauthStartMatch = path.match(/^\/api\/auth\/oauth\/(github|google)\/start$/);
+    if (method === "GET" && oauthStartMatch) {
+      return startOAuth(req, res, oauthStartMatch[1], url);
+    }
+
+    const oauthCallbackMatch = path.match(/^\/api\/auth\/oauth\/(github|google)\/callback$/);
+    if (method === "GET" && oauthCallbackMatch) {
+      return completeOAuth(req, res, oauthCallbackMatch[1], url);
+    }
+
+    if (method === "POST" && path === "/api/auth/login") {
+      if (!isDevLoginEnabled()) {
+        return forbidden(res, "Local MVP login is disabled. Use OAuth.");
+      }
+      const body = await readJson(req);
+      const email = normalizeEmail(body.email);
+      const name = String(body.name || email.split("@")[0] || "OSA User").trim().slice(0, 80);
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return badRequest(res, "Valid email is required");
+
+      const user = upsertUser(email, name);
+      const session = createSession(user);
+      await saveStore();
+      return sendJson(res, 201, { user: publicUser(user), sessionToken: session.token }, { "set-cookie": sessionCookie(session.token) });
+    }
+
+    if (method === "GET" && path === "/api/auth/me") {
+      const auth = authFromReq(req);
+      if (!auth) return unauthorized(res);
+      await saveStore();
+      return sendJson(res, 200, { user: publicUser(auth.user) });
+    }
+
+    if (method === "POST" && path === "/api/auth/logout") {
+      const auth = authFromReq(req);
+      const clearCookie = sessionCookie("", 0);
+      if (!auth) return sendJson(res, 200, { ok: true }, { "set-cookie": clearCookie });
+      store.sessions = store.sessions.filter((session) => session.id !== auth.session.id);
+      await saveStore();
+      return sendJson(res, 200, { ok: true }, { "set-cookie": clearCookie });
+    }
+
+    if (method === "POST" && path === "/api/connectors/token") {
+      const auth = authFromReq(req);
+      if (!auth) return unauthorized(res, "Sign in before creating connector tokens");
+      const body = await readJson(req);
+      try {
+        const { rawToken, connector } = createConnectorToken(auth, body);
+        await saveStore();
+        return sendJson(res, 201, {
+          token: rawToken,
+          connector: publicConnectorToken(connector),
+          state: publicState(auth)
+        });
+      } catch (error) {
+        return badRequest(res, error.message);
+      }
+    }
+
+    const connectorRevokeMatch = path.match(/^\/api\/connectors\/([^/]+)\/revoke$/);
+    if (method === "POST" && connectorRevokeMatch) {
+      const auth = authFromReq(req);
+      if (!auth) return unauthorized(res, "Sign in before revoking connector tokens");
+      const connector = store.connectorTokens.find((item) => item.id === connectorRevokeMatch[1]);
+      if (!connector || connector.userId !== auth.user.id) return notFound(res);
+      revokeConnectorToken(connector);
+      await saveStore();
+      return sendJson(res, 200, {
+        connector: publicConnectorToken(connector),
+        state: publicState(auth)
+      });
+    }
+
+    if (method === "POST" && path === "/api/demo/reset") {
+      if (!areDemoEndpointsEnabled()) return forbidden(res, "Demo endpoints are disabled");
+      const seed = JSON.parse(await readFile(seedPath, "utf8"));
+      store = normalizeStore({
+        ...seed,
+        agents: [],
+        results: [],
+        reviews: [],
+        claims: [],
+        users: [],
+        sessions: [],
+        connectorTokens: [],
+        oauthStates: [],
+        proposalVotes: [],
+        events: []
+      });
+      event("system", "Demo state reset");
+      await saveStore();
+      return sendJson(res, 200, publicState());
+    }
+
+    if (method === "POST" && path === "/api/demo/cycle") {
+      if (!areDemoEndpointsEnabled()) return forbidden(res, "Demo endpoints are disabled");
+      runDemoCycle();
+      await saveStore();
+      return sendJson(res, 200, publicState());
+    }
+
+    if (method === "POST" && path === "/api/agents/register") {
+      const body = await readJson(req);
+      const auth = authFromReq(req);
+      const connector = connectorTokenFromReq(req);
+      if (connector && connector.token.mode !== "worker") return forbidden(res, "Connector token is not scoped to the Worker Pool");
+      const actorUser = auth?.user || connector?.user || null;
+      const requestedGoalId = connector?.token.goalId || body.goalId;
+      const goal = store.goals.find((item) => item.id === requestedGoalId);
+      if (!goal) return badRequest(res, "Unknown goalId");
+      if (goal.status === "completed") return badRequest(res, "Goal is already completed");
+      if (actorUser) {
+        const activeAgent = store.agents.find(
+          (agent) => agent.userId === actorUser.id && agent.status === "online" && agent.goalId !== "voting-pool"
+        );
+        if (activeAgent && activeAgent.goalId !== goal.id) {
+          return badRequest(res, "User is already connected to another worker project");
+        }
+        if (activeAgent && activeAgent.goalId === goal.id) {
+          updateAgentProviderMetadata(activeAgent, body);
+          if (connector) {
+            activeAgent.connectorTokenId = connector.token.id;
+            connector.token.agentId = activeAgent.id;
+            connector.token.lastUsedAt = now();
+          }
+          activeAgent.lastSeen = now();
+          await saveStore();
+          return sendJson(res, 200, { agent: activeAgent, state: publicState() });
+        }
+      }
+
+      const agent = {
+        id: `agent-${randomUUID()}`,
+        userId: actorUser?.id || null,
+        connectorTokenId: connector?.token.id || null,
+        name: String(body.name || connector?.token.name || "Unnamed Agent").slice(0, 80),
+        goalId: goal.id,
+        capabilities: ensureConsensusCapability(normalizeList(body.capabilities, connector?.token.capabilities || ["research", "review"])),
+        models: normalizeList(body.models, connector?.token.models || ["unknown"]),
+        provider: normalizeProvider(body.provider || connector?.token.provider),
+        providers: normalizeProviders(body.providers || connector?.token.providers),
+        maxConcurrentTasks: Math.max(1, Math.min(5, Number(body.maxConcurrentTasks || 1))),
+        reputation: {
+          research: 0,
+          review: 0,
+          synthesis: 0,
+          accepted: 0,
+          disputed: 0
+        },
+        status: "online",
+        lastSeen: now(),
+        createdAt: now()
+      };
+
+      store.agents.push(agent);
+      if (connector) {
+        connector.token.agentId = agent.id;
+        connector.token.lastUsedAt = now();
+      }
+      goal.supporters += 1;
+      event("agent_registered", `${agent.name} joined ${goal.title}`, {
+        agentId: agent.id,
+        goalId: goal.id
+      });
+      await saveStore();
+      return sendJson(res, 201, { agent, state: publicState() });
+    }
+
+    if (method === "POST" && path === "/api/proposals") {
+      const body = await readJson(req);
+      const auth = authFromReq(req);
+      if (!auth) return unauthorized(res, "Sign in before submitting project proposals");
+      const title = String(body.title || "").trim();
+      const description = String(body.description || "").trim();
+      if (title.length < 6) return badRequest(res, "Proposal title is too short");
+      if (description.length < 80) return badRequest(res, "Project brief must be at least 80 characters");
+
+      const proposal = {
+        id: `proposal-${randomUUID()}`,
+        title: title.slice(0, 120),
+        description: description.slice(0, 12000),
+        createdBy: auth.user.id,
+        createdByName: auth.user.name,
+        status: "voting",
+        score: 0,
+        votes: 0,
+        createdAt: now()
+      };
+      proposal.votingEndsAt = afterMs(proposal.createdAt, proposalVotingMs);
+      store.proposals.unshift(proposal);
+      event("proposal_created", `New proposal: ${proposal.title}`, { proposalId: proposal.id });
+      await saveStore();
+      return sendJson(res, 201, { proposal, state: publicState() });
+    }
+
+    if (method === "POST" && path === "/api/voting/connect") {
+      const body = await readJson(req);
+      const auth = authFromReq(req);
+      const connector = connectorTokenFromReq(req);
+      if (connector && connector.token.mode !== "voting") return forbidden(res, "Connector token is not scoped to the Voting Pool");
+      const actorUser = auth?.user || connector?.user || null;
+      let agent = body.agentId ? findAgent(body.agentId) : null;
+      if (connector?.token.agentId) {
+        agent = findAgent(connector.token.agentId);
+      }
+      if (!agent && actorUser) {
+        agent = store.agents.find((item) => item.userId === actorUser.id && item.goalId === "voting-pool");
+      }
+      if (!agent) {
+        agent = {
+          id: `agent-${randomUUID()}`,
+          userId: actorUser?.id || null,
+          connectorTokenId: connector?.token.id || null,
+          name: String(body.name || connector?.token.name || `Voting Agent ${store.agents.length + 1}`).slice(0, 80),
+          goalId: "voting-pool",
+          capabilities: ["vote", "review", "research"],
+          models: normalizeList(body.models, ["voting-sim"]),
+          provider: normalizeProvider(body.provider),
+          providers: normalizeProviders(body.providers),
+          maxConcurrentTasks: 1,
+          reputation: {
+            research: 0,
+            review: 0,
+            synthesis: 0,
+            accepted: 0,
+            disputed: 0,
+            voting: 0
+          },
+          status: "online",
+          lastSeen: now(),
+          createdAt: now()
+        };
+        store.agents.push(agent);
+      }
+      if (connector) {
+        agent.connectorTokenId = connector.token.id;
+        connector.token.agentId = agent.id;
+        connector.token.lastUsedAt = now();
+      }
+      agent.status = "online";
+      agent.lastSeen = now();
+      updateAgentProviderMetadata(agent, body);
+      const existingVote = store.proposalVotes.find((vote) => vote.agentId === agent.id);
+      const vote = castProposalVote(agent);
+      await saveStore();
+      return sendJson(res, 201, {
+        agent,
+        vote,
+        decision: votingDecisionPayload(agent, vote, Boolean(existingVote)),
+        state: publicState()
+      });
+    }
+
+    const proposalVoteMatch = path.match(/^\/api\/proposals\/([^/]+)\/vote$/);
+    if (method === "POST" && proposalVoteMatch) {
+      const body = await readJson(req);
+      const proposal = store.proposals.find((item) => item.id === proposalVoteMatch[1]);
+      if (!proposal) return notFound(res);
+      const agent = findAgent(body.agentId);
+      if (!agent) return badRequest(res, "Unknown agentId");
+      if (proposal.status !== "voting") return badRequest(res, "Proposal is not in voting");
+
+      const vote = addProposalVote(proposal, agent, Number(body.score || 1), String(body.reason || ""));
+      await saveStore();
+      return sendJson(res, 201, { vote, state: publicState() });
+    }
+
+    const heartbeatMatch = path.match(/^\/api\/agents\/([^/]+)\/heartbeat$/);
+    if (method === "POST" && heartbeatMatch) {
+      const agent = findAgent(heartbeatMatch[1]);
+      if (!agent) return notFound(res);
+      const connectorAccess = authorizeConnectorAgent(req, agent);
+      if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+      agent.status = "online";
+      agent.lastSeen = now();
+      await saveStore();
+      return sendJson(res, 200, { agent });
+    }
+
+    const disconnectMatch = path.match(/^\/api\/agents\/([^/]+)\/disconnect$/);
+    if (method === "POST" && disconnectMatch) {
+      const agent = findAgent(disconnectMatch[1]);
+      if (!agent) return notFound(res);
+      const connectorAccess = authorizeConnectorAgent(req, agent);
+      if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+      agent.status = "offline";
+      agent.lastSeen = now();
+      releaseAgentLeases(agent.id);
+      reconcileConsensusAfterAgentDisconnect(agent.id);
+      event("agent_disconnected", `${agent.name} disconnected from worker pool`, {
+        agentId: agent.id,
+        goalId: agent.goalId
+      });
+      await saveStore();
+      return sendJson(res, 200, { agent, state: publicState() });
+    }
+
+    if (method === "POST" && path === "/api/tasks/claim") {
+      const body = await readJson(req);
+      const agent = findAgent(body.agentId);
+      if (!agent) return badRequest(res, "Unknown agentId");
+      const connectorAccess = authorizeConnectorAgent(req, agent);
+      if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+
+      recoverExpiredLeases();
+      agent.status = "online";
+      agent.lastSeen = now();
+
+      const activeLeases = store.tasks.filter(
+        (task) => task.status === "leased" && task.assignedAgentId === agent.id
+      ).length;
+      if (activeLeases >= agent.maxConcurrentTasks) {
+        return sendJson(res, 200, { task: null, reason: "max_concurrent_tasks_reached" });
+      }
+
+      const goalId = body.goalId || agent.goalId;
+      const task = store.tasks
+        .filter((item) => item.status === "open")
+        .filter((item) => item.goalId === goalId)
+        .filter((item) => store.goals.some((goal) => goal.id === item.goalId && goal.status !== "completed"))
+        .filter((item) => !item.assignedReviewerId || item.assignedReviewerId === agent.id)
+        .filter((item) => agentCanRun(agent, item))
+        .sort(taskSort)[0];
+
+      if (!task) {
+        return sendJson(res, 200, { task: null, reason: "no_matching_task" });
+      }
+
+      task.status = "leased";
+      task.assignedAgentId = agent.id;
+      task.leaseId = `lease-${randomUUID()}`;
+      task.leaseUntil = new Date(Date.now() + leaseMs).toISOString();
+      task.updatedAt = now();
+      event("task_leased", `${agent.name} claimed ${task.title}`, {
+        agentId: agent.id,
+        taskId: task.id,
+        leaseUntil: task.leaseUntil
+      });
+      await saveStore();
+      return sendJson(res, 200, { task, context: taskCollaborationContext(task) });
+    }
+
+    const resultMatch = path.match(/^\/api\/tasks\/([^/]+)\/result$/);
+    if (method === "POST" && resultMatch) {
+      const task = store.tasks.find((item) => item.id === resultMatch[1]);
+      if (!task) return notFound(res);
+      const body = await readJson(req);
+      const agent = findAgent(body.agentId);
+      if (!agent) return badRequest(res, "Unknown agentId");
+      const connectorAccess = authorizeConnectorAgent(req, agent);
+      if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+      if (task.assignedAgentId !== agent.id) return badRequest(res, "Task is not leased to this agent");
+
+      const result = {
+        id: `result-${randomUUID()}`,
+        taskId: task.id,
+        goalId: task.goalId,
+        agentId: agent.id,
+        summary: String(body.summary || "").slice(0, 240),
+        content: String(body.content || "").slice(0, 10000),
+        artifacts: normalizeArtifacts(body.artifacts),
+        sources: normalizeList(body.sources, []),
+        confidence: clamp(Number(body.confidence || 0.5), 0, 1),
+        status: "in_consensus",
+        iteration: Number(task.iteration || 1),
+        consensus: createConsensusSnapshot(task.goalId, agent.id),
+        createdAt: now()
+      };
+
+      task.status = "in_consensus";
+      task.leaseUntil = null;
+      task.leaseId = null;
+      task.updatedAt = now();
+      store.results.push(result);
+
+      if (result.consensus.requiredAgentIds.length) {
+        createConsensusReviewTasks(task, result);
+      } else {
+        finalizeAcceptedResult(result, null);
+      }
+      agent.reputation[task.type] = (agent.reputation[task.type] || 0) + 1;
+      event("result_submitted", `${agent.name} submitted result for ${task.title}`, {
+        resultId: result.id,
+        taskId: task.id,
+        consensusRequired: result.consensus.requiredAgentIds.length
+      });
+      await saveStore();
+      return sendJson(res, 201, { result, state: publicState() });
+    }
+
+    const reviewMatch = path.match(/^\/api\/results\/([^/]+)\/review$/);
+    if (method === "POST" && reviewMatch) {
+      const result = store.results.find((item) => item.id === reviewMatch[1]);
+      if (!result) return notFound(res);
+      const body = await readJson(req);
+      const agent = findAgent(body.agentId);
+      if (!agent) return badRequest(res, "Unknown agentId");
+      const connectorAccess = authorizeConnectorAgent(req, agent);
+      if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+      if (agent.id === result.agentId) return badRequest(res, "Result author cannot review own result");
+      if (store.reviews.some((item) => item.resultId === result.id && item.agentId === agent.id)) {
+        return badRequest(res, "Agent already reviewed this result");
+      }
+      if (result.consensus?.requiredAgentIds?.length && !result.consensus.requiredAgentIds.includes(agent.id)) {
+        return badRequest(res, "Agent is not part of this result consensus group");
+      }
+
+      const decision = ["accepted", "rejected", "needs_revision"].includes(body.decision)
+        ? body.decision
+        : "needs_revision";
+      const review = {
+        id: `review-${randomUUID()}`,
+        resultId: result.id,
+        goalId: result.goalId,
+        taskId: result.taskId,
+        agentId: agent.id,
+        decision,
+        score: clamp(Number(body.score || 0.5), 0, 1),
+        reason: String(body.reason || "").slice(0, 2000),
+        createdAt: now()
+      };
+
+      store.reviews.push(review);
+      agent.reputation.review += decision === "accepted" ? 1 : 0.5;
+      applyReviewDecision(result, review);
+      event("review_submitted", `${agent.name} reviewed ${result.summary || result.id}`, {
+        resultId: result.id,
+        decision
+      });
+      await saveStore();
+      return sendJson(res, 201, { review, state: publicState() });
+    }
+
+    return notFound(res);
+  } catch (error) {
+    console.error(error);
+    return sendJson(res, 500, { error: "internal_error", message: error.message });
+  }
+}
+
+function topVotingProposal() {
+  return store.proposals
+    .filter((proposal) => proposal.status === "voting" && proposal.votes > 0)
+    .sort((a, b) => b.score - a.score || b.votes - a.votes || a.createdAt.localeCompare(b.createdAt))[0];
+}
+
+function topExpiredVotingProposal() {
+  const timestamp = Date.now();
+  return store.proposals
+    .filter((proposal) => proposal.status === "voting")
+    .filter((proposal) => proposal.votes > 0)
+    .filter((proposal) => Date.parse(proposal.votingEndsAt) <= timestamp)
+    .sort((a, b) => b.votes - a.votes || b.score - a.score || a.createdAt.localeCompare(b.createdAt))[0];
+}
+
+function runMaintenance() {
+  let changed = false;
+  changed = recoverExpiredLeases() || changed;
+  changed = autoPromoteExpiredWinner() || changed;
+  return changed;
+}
+
+function autoPromoteExpiredWinner() {
+  const winner = topExpiredVotingProposal();
+  if (!winner) return false;
+  promoteProposal(winner, "auto_72h");
+  return true;
+}
+
+function normalizeProposal(proposal) {
+  const createdAt = proposal.createdAt || now();
+  return {
+    ...proposal,
+    createdAt,
+    score: Number(proposal.score || 0),
+    votes: Number(proposal.votes || 0),
+    status: proposal.status || "voting",
+    votingEndsAt: proposal.votingEndsAt || afterMs(createdAt, proposalVotingMs)
+  };
+}
+
+function castProposalVote(agent) {
+  const existingVote = store.proposalVotes.find((vote) => vote.agentId === agent.id);
+  if (existingVote) return existingVote;
+
+  const proposal = store.proposals
+    .filter((item) => item.status === "voting")
+    .sort((a, b) => proposalHeuristic(b) - proposalHeuristic(a) || a.createdAt.localeCompare(b.createdAt))[0];
+
+  if (!proposal) return null;
+  return addProposalVote(
+    proposal,
+    agent,
+    Number(proposalHeuristic(proposal).toFixed(2)),
+    proposalVoteReason(proposal)
+  );
+}
+
+function votingDecisionPayload(agent, vote, alreadyVoted = false) {
+  if (!vote) {
+    return {
+      agentId: agent.id,
+      agentName: agent.name,
+      proposalId: null,
+      proposalTitle: null,
+      reason: "No open proposal is currently available in the Voting Pool.",
+      alreadyVoted
+    };
+  }
+
+  const proposal = store.proposals.find((item) => item.id === vote.proposalId);
+  return {
+    agentId: agent.id,
+    agentName: agent.name,
+    proposalId: vote.proposalId,
+    proposalTitle: proposal?.title || "Unknown proposal",
+    reason: vote.reason || "The agent selected this proposal as the strongest option in the Voting Pool.",
+    alreadyVoted
+  };
+}
+
+function proposalHeuristic(proposal) {
+  const text = `${proposal.title} ${proposal.description}`.toLowerCase();
+  let score = 1;
+  for (const word of ["agent", "connector", "security", "safe", "trust", "open", "verified", "knowledge"]) {
+    if (text.includes(word)) score += 0.35;
+  }
+  if (text.length > 180) score += 0.2;
+  return score;
+}
+
+function proposalVoteReason(proposal) {
+  const text = `${proposal.title} ${proposal.description}`.toLowerCase();
+  const signals = [];
+  if (text.includes("agent") || text.includes("connector")) signals.push("it improves the agent network itself");
+  if (text.includes("security") || text.includes("safe") || text.includes("trust")) signals.push("it reduces platform risk");
+  if (text.includes("open") || text.includes("verified") || text.includes("knowledge")) signals.push("it can produce reusable verified knowledge");
+  if (!signals.length) signals.push("it appears feasible and useful based on the project brief");
+  return `The agent selected this proposal because ${signals.slice(0, 2).join(" and ")}.`;
+}
+
+function addProposalVote(proposal, agent, score, reason) {
+  const existing = store.proposalVotes.find((vote) => vote.agentId === agent.id);
+  if (existing) return existing;
+  const vote = {
+    id: `vote-${randomUUID()}`,
+    proposalId: proposal.id,
+    agentId: agent.id,
+    score: clamp(score, 0, 5),
+    reason: reason.slice(0, 1000),
+    createdAt: now()
+  };
+  store.proposalVotes.push(vote);
+  proposal.votes += 1;
+  proposal.score = Number((proposal.score + vote.score).toFixed(2));
+  agent.lastSeen = now();
+  agent.reputation.voting = 1;
+  event("proposal_voted", `${agent.name} voted for ${proposal.title}`, {
+    proposalId: proposal.id,
+    agentId: agent.id
+  });
+  return vote;
+}
+
+function promoteProposal(proposal, mode = "manual") {
+  proposal.status = "promoted";
+  proposal.promotedAt = now();
+  proposal.promotionMode = mode;
+  const goal = {
+    id: `goal-${slugify(proposal.title)}-${randomUUID().slice(0, 8)}`,
+    title: proposal.title,
+    description: proposal.description,
+    status: "active",
+    supporters: 0,
+    sourceProposalId: proposal.id,
+    createdAt: now()
+  };
+  store.goals.unshift(goal);
+  store.tasks.push(
+    {
+      id: `task-${randomUUID()}`,
+      goalId: goal.id,
+      type: "research",
+      title: `Baseline research for ${proposal.title}`,
+      description: `Collect the strongest available evidence, prior art, constraints, and open questions for: ${proposal.description}`,
+      requiredCapabilities: ["research"],
+      priority: 85,
+      status: "open",
+      createdAt: now()
+    },
+    {
+      id: `task-${randomUUID()}`,
+      goalId: goal.id,
+      type: "synthesis",
+      title: `Create initial plan for ${proposal.title}`,
+      description: "Turn accepted research into a practical first execution roadmap with milestones and validation steps.",
+      requiredCapabilities: ["synthesis"],
+      priority: 72,
+      status: "open",
+      createdAt: now()
+    }
+  );
+  event("proposal_promoted", `Promoted proposal into worker pool: ${proposal.title}`, {
+    proposalId: proposal.id,
+    goalId: goal.id,
+    mode
+  });
+  return goal;
+}
+
+function slugify(value) {
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 42) || "proposal";
+}
+
+function createConsensusSnapshot(goalId, authorAgentId) {
+  const requiredAgentIds = store.agents
+    .filter((agent) => agent.goalId === goalId)
+    .filter((agent) => agent.status === "online")
+    .filter((agent) => agent.id !== authorAgentId)
+    .map((agent) => agent.id)
+    .sort();
+
+  return {
+    requiredAgentIds,
+    acceptedAgentIds: [],
+    revisionAgentIds: [],
+    rejectedAgentIds: [],
+    status: requiredAgentIds.length ? "pending" : "solo_accepted",
+    requiredCount: requiredAgentIds.length,
+    acceptedCount: 0
+  };
+}
+
+function createConsensusReviewTasks(task, result) {
+  for (const reviewerId of result.consensus.requiredAgentIds) {
+    const reviewer = findAgent(reviewerId);
+    const existing = store.tasks.some(
+      (item) => item.reviewForResultId === result.id && item.assignedReviewerId === reviewerId
+    );
+    if (existing) continue;
+    store.tasks.push({
+      id: `task-review-${randomUUID()}`,
+      goalId: task.goalId,
+      type: "review",
+      title: `Consensus review: ${task.title}`,
+      description: `Review result ${result.id} from iteration ${result.iteration}. Accept only if it is strong enough for the project to move forward; request revision if another iteration is needed.`,
+      requiredCapabilities: ["review"],
+      priority: Math.max(50, (task.priority || 50) - 5),
+      status: "open",
+      reviewForResultId: result.id,
+      assignedReviewerId: reviewerId,
+      assignedReviewerName: reviewer?.name || "Project agent",
+      createdAt: now()
+    });
+  }
+}
+
+function applyReviewDecision(result, review) {
+  const task = store.tasks.find((item) => item.id === result.taskId);
+  if (!result.consensus) result.consensus = createConsensusSnapshot(result.goalId, result.agentId);
+
+  if (review.decision === "accepted" && review.score >= 0.65) {
+    result.consensus.acceptedAgentIds = [...new Set([...(result.consensus.acceptedAgentIds || []), review.agentId])];
+    result.consensus.acceptedCount = result.consensus.acceptedAgentIds.length;
+    closeReviewTaskForReviewer(result.id, review.agentId, "done");
+    const hasConsensus = result.consensus.requiredAgentIds.every((agentId) =>
+      result.consensus.acceptedAgentIds.includes(agentId)
+    );
+    if (!hasConsensus) {
+      result.status = "in_consensus";
+      result.consensus.status = "pending";
+      if (task) task.status = "in_consensus";
+      event("consensus_progress", `Consensus progress for ${task?.title || result.summary || result.id}`, {
+        resultId: result.id,
+        accepted: result.consensus.acceptedCount,
+        required: result.consensus.requiredAgentIds.length
+      });
+      return;
+    }
+
+    finalizeAcceptedResult(result, review);
+    return;
+  }
+
+  if (review.decision === "rejected" && review.score <= 0.35) {
+    result.status = "rejected";
+    result.consensus.rejectedAgentIds = [...new Set([...(result.consensus.rejectedAgentIds || []), review.agentId])];
+    result.consensus.status = "rejected";
+    const author = findAgent(result.agentId);
+    if (author) author.reputation.disputed += 1;
+    closeReviewTasks(result.id);
+    if (task) {
+      task.status = "open";
+      task.assignedAgentId = null;
+      task.leaseUntil = null;
+      task.leaseId = null;
+      task.iteration = Number(task.iteration || result.iteration || 1) + 1;
+      task.lastRevisionReason = review.reason || "A project agent rejected the result.";
+      task.updatedAt = now();
+    }
+    event("consensus_rejected", `Result rejected; task returned to worker pool for another iteration`, {
+      resultId: result.id,
+      taskId: task?.id,
+      reviewerAgentId: review.agentId
+    });
+    return;
+  }
+
+  result.status = "needs_revision";
+  result.consensus.revisionAgentIds = [...new Set([...(result.consensus.revisionAgentIds || []), review.agentId])];
+  result.consensus.status = "needs_revision";
+  closeReviewTasks(result.id);
+  if (task) {
+    task.status = "open";
+    task.assignedAgentId = null;
+    task.leaseUntil = null;
+    task.leaseId = null;
+    task.iteration = Number(task.iteration || result.iteration || 1) + 1;
+    task.lastRevisionReason = review.reason;
+    task.updatedAt = now();
+  }
+  event("consensus_revision", `Revision requested for ${task?.title || result.summary || result.id}`, {
+    resultId: result.id,
+    taskId: task?.id,
+    reviewerAgentId: review.agentId
+  });
+}
+
+function finalizeAcceptedResult(result, review) {
+  const task = store.tasks.find((item) => item.id === result.taskId);
+  result.status = "accepted";
+  result.consensus = result.consensus || createConsensusSnapshot(result.goalId, result.agentId);
+  result.consensus.status = "accepted";
+  result.consensus.acceptedCount = result.consensus.acceptedAgentIds?.length || 0;
+  if (task) task.status = "done";
+  const author = findAgent(result.agentId);
+  if (author) author.reputation.accepted += 1;
+  createClaimFromResult(result, review);
+  publishResultPoolEntry(result, review);
+  closeReviewTasks(result.id);
+  if (task) completeGoalIfDone(task.goalId, result);
+}
+
+function reconcileConsensusAfterAgentDisconnect(agentId) {
+  for (const result of store.results) {
+    if (result.status !== "in_consensus" || !result.consensus?.requiredAgentIds?.includes(agentId)) continue;
+    result.consensus.requiredAgentIds = result.consensus.requiredAgentIds.filter((id) => id !== agentId);
+    result.consensus.requiredCount = result.consensus.requiredAgentIds.length;
+    closeReviewTaskForReviewer(result.id, agentId, "done");
+    const hasConsensus = result.consensus.requiredAgentIds.every((id) =>
+      result.consensus.acceptedAgentIds?.includes(id)
+    );
+    if (hasConsensus) {
+      event("consensus_adjusted", `Consensus completed after disconnected agent left review group`, {
+        resultId: result.id,
+        disconnectedAgentId: agentId
+      });
+      finalizeAcceptedResult(result, null);
+    }
+  }
+}
+
+function publishResultPoolEntry(result, review) {
+  if (store.resultPool.some((entry) => entry.resultId === result.id)) return;
+  const goal = store.goals.find((item) => item.id === result.goalId);
+  const task = store.tasks.find((item) => item.id === result.taskId);
+  if (task?.reviewForResultId) return;
+
+  store.resultPool.unshift({
+    id: `published-${randomUUID()}`,
+    goalId: result.goalId,
+    goalTitle: goal?.title || "Unknown project",
+    taskId: result.taskId,
+    taskTitle: task?.title || result.summary || "Completed task",
+    resultId: result.id,
+    agentId: result.agentId,
+    reviewerAgentId: review?.agentId || null,
+    consensus: result.consensus || null,
+    summary: result.summary || result.content.slice(0, 240),
+      content: result.content,
+      artifacts: result.artifacts || [],
+      sources: result.sources,
+      confidence: review ? Number(((result.confidence + review.score) / 2).toFixed(2)) : result.confidence,
+    status: "published",
+    createdAt: now()
+  });
+  event("result_published", `Published result for ${task?.title || result.summary || result.id}`, {
+    goalId: result.goalId,
+    taskId: result.taskId,
+    resultId: result.id
+  });
+}
+
+function completeGoalIfDone(goalId, finalResult) {
+  const goal = store.goals.find((item) => item.id === goalId);
+  if (!goal || goal.status === "completed") return false;
+  const workerTasks = store.tasks.filter((task) => task.goalId === goalId && !task.reviewForResultId);
+  if (!workerTasks.length) return false;
+  const hasActiveTasks = workerTasks.some((task) =>
+    ["open", "leased", "needs_review", "needs_revision", "in_consensus"].includes(task.status)
+  );
+  if (hasActiveTasks) return false;
+
+  goal.status = "completed";
+  goal.completedAt = now();
+  goal.finalResultId = finalResult.id;
+  goal.supporters = store.agents.filter((agent) => agent.goalId === goalId).length;
+  disconnectGoalAgents(goalId, "project_completed");
+  event("goal_completed", `Completed project moved to Result Pool: ${goal.title}`, {
+    goalId,
+    resultId: finalResult.id
+  });
+  return true;
+}
+
+function buildResultPoolFromAccepted(goals, tasks, results, reviews) {
+  const entries = [];
+  for (const result of results) {
+    if (result.status !== "accepted") continue;
+    const task = tasks.find((item) => item.id === result.taskId);
+    if (task?.reviewForResultId) continue;
+    const goal = goals.find((item) => item.id === result.goalId);
+    const review = reviews.find((item) => item.resultId === result.id && item.decision === "accepted");
+    entries.push({
+      id: `published-${result.id}`,
+      goalId: result.goalId,
+      goalTitle: goal?.title || "Unknown project",
+      taskId: result.taskId,
+      taskTitle: task?.title || result.summary || "Completed task",
+      resultId: result.id,
+      agentId: result.agentId,
+      reviewerAgentId: review?.agentId || null,
+      consensus: result.consensus || null,
+      summary: result.summary || result.content.slice(0, 240),
+      content: result.content,
+      artifacts: result.artifacts || [],
+      sources: result.sources || [],
+      confidence: review ? Number(((result.confidence + review.score) / 2).toFixed(2)) : result.confidence,
+      status: "published",
+      createdAt: result.createdAt
+    });
+  }
+  return entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function createClaimFromResult(result, review) {
+  const duplicate = store.claims.some((claim) => claim.resultId === result.id);
+  if (duplicate) return;
+  const task = store.tasks.find((item) => item.id === result.taskId);
+  store.claims.unshift({
+    id: `claim-${randomUUID()}`,
+    goalId: result.goalId,
+    resultId: result.id,
+    title: task?.title || result.summary || "Accepted result",
+    statement: result.summary || result.content.slice(0, 240),
+    sources: result.sources,
+    confidence: review ? Number(((result.confidence + review.score) / 2).toFixed(2)) : result.confidence,
+    proposedBy: result.agentId,
+    verifiedBy: result.consensus?.acceptedAgentIds?.length ? result.consensus.acceptedAgentIds : review ? [review.agentId] : [],
+    status: "accepted",
+    createdAt: now()
+  });
+}
+
+function closeReviewTasks(resultId) {
+  for (const task of store.tasks) {
+    if (task.reviewForResultId === resultId && ["open", "leased"].includes(task.status)) {
+      task.status = "done";
+      task.assignedAgentId = null;
+      task.leaseUntil = null;
+      task.leaseId = null;
+      task.updatedAt = now();
+    }
+  }
+}
+
+function closeReviewTaskForReviewer(resultId, reviewerAgentId, status) {
+  for (const task of store.tasks) {
+    if (task.reviewForResultId === resultId && task.assignedReviewerId === reviewerAgentId) {
+      task.status = status;
+      task.assignedAgentId = null;
+      task.leaseUntil = null;
+      task.leaseId = null;
+      task.updatedAt = now();
+    }
+  }
+}
+
+function normalizeList(value, fallback) {
+  if (!Array.isArray(value)) return fallback;
+  const cleaned = value
+    .map((item) => String(item).trim().toLowerCase())
+    .filter(Boolean)
+    .slice(0, 20);
+  return cleaned.length ? [...new Set(cleaned)] : fallback;
+}
+
+function normalizeArtifacts(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((artifact) => {
+      if (!artifact || typeof artifact !== "object") return null;
+      const name = String(artifact.name || artifact.filename || "").trim().slice(0, 180);
+      const mimeType = String(artifact.mimeType || artifact.mime || "").trim().slice(0, 120);
+      const uri = String(artifact.uri || artifact.url || artifact.path || "").trim().slice(0, 2000);
+      const description = String(artifact.description || artifact.summary || "").trim().slice(0, 1000);
+      const kind = normalizeArtifactKind(artifact.kind || artifact.type || mimeType || name);
+      if (!name && !uri && !description) return null;
+      return {
+        id: String(artifact.id || `artifact-${randomUUID()}`).slice(0, 100),
+        name: name || artifactNameForKind(kind),
+        kind,
+        mimeType,
+        uri,
+        size: Number.isFinite(Number(artifact.size)) ? Math.max(0, Number(artifact.size)) : null,
+        description
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 30);
+}
+
+function normalizeArtifactKind(value) {
+  const text = String(value || "").toLowerCase();
+  if (text.includes("image") || /\.(png|jpe?g|webp|gif|svg)$/i.test(text)) return "image";
+  if (text.includes("pdf") || /\.pdf$/i.test(text)) return "pdf";
+  if (text.includes("csv") || /\.csv$/i.test(text)) return "csv";
+  if (text.includes("excel") || text.includes("spreadsheet") || /\.(xlsx?|ods)$/i.test(text)) return "spreadsheet";
+  if (text.includes("zip") || text.includes("tar") || text.includes("bundle") || /\.(zip|tar|gz|tgz)$/i.test(text)) return "bundle";
+  if (text.includes("code") || text.includes("javascript") || text.includes("python") || /\.(js|ts|py|go|rs|java|json|md)$/i.test(text)) {
+    return "code";
+  }
+  if (text.includes("video") || /\.(mp4|webm|mov)$/i.test(text)) return "video";
+  if (text.includes("audio") || /\.(mp3|wav|m4a|ogg)$/i.test(text)) return "audio";
+  return "file";
+}
+
+function artifactNameForKind(kind) {
+  return {
+    image: "Image output",
+    pdf: "PDF report",
+    csv: "CSV dataset",
+    spreadsheet: "Spreadsheet",
+    bundle: "Artifact bundle",
+    code: "Code artifact",
+    video: "Video output",
+    audio: "Audio output",
+    file: "File artifact"
+  }[kind] || "Artifact";
+}
+
+function normalizeProvider(value) {
+  const provider = String(value || "").trim().toLowerCase();
+  return ["openai", "anthropic", "gemini"].includes(provider) ? provider : "unknown";
+}
+
+function normalizeProviders(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map(normalizeProvider).filter((provider) => provider !== "unknown"))].slice(0, 8);
+}
+
+function updateAgentProviderMetadata(agent, body) {
+  if (body.provider) agent.provider = normalizeProvider(body.provider);
+  if (body.providers) agent.providers = normalizeProviders(body.providers);
+  if (body.models) agent.models = normalizeList(body.models, agent.models || ["unknown"]);
+}
+
+function ensureConsensusCapability(capabilities) {
+  return capabilities.includes("review") ? capabilities : [...capabilities, "review"];
+}
+
+function clamp(value, min, max) {
+  if (Number.isNaN(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+function runDemoCycle() {
+  const goal = store.goals[0];
+  let researchAgent = store.agents.find((agent) => agent.name === "Demo Research Agent");
+  let reviewAgent = store.agents.find((agent) => agent.name === "Demo Review Agent");
+
+  if (!researchAgent) {
+    researchAgent = createDemoAgent("Demo Research Agent", goal.id, ["research", "synthesis"], ["gpt-demo"]);
+  }
+  if (!reviewAgent) {
+    reviewAgent = createDemoAgent("Demo Review Agent", goal.id, ["review", "research"], ["claude-demo"]);
+  }
+
+  const openTask = store.tasks
+    .filter((task) => task.goalId === goal.id && task.status === "open" && agentCanRun(researchAgent, task))
+    .sort(taskSort)[0];
+
+  if (!openTask) {
+    event("demo", "No open demo task found");
+    return;
+  }
+
+  openTask.status = "in_consensus";
+  openTask.assignedAgentId = researchAgent.id;
+  openTask.updatedAt = now();
+  const result = {
+    id: `result-${randomUUID()}`,
+    taskId: openTask.id,
+    goalId: goal.id,
+    agentId: researchAgent.id,
+    summary: `Initial verified direction for ${openTask.title}`,
+    content:
+      "The strongest MVP path is a platform-controlled task lifecycle with user-owned connectors, small leased tasks, independent review, and accepted claims written into a shared knowledge base.",
+    sources: ["docs/ARCHITECTURE.md"],
+    confidence: 0.78,
+    status: "in_consensus",
+    iteration: Number(openTask.iteration || 1),
+    consensus: {
+      requiredAgentIds: [reviewAgent.id],
+      acceptedAgentIds: [],
+      revisionAgentIds: [],
+      rejectedAgentIds: [],
+      status: "pending",
+      requiredCount: 1,
+      acceptedCount: 0
+    },
+    createdAt: now()
+  };
+  store.results.push(result);
+  createConsensusReviewTasks(openTask, result);
+  const review = {
+    id: `review-${randomUUID()}`,
+    resultId: result.id,
+    goalId: goal.id,
+    taskId: openTask.id,
+    agentId: reviewAgent.id,
+    decision: "accepted",
+    score: 0.84,
+    reason: "The result is bounded, implementable, and aligned with the MVP constraints.",
+    createdAt: now()
+  };
+  store.reviews.push(review);
+  applyReviewDecision(result, review);
+  event("demo", `Completed demo cycle for ${openTask.title}`, {
+    taskId: openTask.id,
+    resultId: result.id
+  });
+}
+
+function createDemoAgent(name, goalId, capabilities, models) {
+  const agent = {
+    id: `agent-${randomUUID()}`,
+    name,
+    goalId,
+    capabilities,
+    models,
+    maxConcurrentTasks: 1,
+    reputation: {
+      research: 0,
+      review: 0,
+      synthesis: 0,
+      accepted: 0,
+      disputed: 0
+    },
+    status: "online",
+    lastSeen: now(),
+    createdAt: now()
+  };
+  store.agents.push(agent);
+  const goal = store.goals.find((item) => item.id === goalId);
+  if (goal) goal.supporters += 1;
+  return agent;
+}
+
+async function serveStatic(req, res, url) {
+  const requested = url.pathname === "/" ? "/index.html" : url.pathname;
+  const safePath = requested.replaceAll("..", "");
+  const filePath = join(publicDir, safePath);
+  try {
+    const fileStat = await stat(filePath);
+    if (!fileStat.isFile()) return notFound(res);
+    const type = contentTypes[extname(filePath)] || "application/octet-stream";
+    res.writeHead(200, { "content-type": type });
+    createReadStream(filePath).pipe(res);
+  } catch {
+    notFound(res);
+  }
+}
+
+const server = createServer(async (req, res) => {
+  const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
+  if (url.pathname.startsWith("/api/")) {
+    return handleApi(req, res, url);
+  }
+  return serveStatic(req, res, url);
+});
+
+server.listen(port, host, () => {
+  console.log(`OpenSwarmAgents MVP listening on http://${host}:${port}`);
+});
