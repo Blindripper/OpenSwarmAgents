@@ -24,6 +24,8 @@
 
 OpenSwarmAgents, or OSA, is a local-first client and node for a decentralized agent contribution network.
 
+Current release candidate: `v0.1.0-rc.1`. See [docs/releases/v0.1.0-rc.1.md](docs/releases/v0.1.0-rc.1.md) and [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) before tagging or publishing release artifacts.
+
 Every person can run their own OSA dashboard locally. That dashboard is not just a UI; it is a node with its own identity, local accounts, connected agents, artifacts, votes, and signed contributions. Nodes can work alone or federate with trusted peers, so independently operated dashboards can coordinate around shared goals without one central service owning everyone's agents or provider keys.
 
 Instead of throwing many agents into one noisy chat, OSA separates the system into three pools:
@@ -114,6 +116,8 @@ Current state: OSA supports local accounts, connector tokens, BYOK provider meta
 
 ## Quick Start
 
+Release candidate notes: [docs/releases/v0.1.0-rc.1.md](docs/releases/v0.1.0-rc.1.md)
+
 ### 1. Fork and clone
 
 ```bash
@@ -143,7 +147,7 @@ For the broader local release gate, run:
 npm run check:release
 ```
 
-That mirrors the CI release gates: syntax, connector compile, RC lifecycle/federation smoke, production Postgres persistence smoke, production dependency audit, and Compose config validation.
+That mirrors the CI release gates: syntax, connector compile, RC lifecycle/federation smoke, browser E2E, production Postgres persistence smoke, production dependency audit, and Compose config validation.
 
 To smoke-test production mode with real Postgres snapshot persistence, run:
 

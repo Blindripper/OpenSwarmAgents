@@ -13,6 +13,13 @@ try {
   const nodeB = await startNode("B", basePort + 1, basePort);
   nodes.push(nodeA, nodeB);
 
+  await expectGetStatus(nodeA, "/api/federation/snapshot", 401);
+  await expectGetStatus(nodeA, "/api/federation/snapshot", 403, { "x-osa-federation-token": "wrong-token" });
+  await expectPostStatus(nodeA, "/api/federation/import", 401, {
+    protocol: "osa-federation-snapshot",
+    collections: {}
+  });
+
   const userA = await login(nodeA, "A");
   const userB = await login(nodeB, "B");
 
@@ -46,9 +53,17 @@ try {
   const firstResult = await result(nodeA, agentA.id, firstClaim.task.id, userA.headers, {
     summary: "Federated first pass",
     content: "This first pass is deliberately incomplete, so the remote node should request revision.",
+    artifacts: [
+      {
+        name: "local-path-should-not-federate.txt",
+        path: "/var/lib/private-node-secret.txt",
+        description: "Result metadata must not turn local filesystem paths into public artifact URIs."
+      }
+    ],
     sources: ["fed://initial"],
     confidence: 0.5
   });
+  assert(firstResult.result.artifacts[0]?.uri === "", "local artifact paths should not become result artifact URIs");
   assert(firstResult.result.consensus.requiredAgentIds.includes(agentB.id), "remote node agent should be part of consensus");
   await sync(nodeA, nodeB);
 
@@ -112,6 +127,51 @@ try {
   assert(stateB.goals.find((item) => item.id === goal.id).status === "completed", "completed goal should federate to node B");
   assert(stateB.agents.filter((agent) => agent.goalId === goal.id && agent.status === "online").length === 0, "completed federated project should disconnect agents");
   assert(stateB.events.some((event) => event.type === "federation_imported"), "activity feed should show federation imports");
+
+  await postJson(
+    nodeB,
+    "/api/federation/import",
+    {
+      protocol: "osa-federation-snapshot",
+      node: { nodeId: "node-privacy-probe" },
+      collections: {
+        agents: [
+          {
+            ...agentB,
+            name: "Federated Shadow Agent",
+            userId: null,
+            connectorTokenId: null,
+            createdAt: "2999-01-01T00:00:00.000Z"
+          }
+        ],
+        events: [
+          {
+            id: "event-federation-privacy-probe",
+            type: "privacy_probe",
+            message: "Imported event data should stay scalar and non-secret.",
+            data: {
+              userId: userB.user.id,
+              connectorTokenId: "connector-secret",
+              token: "raw-secret",
+              kept: "scalar",
+              nested: { secret: true }
+            },
+            createdAt: "2999-01-01T00:00:00.000Z"
+          }
+        ]
+      }
+    },
+    nodeB.federationHeaders
+  );
+  stateB = await state(nodeB, userB.headers);
+  const preservedAgent = stateB.agents.find((agent) => agent.id === agentB.id);
+  assert(preservedAgent.userId === userB.user.id, "federated agent merges must preserve the local owner userId");
+  const importedEvent = stateB.events.find((event) => event.id === "event-federation-privacy-probe");
+  assert(importedEvent.data.kept === "scalar", "federated event data should preserve scalar metadata");
+  assert(!("userId" in importedEvent.data), "federated event data should drop userId");
+  assert(!("connectorTokenId" in importedEvent.data), "federated event data should drop connectorTokenId");
+  assert(!("token" in importedEvent.data), "federated event data should drop raw token fields");
+  assert(!("nested" in importedEvent.data), "federated event data should drop nested objects");
 
   console.log(
     JSON.stringify(
@@ -275,6 +335,12 @@ async function getJson(node, path, headers = {}) {
   return JSON.parse(text);
 }
 
+async function expectGetStatus(node, path, status, headers = {}) {
+  const response = await fetch(`${node.baseUrl}${path}`, { headers });
+  const text = await response.text();
+  assert(response.status === status, `GET ${node.label}${path} should return ${status}, got ${response.status}: ${text}`);
+}
+
 async function postJson(node, path, body, headers = {}) {
   const response = await fetch(`${node.baseUrl}${path}`, {
     method: "POST",
@@ -284,6 +350,16 @@ async function postJson(node, path, body, headers = {}) {
   const text = await response.text();
   if (!response.ok) throw new Error(`POST ${node.label}${path} failed ${response.status}: ${text}`);
   return JSON.parse(text);
+}
+
+async function expectPostStatus(node, path, status, body, headers = {}) {
+  const response = await fetch(`${node.baseUrl}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(body)
+  });
+  const text = await response.text();
+  assert(response.status === status, `POST ${node.label}${path} should return ${status}, got ${response.status}: ${text}`);
 }
 
 function assert(condition, message) {

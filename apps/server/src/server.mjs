@@ -40,6 +40,9 @@ const federationToken = process.env.OSA_FEDERATION_TOKEN || "";
 const federationTokenHash = federationToken ? hashToken(federationToken) : "";
 const federationPeers = normalizeFederationPeers(process.env.OSA_FEDERATION_PEERS || "");
 const federationSyncMs = Math.max(1000, Number(process.env.OSA_FEDERATION_SYNC_MS || 5000));
+const federationCollectionLimit = Math.max(100, Math.min(5000, Number(process.env.OSA_FEDERATION_COLLECTION_LIMIT || 2000)));
+const federationSnapshotMaxBytes = Math.max(maxJsonBytes, Number(process.env.OSA_FEDERATION_SNAPSHOT_MAX_BYTES || maxJsonBytes * 4));
+const federationPeerSyncs = new Set();
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -894,16 +897,16 @@ function publicFederationSnapshot() {
     node: publicNodeIdentity(),
     head: store.trustLedger?.[0]?.eventHash || null,
     collections: {
-      goals: store.goals.map(publicFederatedGoal),
-      agents: store.agents.map(publicFederatedAgent),
-      tasks: store.tasks.map(publicFederatedTask),
-      results: store.results.map(publicFederatedResult),
-      reviews: store.reviews.map(publicFederatedReview),
-      claims: store.claims.map(publicFederatedClaim),
-      resultPool: store.resultPool.map(publicFederatedResultPoolEntry),
-      proposals: store.proposals.map(publicFederatedProposal),
-      proposalVotes: store.proposalVotes.map(publicFederatedProposalVote),
-      uploadedArtifacts: store.uploadedArtifacts.map(publicFederatedArtifact),
+      goals: federationSlice(store.goals).map(publicFederatedGoal),
+      agents: federationSlice(store.agents).map(publicFederatedAgent),
+      tasks: federationSlice(store.tasks).map(publicFederatedTask),
+      results: federationSlice(store.results).map(publicFederatedResult),
+      reviews: federationSlice(store.reviews).map(publicFederatedReview),
+      claims: federationSlice(store.claims).map(publicFederatedClaim),
+      resultPool: federationSlice(store.resultPool).map(publicFederatedResultPoolEntry),
+      proposals: federationSlice(store.proposals).map(publicFederatedProposal),
+      proposalVotes: federationSlice(store.proposalVotes).map(publicFederatedProposalVote),
+      uploadedArtifacts: federationSlice(store.uploadedArtifacts).map(publicFederatedArtifact),
       trustLedger: publicTrustLedger(500),
       events: store.events
         .filter((entry) => !["federation_imported", "user_signed_in"].includes(entry.type))
@@ -911,6 +914,10 @@ function publicFederationSnapshot() {
         .map(publicFederatedEvent)
     }
   };
+}
+
+function federationSlice(collection) {
+  return Array.isArray(collection) ? collection.slice(0, federationCollectionLimit) : [];
 }
 
 function publicFederatedGoal(goal) {
@@ -972,22 +979,24 @@ function publicFederatedTask(task) {
 }
 
 function publicFederatedResult(result) {
-  return pick(result, [
-    "id",
-    "taskId",
-    "goalId",
-    "agentId",
-    "summary",
-    "content",
-    "artifacts",
-    "sources",
-    "confidence",
-    "status",
-    "iteration",
-    "consensus",
-    "signature",
-    "createdAt"
-  ]);
+  return {
+    ...pick(result, [
+      "id",
+      "taskId",
+      "goalId",
+      "agentId",
+      "summary",
+      "content",
+      "sources",
+      "confidence",
+      "status",
+      "iteration",
+      "consensus",
+      "signature",
+      "createdAt"
+    ]),
+    artifacts: normalizeArtifacts(result?.artifacts)
+  };
 }
 
 function publicFederatedReview(review) {
@@ -1022,24 +1031,26 @@ function publicFederatedClaim(claim) {
 }
 
 function publicFederatedResultPoolEntry(entry) {
-  return pick(entry, [
-    "id",
-    "goalId",
-    "goalTitle",
-    "taskId",
-    "taskTitle",
-    "resultId",
-    "agentId",
-    "reviewerAgentId",
-    "consensus",
-    "summary",
-    "content",
-    "artifacts",
-    "sources",
-    "confidence",
-    "status",
-    "createdAt"
-  ]);
+  return {
+    ...pick(entry, [
+      "id",
+      "goalId",
+      "goalTitle",
+      "taskId",
+      "taskTitle",
+      "resultId",
+      "agentId",
+      "reviewerAgentId",
+      "consensus",
+      "summary",
+      "content",
+      "sources",
+      "confidence",
+      "status",
+      "createdAt"
+    ]),
+    artifacts: normalizeArtifacts(entry?.artifacts)
+  };
 }
 
 function publicFederatedProposal(proposal) {
@@ -1113,7 +1124,7 @@ function importFederationSnapshot(snapshot) {
     resultPool: mergeFederatedCollection("resultPool", collections.resultPool, publicFederatedResultPoolEntry),
     proposals: mergeFederatedCollection("proposals", collections.proposals, publicFederatedProposal),
     proposalVotes: mergeFederatedCollection("proposalVotes", collections.proposalVotes, publicFederatedProposalVote),
-    uploadedArtifacts: mergeFederatedCollection("uploadedArtifacts", collections.uploadedArtifacts, publicArtifact),
+    uploadedArtifacts: mergeFederatedCollection("uploadedArtifacts", collections.uploadedArtifacts, publicFederatedArtifact),
     trustLedger: mergeFederatedTrustLedger(collections.trustLedger),
     events: mergeFederatedEvents(collections.events)
   };
@@ -1126,7 +1137,7 @@ function mergeFederatedCollection(name, incoming, sanitize) {
   if (!Array.isArray(incoming)) return 0;
   if (!Array.isArray(store[name])) store[name] = [];
   let merged = 0;
-  for (const rawItem of incoming.slice(0, 2000)) {
+  for (const rawItem of incoming.slice(0, federationCollectionLimit)) {
     if (!rawItem?.id) continue;
     const item = sanitize(rawItem);
     if (!item.id) continue;
@@ -1171,11 +1182,28 @@ function chooseFederatedItem(name, existing, incoming) {
 }
 
 function preserveLocalPrivateFields(name, existing, incoming) {
-  if (name !== "agents") return incoming;
-  return {
-    ...incoming,
-    connectorTokenId: existing.connectorTokenId || incoming.connectorTokenId || null
-  };
+  if (name === "agents") {
+    return {
+      ...incoming,
+      userId: existing.userId || incoming.userId || null,
+      connectorTokenId: existing.connectorTokenId || incoming.connectorTokenId || null
+    };
+  }
+  if (name === "proposals") {
+    return {
+      ...incoming,
+      createdBy: existing.createdBy || incoming.createdBy || null
+    };
+  }
+  if (name === "uploadedArtifacts") {
+    return {
+      ...incoming,
+      uploadedBy: existing.uploadedBy || incoming.uploadedBy || null,
+      storage: existing.storage || incoming.storage || null,
+      storedName: existing.storedName || incoming.storedName || null
+    };
+  }
+  return incoming;
 }
 
 function taskStatusRank(status) {
@@ -1225,7 +1253,7 @@ function mergeFederatedEvents(incoming) {
   let merged = 0;
   for (const eventEntry of incoming.slice(0, 200)) {
     if (!eventEntry?.id || store.events.some((item) => item.id === eventEntry.id)) continue;
-    store.events.push(pick(eventEntry, ["id", "type", "message", "data", "createdAt"]));
+    store.events.push(publicFederatedEvent(eventEntry));
     merged += 1;
   }
   store.events.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -1271,22 +1299,47 @@ function startFederationPeerSync() {
 }
 
 async function syncFederationPeer(peer) {
-  const response = await fetch(`${peer}/api/federation/snapshot`, {
-    headers: { "x-osa-federation-token": federationToken },
-    signal: AbortSignal.timeout(8000)
-  });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`snapshot HTTP ${response.status}: ${text.slice(0, 240)}`);
-  const snapshot = JSON.parse(text);
-  const changed = importFederationSnapshot(snapshot);
-  const totalChanged = Object.values(changed).reduce((total, count) => total + Number(count || 0), 0);
-  if (!totalChanged) return;
-  event("federation_imported", `Imported ${totalChanged} federated changes from ${snapshot.node?.nodeId || peer}`, {
-    changed,
-    peer,
-    peerNodeId: snapshot.node?.nodeId || null
-  });
-  await saveStore();
+  if (federationPeerSyncs.has(peer)) return;
+  federationPeerSyncs.add(peer);
+  try {
+    const response = await fetch(`${peer}/api/federation/snapshot`, {
+      headers: { "x-osa-federation-token": federationToken },
+      signal: AbortSignal.timeout(8000)
+    });
+    const text = await readResponseTextLimited(response, federationSnapshotMaxBytes);
+    if (!response.ok) throw new Error(`snapshot HTTP ${response.status}: ${text.slice(0, 240)}`);
+    const snapshot = JSON.parse(text);
+    if (snapshot.node?.nodeId === nodeIdentity.nodeId) return;
+    const changed = importFederationSnapshot(snapshot);
+    const totalChanged = Object.values(changed).reduce((total, count) => total + Number(count || 0), 0);
+    if (!totalChanged) return;
+    event("federation_imported", `Imported ${totalChanged} federated changes from ${snapshot.node?.nodeId || peer}`, {
+      changed,
+      peer,
+      peerNodeId: snapshot.node?.nodeId || null
+    });
+    await saveStore();
+  } finally {
+    federationPeerSyncs.delete(peer);
+  }
+}
+
+async function readResponseTextLimited(response, maxBytes) {
+  if (!response.body?.getReader) return response.text();
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error(`federation snapshot exceeds ${maxBytes} bytes`);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function publicConnectorTokensForUser(userId) {
@@ -3086,7 +3139,7 @@ function normalizeArtifacts(value) {
       if (!artifact || typeof artifact !== "object") return null;
       const name = String(artifact.name || artifact.filename || "").trim().slice(0, 180);
       const mimeType = String(artifact.mimeType || artifact.mime || "").trim().slice(0, 120);
-      const uri = String(artifact.uri || artifact.url || artifact.path || "").trim().slice(0, 2000);
+      const uri = normalizeArtifactUri(artifact.uri || artifact.url || "");
       const description = String(artifact.description || artifact.summary || "").trim().slice(0, 1000);
       const kind = normalizeArtifactKind(artifact.kind || artifact.type || mimeType || name);
       if (!name && !uri && !description) return null;
@@ -3102,6 +3155,19 @@ function normalizeArtifacts(value) {
     })
     .filter(Boolean)
     .slice(0, 30);
+}
+
+function normalizeArtifactUri(value) {
+  const uri = String(value || "").trim().slice(0, 2000);
+  if (!uri) return "";
+  if (/^\/api\/artifacts\/[^/]+\/download$/.test(uri)) return uri;
+  try {
+    const parsed = new URL(uri);
+    if (["https:", "http:"].includes(parsed.protocol)) return parsed.toString();
+  } catch {
+    return "";
+  }
+  return "";
 }
 
 function normalizeArtifactKind(value) {

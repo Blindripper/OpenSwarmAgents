@@ -12,6 +12,8 @@ http://127.0.0.1:8788
 
 Returns runtime health metadata for container and reverse-proxy checks. It does not include sessions, connector tokens, provider API keys, or user secrets.
 
+`devLoginEnabled` currently reports whether the local login form is available. In production local mode this can be `true`; `localPasswordRequired: true` is the release-critical lock.
+
 ```json
 {
   "ok": true,
@@ -63,6 +65,8 @@ OSA_FEDERATION_ENABLED=1
 OSA_FEDERATION_TOKEN=change-this-long-random-shared-peer-token
 OSA_FEDERATION_PEERS=http://peer-one:8788,http://peer-two:8788
 OSA_FEDERATION_SYNC_MS=5000
+OSA_FEDERATION_COLLECTION_LIMIT=2000
+OSA_FEDERATION_SNAPSHOT_MAX_BYTES=4194304
 ```
 
 Federation endpoints reject requests when `OSA_FEDERATION_ENABLED=1` but `OSA_FEDERATION_TOKEN` is missing. `OSA_ALLOW_INSECURE_FEDERATION=1` exists only for isolated local experiments.
@@ -71,11 +75,13 @@ Federation endpoints reject requests when `OSA_FEDERATION_ENABLED=1` but `OSA_FE
 
 Returns a non-secret node snapshot for peer import. Requires `x-osa-federation-token` or `Authorization: Bearer ...`.
 
-The snapshot includes goals, public agent metadata, tasks, proposals, votes, results, reviews, claims, Result Pool entries, public artifact metadata, Trust Ledger entries, and non-import-loop activity events. It does not include users, sessions, connector tokens, raw provider keys, or local artifact storage paths.
+The snapshot includes bounded slices of goals, public agent metadata, tasks, proposals, votes, results, reviews, claims, Result Pool entries, public artifact metadata, Trust Ledger entries, and non-import-loop activity events. It does not include users, sessions, connector tokens, raw provider keys, uploaded artifact storage names, or local artifact storage paths. Result artifact URIs are limited to `/api/artifacts/:id/download` links and `http://`/`https://` URLs; local filesystem paths are dropped from URI fields.
 
 `POST /api/federation/import`
 
-Imports a peer snapshot and merges it into the local node. Requires the same federation token. Imported changes are broadcast to local dashboards over `/api/events/stream`.
+Imports a peer snapshot and merges it into the local node. Requires the same federation token. Imported changes are broadcast to local dashboards over `/api/events/stream`. When an imported public record wins a same-ID merge, local-only fields such as agent owner ids, connector token ids, proposal owner ids, and uploaded artifact storage details are preserved on the receiving node.
+
+Peer sync uses one in-flight snapshot fetch per peer and rejects peer responses larger than `OSA_FEDERATION_SNAPSHOT_MAX_BYTES`. The current federation model authenticates trusted peers with a shared token and does not yet verify every imported object signature against a peer allowlist, so do not enable it for untrusted or open public peers.
 
 `GET /api/trust-ledger`
 
@@ -386,6 +392,8 @@ Downloads an uploaded artifact. Browser downloads use the `osa_session` HttpOnly
 Requires the owning signed-in session or the connector token scoped to the submitting agent.
 
 Artifacts are first-class task outputs. Supported kinds are `code`, `image`, `pdf`, `csv`, `spreadsheet`, `bundle`, `video`, `audio`, and `file`. The RC supports local artifact uploads. Wider deployments should move artifact storage to S3 or MinIO plus signed upload URLs.
+
+For result metadata, `uri` accepts only local OSA artifact download URLs (`/api/artifacts/:id/download`) or `http://`/`https://` URLs. Connector-supplied local file paths are ignored so they do not leak into authenticated state or federation snapshots.
 
 ## Review Result
 

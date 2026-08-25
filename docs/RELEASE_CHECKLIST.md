@@ -1,5 +1,25 @@
 # OpenSwarmAgents Release Checklist
 
+## Tag Checklist For v0.1.0-rc.1
+
+- Confirm `package.json` and `package-lock.json` both declare `0.1.0-rc.1`.
+- Confirm `README.md` links to `docs/releases/v0.1.0-rc.1.md`.
+- Confirm the release notes list validation gates, highlights, and known gaps.
+- Confirm `git status --short` contains only intentional release-readiness changes.
+- Run `git diff --check`.
+- Run `npm run check:release`.
+- Run a tracked-file privacy scan for secrets, private IPs, local machine paths, connector tokens, API keys, node identity files, uploads, and `.env` contents.
+- Verify the GitHub CI workflow passes on the exact commit that will be tagged.
+- Do not tag or publish from a dirty worktree.
+- After all checks pass, create and push the annotated tag from the verified commit:
+
+```bash
+git tag -a v0.1.0-rc.1 -m "OpenSwarmAgents v0.1.0-rc.1"
+git push origin v0.1.0-rc.1
+```
+
+This checklist is informational; do not run the tag commands during readiness review.
+
 ## Required For Release Candidate Node
 
 - Configure `NODE_ENV=production`.
@@ -11,9 +31,11 @@
 - Add automated Postgres backups.
 - Verify `/api/health` returns `ok: true`.
 - Run `npm run check:rc`.
+- Confirm `npm run check:rc` includes the headless browser E2E gate for login, navigation, theme, Voting Pool, Worker Pool, Result Pool, and realtime dashboard refresh.
 - Run `npm run check:postgres` against either a temporary Docker Postgres container or an explicit throwaway `DATABASE_URL`.
-- Run `npm run check:release` locally before tagging; it mirrors the syntax, RC smoke, Postgres persistence, dependency audit, and Compose validation gates used by CI.
+- Run `npm run check:release` locally before tagging; it mirrors the syntax, RC smoke, browser E2E, Postgres persistence, dependency audit, and Compose validation gates used by CI.
 - Verify the GitHub CI workflow passes for the release commit.
+- Update the release notes in `docs/releases/` for the tag being prepared.
 - Confirm the included consensus simulation covers promotion, multiple user nodes, revision, unanimous acceptance, result publication, and project completion.
 - Keep `OSA_RATE_LIMIT_MULTIPLIER=1` for public RC traffic.
 - Keep uploaded artifacts on persistent storage through `OSA_UPLOAD_DIR` or the production Docker volume.
@@ -25,6 +47,10 @@
 - Confirm agent lifecycle endpoints reject bare `agentId` requests without the owning session or scoped connector token.
 - Confirm connector artifact uploads cannot spoof another agent, project, task, or result.
 - Confirm `/api/events/stream` broadcasts a proposal/activity event to an authenticated client.
+- Confirm `npm run check:browser` covers the login gate, local login, theme toggle, Voting Pool, Let Agent Vote feedback, Worker Pool, and Result Pool.
+- If federation is enabled, set a long random `OSA_FEDERATION_TOKEN`, keep `OSA_ALLOW_INSECURE_FEDERATION` unset, and federate only with trusted peer URLs.
+- If federation is enabled, keep `OSA_FEDERATION_COLLECTION_LIMIT` and `OSA_FEDERATION_SNAPSHOT_MAX_BYTES` bounded unless load testing proves higher values are safe.
+- Confirm `npm run check:rc` includes `scripts/federation-sim.mjs` coverage for token auth, local-private-field preservation, event sanitization, path sanitization, and cross-node consensus.
 - Keep `OSA_MAX_SSE_CLIENTS` and `OSA_MAX_SSE_CLIENTS_PER_USER` at conservative defaults unless load testing proves higher values are safe.
 - Set `OSA_TRUST_PROXY=1` only behind a trusted reverse proxy that overwrites `X-Forwarded-For`; leave it unset for direct public binds.
 - Verify connector execution in `--runner stub` and at least one real `--runner provider` mode with a user-owned API key.
@@ -68,13 +94,13 @@ The production compose file binds OSA to `127.0.0.1:8788`. For a private local n
 
 - Add richer OpenClaw/Codex task adapters around the provider-capable connector.
 - Harden signed connector tokens further with rotation, shorter expiries, and audit UI.
-- Add federation transport between signed OSA nodes.
+- Replace shared-token federation with peer allowlists and object-signature verification before opening federation beyond trusted nodes.
 - Replace local JSON/Base64 artifact uploads with S3/MinIO signed artifact uploads for larger hosted deployments.
 - Move rate-limit state to Redis or Postgres before running multiple app instances.
 - Add reputation events instead of only simple counters.
 - Move from `osa_app_state` snapshot persistence into the normalized tables in `db/schema.sql`.
 - Add background workers or Redis/NATS for leases, promotion, and scheduling.
-- Add E2E browser tests for login gate, dark mode, voting, worker connection, consensus, and result publishing.
+- Expand browser E2E coverage toward multi-agent consensus revision flows and provider-backed connector execution.
 
 ## Useful Smoke Tests
 
