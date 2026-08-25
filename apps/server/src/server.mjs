@@ -17,6 +17,7 @@ const leaseMs = Number(process.env.AGENTSWARM_LEASE_MS || 10 * 60 * 1000);
 const proposalVotingMs = Number(process.env.AGENTSWARM_PROPOSAL_VOTING_MS || 72 * 60 * 60 * 1000);
 const storageMode = process.env.DATABASE_URL ? "postgres-snapshot" : "json";
 const isProduction = process.env.NODE_ENV === "production";
+const rateLimitMultiplier = Math.max(0, Number(process.env.OSA_RATE_LIMIT_MULTIPLIER || 1));
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -46,6 +47,7 @@ const oauthProviderConfig = {
 };
 
 let pgPool = null;
+const rateLimitBuckets = new Map();
 validateRuntimeConfig();
 let store = await loadStore();
 
@@ -199,13 +201,14 @@ function sendJson(res, status, payload, headers = {}) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
+    ...securityHeaders(),
     ...headers
   });
   res.end(body);
 }
 
 function redirect(res, location, headers = {}) {
-  res.writeHead(302, { location, ...headers });
+  res.writeHead(302, { location, ...securityHeaders(), ...headers });
   res.end();
 }
 
@@ -223,6 +226,33 @@ function unauthorized(res, message = "Authentication required") {
 
 function forbidden(res, message = "Forbidden") {
   sendJson(res, 403, { error: "forbidden", message });
+}
+
+function tooManyRequests(res, result) {
+  sendJson(
+    res,
+    429,
+    {
+      error: "rate_limited",
+      message: "Too many requests. Slow down and retry after the rate limit window resets.",
+      retryAfterSeconds: result.retryAfterSeconds
+    },
+    {
+      "retry-after": String(result.retryAfterSeconds),
+      "x-ratelimit-limit": String(result.limit),
+      "x-ratelimit-remaining": String(result.remaining),
+      "x-ratelimit-reset": String(result.resetAt)
+    }
+  );
+}
+
+function securityHeaders() {
+  return {
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "x-frame-options": "DENY",
+    "permissions-policy": "camera=(), microphone=(), geolocation=()"
+  };
 }
 
 async function readJson(req) {
@@ -311,6 +341,72 @@ function authFromReq(req) {
   session.lastSeen = now();
   user.lastSeen = now();
   return { user, session };
+}
+
+function clientIdentity(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return forwarded || req.socket.remoteAddress || "unknown";
+}
+
+function rateIdentity(req, auth = null, extra = "") {
+  if (auth?.user?.id) return `user:${auth.user.id}${extra}`;
+  return `ip:${clientIdentity(req)}${extra}`;
+}
+
+function checkRateLimit(name, identity, options = {}) {
+  if (rateLimitMultiplier === 0) {
+    return { ok: true, limit: Infinity, remaining: Infinity, resetAt: Math.ceil(Date.now() / 1000), retryAfterSeconds: 0 };
+  }
+
+  const windowMs = Number(options.windowMs || 60 * 1000);
+  const rawLimit = Number(options.limit || 60);
+  const limit = Math.max(1, Math.floor(rawLimit * rateLimitMultiplier));
+  const key = `${name}:${identity}`;
+  const timestamp = Date.now();
+  const cutoff = timestamp - windowMs;
+  const hits = (rateLimitBuckets.get(key) || []).filter((hit) => hit > cutoff);
+  const resetAtMs = hits[0] ? hits[0] + windowMs : timestamp + windowMs;
+
+  if (hits.length >= limit) {
+    rateLimitBuckets.set(key, hits);
+    return {
+      ok: false,
+      limit,
+      remaining: 0,
+      resetAt: Math.ceil(resetAtMs / 1000),
+      retryAfterSeconds: Math.max(1, Math.ceil((resetAtMs - timestamp) / 1000))
+    };
+  }
+
+  hits.push(timestamp);
+  rateLimitBuckets.set(key, hits);
+  pruneRateLimitBuckets(timestamp);
+  return {
+    ok: true,
+    limit,
+    remaining: Math.max(0, limit - hits.length),
+    resetAt: Math.ceil(resetAtMs / 1000),
+    retryAfterSeconds: 0
+  };
+}
+
+function enforceRateLimit(req, res, name, identity, options = {}) {
+  const result = checkRateLimit(name, identity, options);
+  if (!result.ok) {
+    tooManyRequests(res, result);
+    return false;
+  }
+  return true;
+}
+
+function pruneRateLimitBuckets(timestamp = Date.now()) {
+  if (rateLimitBuckets.size < 1000) return;
+  const cutoff = timestamp - 60 * 60 * 1000;
+  for (const [key, hits] of rateLimitBuckets.entries()) {
+    const kept = hits.filter((hit) => hit > cutoff);
+    if (kept.length) rateLimitBuckets.set(key, kept);
+    else rateLimitBuckets.delete(key);
+  }
 }
 
 function connectorTokenFromReq(req) {
@@ -411,6 +507,7 @@ function publicRuntime() {
     nodeEnv: process.env.NODE_ENV || "development",
     devLoginEnabled: isDevLoginEnabled(),
     demoEndpointsEnabled: areDemoEndpointsEnabled(),
+    rateLimitsEnabled: rateLimitMultiplier > 0,
     oauthConfigured: Object.fromEntries(
       Object.keys(oauthProviderConfig).map((provider) => [provider, Boolean(providerCredentials(provider))])
     ),
@@ -514,6 +611,9 @@ function providerCredentials(provider) {
 }
 
 async function startOAuth(req, res, provider, url) {
+  if (!enforceRateLimit(req, res, `oauth-start:${provider}`, rateIdentity(req), { limit: 20, windowMs: 10 * 60 * 1000 })) {
+    return;
+  }
   const credentials = providerCredentials(provider);
   if (!credentials) return redirect(res, `/?oauth=${provider}&error=not_configured#account`);
   cleanOAuthStates();
@@ -840,6 +940,9 @@ async function handleApi(req, res, url) {
     }
 
     if (method === "POST" && path === "/api/auth/login") {
+      if (!enforceRateLimit(req, res, "auth-login", rateIdentity(req), { limit: 10, windowMs: 10 * 60 * 1000 })) {
+        return;
+      }
       if (!isDevLoginEnabled()) {
         return forbidden(res, "Local MVP login is disabled. Use OAuth.");
       }
@@ -873,6 +976,9 @@ async function handleApi(req, res, url) {
     if (method === "POST" && path === "/api/connectors/token") {
       const auth = authFromReq(req);
       if (!auth) return unauthorized(res, "Sign in before creating connector tokens");
+      if (!enforceRateLimit(req, res, "connector-token-create", rateIdentity(req, auth), { limit: 12, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
       const body = await readJson(req);
       try {
         const { rawToken, connector } = createConnectorToken(auth, body);
@@ -891,6 +997,9 @@ async function handleApi(req, res, url) {
     if (method === "POST" && connectorRevokeMatch) {
       const auth = authFromReq(req);
       if (!auth) return unauthorized(res, "Sign in before revoking connector tokens");
+      if (!enforceRateLimit(req, res, "connector-token-revoke", rateIdentity(req, auth), { limit: 30, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
       const connector = store.connectorTokens.find((item) => item.id === connectorRevokeMatch[1]);
       if (!connector || connector.userId !== auth.user.id) return notFound(res);
       revokeConnectorToken(connector);
@@ -933,6 +1042,10 @@ async function handleApi(req, res, url) {
       const body = await readJson(req);
       const auth = authFromReq(req);
       const connector = connectorTokenFromReq(req);
+      const actorIdentity = connector ? `connector:${connector.token.id}` : rateIdentity(req, auth);
+      if (!enforceRateLimit(req, res, "agent-register", actorIdentity, { limit: 30, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
       if (connector && connector.token.mode !== "worker") return forbidden(res, "Connector token is not scoped to the Worker Pool");
       const actorUser = auth?.user || connector?.user || null;
       const requestedGoalId = connector?.token.goalId || body.goalId;
@@ -1000,6 +1113,9 @@ async function handleApi(req, res, url) {
       const body = await readJson(req);
       const auth = authFromReq(req);
       if (!auth) return unauthorized(res, "Sign in before submitting project proposals");
+      if (!enforceRateLimit(req, res, "proposal-create", rateIdentity(req, auth), { limit: 5, windowMs: 24 * 60 * 60 * 1000 })) {
+        return;
+      }
       const title = String(body.title || "").trim();
       const description = String(body.description || "").trim();
       if (title.length < 6) return badRequest(res, "Proposal title is too short");
@@ -1027,6 +1143,10 @@ async function handleApi(req, res, url) {
       const body = await readJson(req);
       const auth = authFromReq(req);
       const connector = connectorTokenFromReq(req);
+      const actorIdentity = connector ? `connector:${connector.token.id}` : rateIdentity(req, auth);
+      if (!enforceRateLimit(req, res, "voting-connect", actorIdentity, { limit: 20, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
       if (connector && connector.token.mode !== "voting") return forbidden(res, "Connector token is not scoped to the Voting Pool");
       const actorUser = auth?.user || connector?.user || null;
       let agent = body.agentId ? findAgent(body.agentId) : null;
@@ -1088,6 +1208,9 @@ async function handleApi(req, res, url) {
       if (!proposal) return notFound(res);
       const agent = findAgent(body.agentId);
       if (!agent) return badRequest(res, "Unknown agentId");
+      if (!enforceRateLimit(req, res, "proposal-vote", `agent:${agent.id}`, { limit: 10, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
       if (proposal.status !== "voting") return badRequest(res, "Proposal is not in voting");
 
       const vote = addProposalVote(proposal, agent, Number(body.score || 1), String(body.reason || ""));
@@ -1101,6 +1224,9 @@ async function handleApi(req, res, url) {
       if (!agent) return notFound(res);
       const connectorAccess = authorizeConnectorAgent(req, agent);
       if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+      if (!enforceRateLimit(req, res, "agent-heartbeat", `agent:${agent.id}`, { limit: 240, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
       agent.status = "online";
       agent.lastSeen = now();
       await saveStore();
@@ -1113,6 +1239,9 @@ async function handleApi(req, res, url) {
       if (!agent) return notFound(res);
       const connectorAccess = authorizeConnectorAgent(req, agent);
       if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+      if (!enforceRateLimit(req, res, "agent-disconnect", `agent:${agent.id}`, { limit: 30, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
       agent.status = "offline";
       agent.lastSeen = now();
       releaseAgentLeases(agent.id);
@@ -1131,6 +1260,9 @@ async function handleApi(req, res, url) {
       if (!agent) return badRequest(res, "Unknown agentId");
       const connectorAccess = authorizeConnectorAgent(req, agent);
       if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+      if (!enforceRateLimit(req, res, "task-claim", `agent:${agent.id}`, { limit: 120, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
 
       recoverExpiredLeases();
       agent.status = "online";
@@ -1179,6 +1311,9 @@ async function handleApi(req, res, url) {
       if (!agent) return badRequest(res, "Unknown agentId");
       const connectorAccess = authorizeConnectorAgent(req, agent);
       if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+      if (!enforceRateLimit(req, res, "result-submit", `agent:${agent.id}`, { limit: 30, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
       if (task.assignedAgentId !== agent.id) return badRequest(res, "Task is not leased to this agent");
 
       const result = {
@@ -1227,6 +1362,9 @@ async function handleApi(req, res, url) {
       if (!agent) return badRequest(res, "Unknown agentId");
       const connectorAccess = authorizeConnectorAgent(req, agent);
       if (!connectorAccess.ok) return forbidden(res, connectorAccess.message);
+      if (!enforceRateLimit(req, res, "review-submit", `agent:${agent.id}`, { limit: 60, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
       if (agent.id === result.agentId) return badRequest(res, "Result author cannot review own result");
       if (store.reviews.some((item) => item.resultId === result.id && item.agentId === agent.id)) {
         return badRequest(res, "Agent already reviewed this result");
@@ -1909,7 +2047,7 @@ async function serveStatic(req, res, url) {
     const fileStat = await stat(filePath);
     if (!fileStat.isFile()) return notFound(res);
     const type = contentTypes[extname(filePath)] || "application/octet-stream";
-    res.writeHead(200, { "content-type": type });
+    res.writeHead(200, { "content-type": type, ...securityHeaders() });
     createReadStream(filePath).pipe(res);
   } catch {
     notFound(res);

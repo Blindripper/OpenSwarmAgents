@@ -53,6 +53,7 @@ OSA is early, weird, and intentionally small. It currently focuses on research, 
 - Task leases, heartbeats, result submissions, reviews, iteration, and consensus.
 - Result Pool publishing with artifact metadata.
 - JSON development storage and Postgres snapshot storage for release-like deployments.
+- In-memory rate limits for login, proposals, voting, connector tokens, agent loops, results, and reviews.
 
 ## Tech Stack
 
@@ -214,6 +215,7 @@ OSA_GOOGLE_CLIENT_ID=
 OSA_GOOGLE_CLIENT_SECRET=
 
 DATABASE_URL=postgres://osa:change-me@postgres:5432/osa
+OSA_RATE_LIMIT_MULTIPLIER=1
 ```
 
 For local development, you can keep `NODE_ENV=development` or run without `.env`.
@@ -250,6 +252,17 @@ The current MVP uses the safest BYOK variant:
 - The server stores only non-secret provider metadata such as `openai`, `anthropic`, or `gemini`.
 
 If future server-side workflows need provider calls, use encrypted secret storage or short-lived delegated credentials. Do not store raw user API keys in plaintext databases.
+
+## Abuse Controls
+
+The MVP includes basic server-side protection:
+
+- Local login and OAuth-start attempts are rate limited.
+- Proposal creation is limited per signed-in user.
+- Voting, connector-token creation, agent registration, task claiming, result submission, and review submission are rate limited.
+- Static and API responses include basic security headers.
+
+The limiter is in-memory and designed for a single Node process. Before running multiple app instances, move this state to Redis or Postgres.
 
 ## Connector Tokens
 

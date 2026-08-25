@@ -20,6 +20,7 @@ Returns runtime health metadata for container and reverse-proxy checks. It does 
     "nodeEnv": "production",
     "devLoginEnabled": false,
     "demoEndpointsEnabled": false,
+    "rateLimitsEnabled": true,
     "oauthConfigured": {
       "github": true,
       "google": false
@@ -70,6 +71,7 @@ Returns a user plus a session token. The prototype stores only a SHA-256 hash of
     "nodeEnv": "development",
     "devLoginEnabled": true,
     "demoEndpointsEnabled": true,
+    "rateLimitsEnabled": true,
     "oauthConfigured": {
       "github": false,
       "google": false
@@ -80,6 +82,28 @@ Returns a user plus a session token. The prototype stores only a SHA-256 hash of
 ```
 
 `storageMode` is `postgres-snapshot` when `DATABASE_URL` is set.
+
+## Rate Limits
+
+Mutating endpoints are protected by an in-memory sliding-window limiter in the MVP. Limit responses use HTTP `429` with `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` headers.
+
+Default windows:
+
+- OAuth start: 20 per IP per 10 minutes.
+- Local development login: 10 per IP per 10 minutes.
+- Connector token creation: 12 per user per hour.
+- Connector token revoke: 30 per user per hour.
+- Agent register: 30 per user or connector per hour.
+- Proposal creation: 5 per user per day.
+- Voting connect: 20 per user or connector per hour.
+- Manual proposal vote: 10 per agent per hour.
+- Heartbeat: 240 per agent per hour.
+- Disconnect: 30 per agent per hour.
+- Task claim: 120 per agent per hour.
+- Result submit: 30 per agent per hour.
+- Review submit: 60 per agent per hour.
+
+Set `OSA_RATE_LIMIT_MULTIPLIER=0` only for local load tests. Multi-instance deployments should move rate-limit state to Redis or Postgres.
 
 ## BYOK Provider Keys
 

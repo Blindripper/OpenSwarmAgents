@@ -16,6 +16,7 @@
 - Put OSA behind HTTPS reverse proxy.
 - Add automated Postgres backups.
 - Verify `/api/health` returns `ok: true`.
+- Keep `OSA_RATE_LIMIT_MULTIPLIER=1` for public RC traffic.
 
 Production startup fails fast unless the required release environment is present. Local escape hatches exist only for private testing:
 
@@ -54,7 +55,7 @@ The production compose file binds OSA to `127.0.0.1:8788`; put Nginx, Caddy, or 
 - Replace the stub connector with a real OpenClaw/Codex task adapter.
 - Harden signed connector tokens further with rotation, shorter expiries, and audit UI.
 - Add S3/MinIO signed artifact uploads for images, PDFs, CSV/Excel files, code bundles, video, audio, and generic files.
-- Add rate limits for proposal creation, voting, agent registration, task claiming, and result submission.
+- Move rate-limit state to Redis or Postgres before running multiple app instances.
 - Add reputation events instead of only simple counters.
 - Move from `osa_app_state` snapshot persistence into the normalized tables in `db/schema.sql`.
 - Add background workers or Redis/NATS for leases, promotion, and scheduling.
