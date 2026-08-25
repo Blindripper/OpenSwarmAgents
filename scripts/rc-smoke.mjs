@@ -35,6 +35,13 @@ try {
   assert(health.runtime.localPasswordRequired === true, "local password should be required in smoke");
   assert(health.runtime.node?.nodeId, "node identity should be public");
 
+  const shell = await fetch(`${baseUrl}/`);
+  const csp = shell.headers.get("content-security-policy") || "";
+  assert(shell.ok, "app shell should be served");
+  assert(csp.includes("script-src 'self'"), "CSP should restrict scripts to same origin");
+  assert(!csp.includes("unsafe-inline"), "CSP should not allow inline scripts");
+  assert((await shell.text()).includes("/theme-init.js"), "app shell should load the external theme bootstrap");
+
   await expectStatus("/api/auth/login", 400, {
     email: "rc@example.com",
     name: "RC",
@@ -100,10 +107,26 @@ try {
   const download = await fetch(`${baseUrl}${artifact.artifact.uri}`, { headers });
   assert(download.ok, "artifact download should be authorized");
   assert(download.headers.get("x-osa-artifact-sha256") === artifact.artifact.sha256, "artifact download should expose matching hash");
+  assert(download.headers.get("content-disposition")?.startsWith("inline;"), "safe text artifacts may render inline");
+
+  const svgArtifact = await postJson(
+    "/api/artifacts/upload",
+    {
+      name: "rc-smoke.svg",
+      kind: "image",
+      mimeType: "image/svg+xml",
+      description: "RC smoke SVG artifact",
+      dataBase64: Buffer.from("<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>").toString("base64")
+    },
+    headers
+  );
+  const svgDownload = await fetch(`${baseUrl}${svgArtifact.artifact.uri}`, { headers });
+  assert(svgDownload.ok, "svg artifact download should be authorized");
+  assert(svgDownload.headers.get("content-disposition")?.startsWith("attachment;"), "active artifact types should download as attachments");
 
   const ledger = await getJson("/api/trust-ledger");
   assert(ledger.head, "trust ledger should expose a head hash");
-  assert(ledger.count >= 3, "trust ledger should contain proposal, vote, and artifact events");
+  assert(ledger.count >= 4, "trust ledger should contain proposal, vote, and artifact events");
   assert(ledger.entries[0].eventHash === ledger.head, "first ledger entry should be the head");
   assert(isHashChainValid(ledger.entries), "trust ledger entries should be hash-linked");
   assert(ledger.entries.some((entry) => entry.type === "proposal"), "ledger should include proposal event");

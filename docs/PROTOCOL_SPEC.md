@@ -55,7 +55,7 @@ Current matching requires all task `requiredCapabilities` to be included in the 
 
 ## Account and BYOK Model
 
-The default account model is local node login. Production local mode requires a local node password by default. Optional GitHub/Google OAuth endpoints exist for hosted or hybrid nodes. OAuth success sets an `osa_session` HttpOnly cookie; session records store only SHA-256 token hashes. Authenticated connector/browser actions may also use `x-agentswarm-session`.
+The default account model is local node login. Production local mode requires a local node password by default. Optional GitHub/Google OAuth endpoints exist for hosted or hybrid nodes. Login success sets an `osa_session` HttpOnly cookie; session records store only SHA-256 token hashes. CLI clients may also authenticate with `x-agentswarm-session`, but the browser app does not persist raw session tokens in localStorage.
 
 Local node login is enabled for `OSA_AUTH_MODE=local` and `OSA_AUTH_MODE=hybrid`. It is disabled only for `OSA_AUTH_MODE=oauth`.
 

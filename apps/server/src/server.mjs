@@ -394,7 +394,7 @@ function securityHeaders() {
   return {
     "content-security-policy": [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline'",
+      "script-src 'self'",
       "style-src 'self'",
       "img-src 'self' data: blob:",
       "connect-src 'self'",
@@ -1187,6 +1187,21 @@ function safeArtifactExtension(name, mimeType) {
   }[mimeType] || ".bin";
 }
 
+function artifactContentDisposition(artifact) {
+  const mimeType = String(artifact.mimeType || "").toLowerCase();
+  const safeInlineTypes = new Set([
+    "application/pdf",
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "text/csv",
+    "text/markdown",
+    "text/plain"
+  ]);
+  return safeInlineTypes.has(mimeType) ? "inline" : "attachment";
+}
+
 async function serveArtifactDownload(req, res, artifactId) {
   const auth = authFromReq(req);
   if (!auth) return unauthorized(res, "Sign in before downloading artifacts");
@@ -1199,7 +1214,7 @@ async function serveArtifactDownload(req, res, artifactId) {
     res.writeHead(200, {
       "content-type": artifact.mimeType || "application/octet-stream",
       "content-length": String(fileStat.size),
-      "content-disposition": `inline; filename="${artifact.name.replaceAll('"', "'")}"`,
+      "content-disposition": `${artifactContentDisposition(artifact)}; filename="${artifact.name.replaceAll('"', "'")}"`,
       "x-osa-artifact-sha256": artifact.sha256 || "",
       ...securityHeaders()
     });

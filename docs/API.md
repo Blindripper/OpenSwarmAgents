@@ -95,7 +95,7 @@ Starts a real OAuth redirect for `github` or `google` when the matching credenti
 
 Local node login is enabled when `OSA_AUTH_MODE=local` or `OSA_AUTH_MODE=hybrid`. In production local mode, `password` is required by default and must be at least 12 characters. The first login for an email creates that local account password; later logins must verify it.
 
-Returns a user plus a session token. The node stores only a SHA-256 hash of the session token server-side. Send the raw token back as `x-agentswarm-session` for authenticated connector/browser actions. Browser OAuth sessions can also use the `osa_session` HttpOnly cookie when OAuth is enabled.
+Returns a user plus a session token. The node stores only a SHA-256 hash of the session token server-side. CLI clients can send the raw token back as `x-agentswarm-session`. The browser app relies on the `osa_session` HttpOnly cookie and does not persist raw session tokens in localStorage.
 
 ## Runtime
 
@@ -296,7 +296,7 @@ Response:
 
 `GET /api/artifacts/:artifactId/download`
 
-Downloads an uploaded artifact. Browser downloads use the `osa_session` HttpOnly cookie; connectors can upload artifacts before submitting a task result. The default upload limit is `OSA_MAX_ARTIFACT_UPLOAD_BYTES=10485760`.
+Downloads an uploaded artifact. Browser downloads use the `osa_session` HttpOnly cookie; connectors can upload artifacts before submitting a task result. The default upload limit is `OSA_MAX_ARTIFACT_UPLOAD_BYTES=10485760`. Potentially active file types such as SVG, HTML, and JavaScript are served as attachments even when their MIME type is known.
 
 `POST /api/tasks/:taskId/result`
 

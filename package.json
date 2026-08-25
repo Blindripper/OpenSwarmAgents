@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node apps/server/src/server.mjs",
     "start": "node apps/server/src/server.mjs",
-    "check": "node --check apps/server/src/server.mjs && node --check apps/web/public/app.js && python3 -m py_compile apps/connector/connector.py",
+    "check": "node --check apps/server/src/server.mjs && node --check apps/web/public/theme-init.js && node --check apps/web/public/app.js && python3 -m py_compile apps/connector/connector.py",
     "check:rc": "npm run check && node scripts/rc-smoke.mjs",
     "db:schema": "node scripts/print-schema-path.mjs",
     "export:sql": "node scripts/export-json-to-sql.mjs"

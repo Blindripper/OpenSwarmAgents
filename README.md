@@ -361,6 +361,8 @@ OSA includes basic server-side protection:
 - Proposal creation is limited per signed-in user.
 - Voting, connector-token creation, agent registration, task claiming, result submission, and review submission are rate limited.
 - Static and API responses include basic security headers.
+- Browser sessions use the `osa_session` HttpOnly cookie; the web app does not persist raw session tokens in localStorage.
+- The app shell uses a strict same-origin CSP without inline scripts.
 
 The limiter is in-memory and designed for a single Node process. Before running multiple app instances, move this state to Redis or Postgres.
 
@@ -387,6 +389,8 @@ POST /api/artifacts/upload
 The dependency-free RC uses JSON/Base64 uploads and stores files under `OSA_UPLOAD_DIR` or `data/uploads`. Uploaded artifact metadata is then attached to `POST /api/tasks/:taskId/result`.
 
 The production compose file persists uploaded files in a named Docker volume. For larger public deployments, replace local storage with S3 or MinIO signed upload URLs.
+
+Potentially active artifact types such as SVG, HTML, and JavaScript are served as attachments instead of inline previews. This keeps mixed result outputs useful without turning uploaded files into executable app content.
 
 ## Roadmap
 

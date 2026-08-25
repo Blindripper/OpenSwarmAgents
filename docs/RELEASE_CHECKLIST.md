@@ -13,6 +13,9 @@
 - Run `npm run check:rc`.
 - Keep `OSA_RATE_LIMIT_MULTIPLIER=1` for public RC traffic.
 - Keep uploaded artifacts on persistent storage through `OSA_UPLOAD_DIR` or the production Docker volume.
+- Confirm the `Content-Security-Policy` header does not allow inline scripts.
+- Confirm raw browser sessions are not stored in localStorage.
+- Confirm active artifacts such as SVG/HTML/JS download as attachments.
 - Verify connector execution in `--runner stub` and at least one real `--runner provider` mode with a user-owned API key.
 
 For hosted nodes, additionally configure `OSA_PUBLIC_URL`, `OSA_COOKIE_SECURE=1`, HTTPS reverse proxy, and at least one OAuth provider.

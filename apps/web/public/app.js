@@ -173,7 +173,7 @@ async function signIn(email, name, password = "") {
     return;
   }
   const response = await post("/api/auth/login", { email, name, password });
-  localStorage.setItem("agentswarmSessionToken", response.sessionToken);
+  localStorage.removeItem("agentswarmSessionToken");
   localStorage.setItem("agentswarmUser", JSON.stringify(response.user));
   state.user = response.user;
   showAccountFeedback("Signed in", `${response.user.name} is now connected to OpenSwarmAgents.`);
@@ -315,7 +315,7 @@ async function refresh() {
   if (state.data.viewer) {
     state.user = state.data.viewer;
     localStorage.setItem("agentswarmUser", JSON.stringify(state.user));
-  } else if (localStorage.getItem("agentswarmSessionToken")) {
+  } else if (state.user) {
     state.user = null;
     localStorage.removeItem("agentswarmSessionToken");
     localStorage.removeItem("agentswarmUser");
