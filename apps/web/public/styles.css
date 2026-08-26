@@ -1147,6 +1147,23 @@ button:disabled {
   justify-self: start;
 }
 
+.trust-peer-setup textarea {
+  min-height: 110px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.trust-peer-setup small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .trust-ledger-list {
   display: grid;
   gap: 8px;

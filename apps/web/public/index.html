@@ -389,9 +389,17 @@
                   <code id="trust-public-key">-</code>
                 </div>
                 <div class="trust-wide">
-                  <span>Peer allowlist JSON</span>
+                  <span>Share this node</span>
                   <pre><code id="trust-peer-json">{}</code></pre>
                   <button id="trust-copy-peer" class="copy-command" type="button">Copy peer JSON</button>
+                </div>
+                <div class="trust-wide trust-peer-setup">
+                  <span>Connect another node</span>
+                  <textarea id="trust-peer-input" rows="5" placeholder="Paste peer JSON from another OSA node"></textarea>
+                  <small id="trust-peer-feedback">Paste a peer record to build the trusted-node config.</small>
+                  <pre><code id="trust-peer-config">OSA_FEDERATION_REQUIRE_SIGNATURES=1
+OSA_FEDERATION_TRUSTED_NODES='{}'</code></pre>
+                  <button id="trust-copy-config" class="copy-command" type="button">Copy config</button>
                 </div>
               </div>
               <div id="trust-ledger" class="trust-ledger-list"></div>

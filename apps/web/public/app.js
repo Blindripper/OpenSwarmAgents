@@ -103,6 +103,10 @@ const els = {
   trustPublicKey: document.querySelector("#trust-public-key"),
   trustPeerJson: document.querySelector("#trust-peer-json"),
   trustCopyPeer: document.querySelector("#trust-copy-peer"),
+  trustPeerInput: document.querySelector("#trust-peer-input"),
+  trustPeerFeedback: document.querySelector("#trust-peer-feedback"),
+  trustPeerConfig: document.querySelector("#trust-peer-config"),
+  trustCopyConfig: document.querySelector("#trust-copy-config"),
   trustLedger: document.querySelector("#trust-ledger")
 };
 
@@ -115,6 +119,8 @@ els.oauthGithub.addEventListener("click", () => startOAuth("github"));
 els.oauthGoogle.addEventListener("click", () => startOAuth("google"));
 els.donateButton.addEventListener("click", () => donateEth());
 els.trustCopyPeer.addEventListener("click", () => copyTrustPeerJson());
+els.trustPeerInput.addEventListener("input", () => renderPeerTrustConfig());
+els.trustCopyConfig.addEventListener("click", () => copyPeerTrustConfig());
 
 els.authDevForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1265,6 +1271,7 @@ function renderTrustLedger() {
   els.trustPublicKey.title = node.publicKeyPem || "";
   els.trustPeerJson.textContent = peerJson;
   els.trustEventCount.textContent = `${stats.trustEvents || 0} events`;
+  renderPeerTrustConfig();
   renderList(
     els.trustLedger,
     entries.slice(0, 8),
@@ -1304,6 +1311,82 @@ function trustedPeerJson(node) {
   );
 }
 
+function renderPeerTrustConfig() {
+  const runtime = state.data.runtime || {};
+  const ownNodeId = runtime.node?.nodeId || "";
+  const raw = els.trustPeerInput.value.trim();
+  if (!raw) {
+    setPeerTrustConfig("Paste a peer record to build the trusted-node config.", {});
+    return;
+  }
+
+  const parsed = parsePeerTrustInput(raw);
+  if (!parsed.ok) {
+    setPeerTrustConfig(parsed.message, {});
+    return;
+  }
+
+  if (parsed.nodes.some((node) => node.nodeId === ownNodeId)) {
+    setPeerTrustConfig("This is your own node. Paste the other node's peer JSON.", {});
+    return;
+  }
+
+  const trustedNodes = Object.fromEntries(
+    parsed.nodes.map((node) => [
+      node.nodeId,
+      {
+        publicKeyPem: node.publicKeyPem,
+        algorithm: node.algorithm || "Ed25519"
+      }
+    ])
+  );
+  const label = parsed.nodes.length === 1 ? "peer" : "peers";
+  setPeerTrustConfig(`Ready: ${parsed.nodes.length} trusted ${label}.`, trustedNodes);
+}
+
+function setPeerTrustConfig(message, trustedNodes) {
+  els.trustPeerFeedback.textContent = message;
+  els.trustPeerConfig.textContent = `OSA_FEDERATION_REQUIRE_SIGNATURES=1\nOSA_FEDERATION_TRUSTED_NODES='${JSON.stringify(
+    trustedNodes
+  )}'`;
+}
+
+function parsePeerTrustInput(raw) {
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return { ok: false, message: "That does not look like valid JSON." };
+  }
+
+  const nodes = normalizePeerTrustNodes(value);
+  if (!nodes.length) {
+    return { ok: false, message: "Peer JSON needs a node id and public key." };
+  }
+  return { ok: true, nodes };
+}
+
+function normalizePeerTrustNodes(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+
+  if (typeof value.nodeId === "string" && typeof value.publicKeyPem === "string") {
+    return [cleanPeerTrustNode(value.nodeId, value)];
+  }
+
+  return Object.entries(value)
+    .map(([nodeId, record]) => cleanPeerTrustNode(nodeId, record))
+    .filter(Boolean);
+}
+
+function cleanPeerTrustNode(nodeId, record) {
+  if (!record || typeof record !== "object") return null;
+  const cleanNodeId = String(nodeId || "").trim();
+  const publicKeyPem = String(record.publicKeyPem || "").trim();
+  const algorithm = String(record.algorithm || "Ed25519").trim() || "Ed25519";
+  if (!cleanNodeId || !publicKeyPem.includes("BEGIN PUBLIC KEY")) return null;
+  return { nodeId: cleanNodeId, publicKeyPem, algorithm };
+}
+
 function compactPublicKey(value) {
   return String(value || "")
     .replace("-----BEGIN PUBLIC KEY-----", "")
@@ -1314,6 +1397,10 @@ function compactPublicKey(value) {
 
 async function copyTrustPeerJson() {
   await copyText(els.trustCopyPeer, els.trustPeerJson.textContent || "{}");
+}
+
+async function copyPeerTrustConfig() {
+  await copyText(els.trustCopyConfig, els.trustPeerConfig.textContent || "");
 }
 
 function filteredEvents() {

@@ -260,7 +260,7 @@ The node signs local contributions and writes them into the Trust Ledger:
 
 The local Trust Ledger is hash-linked through `previousHash` and `eventHash`. Imported peer ledger entries are retained as a federated cache with separate `headsByNode`; peer entries do not become the local node's chain head.
 
-The **Account** view shows the current node id, public key, federation mode, trusted peer count, ledger head, and a copy-ready peer allowlist JSON block. To trust another node, exchange these public node records out of band and add them through `OSA_FEDERATION_TRUSTED_NODES` or `OSA_FEDERATION_TRUSTED_NODES_PATH`.
+The **Account** view keeps peer setup simple: copy **Share this node** from one OSA node, paste it into **Connect another node** on the other node, then copy the generated config. The same panel shows node id, public key, federation mode, trusted peer count, and ledger head so operators can see what is local, what is trusted, and what is only configured.
 
 ### Federation Status
 
@@ -274,7 +274,7 @@ RC1 federation is trusted-peer snapshot sync:
 
 Use HTTPS or a private network/tunnel for peer URLs when tokens cross a network boundary.
 
-For wider federation, configure `OSA_FEDERATION_REQUIRE_SIGNATURES=1` with `OSA_FEDERATION_TRUSTED_NODES` or `OSA_FEDERATION_TRUSTED_NODES_PATH`. OSA then verifies trusted node public keys, rejects tampered signed contributions, and validates imported Trust Ledger event hashes before merge. Keep shared-token federation limited to private trusted peers.
+For wider federation, copy the trusted-node config from the Account view or set `OSA_FEDERATION_REQUIRE_SIGNATURES=1` with `OSA_FEDERATION_TRUSTED_NODES` / `OSA_FEDERATION_TRUSTED_NODES_PATH`. OSA then verifies trusted node public keys, rejects tampered signed contributions, and validates imported Trust Ledger event hashes before merge. Keep shared-token federation limited to private trusted peers.
 
 ### Security And Abuse Controls
 

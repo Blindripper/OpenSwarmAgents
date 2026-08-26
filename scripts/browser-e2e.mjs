@@ -72,6 +72,18 @@ try {
   const peerJson = await page.locator("#trust-peer-json").textContent();
   assert(peerJson?.includes("publicKeyPem"), "account trust panel should expose peer allowlist JSON");
   assert(peerJson?.includes("node-"), "account trust panel should include this node id");
+  await page.fill(
+    "#trust-peer-input",
+    JSON.stringify({
+      "node-browser-peer": {
+        publicKeyPem: "-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEA000000000000000000000000000000000000000=\\n-----END PUBLIC KEY-----",
+        algorithm: "Ed25519"
+      }
+    })
+  );
+  await expectText(page, "#trust-peer-feedback", "Ready: 1 trusted peer.");
+  await expectText(page, "#trust-peer-config", "OSA_FEDERATION_REQUIRE_SIGNATURES=1");
+  await expectText(page, "#trust-peer-config", "node-browser-peer");
   await page.fill("#api-key-openai", "browser-e2e-local-placeholder");
   await page.click("#api-key-form button[type='submit']");
   await expectText(page, "#account-feedback", "Provider keys saved locally");

@@ -12,7 +12,7 @@ http://127.0.0.1:8788
 
 Returns runtime health metadata for container and reverse-proxy checks. It does not include sessions, connector tokens, provider API keys, or user secrets.
 
-Federation-related runtime fields include `federationEnabled`, `federationPeerCount`, `federationSignatureVerificationEnabled`, `federationTrustedNodeCount`, and the public local `node` identity. The browser uses the same metadata to show the local node id/public key and copy-ready peer allowlist JSON.
+Federation-related runtime fields include `federationEnabled`, `federationPeerCount`, `federationSignatureVerificationEnabled`, `federationTrustedNodeCount`, and the public local `node` identity. The browser uses the same metadata to show the local node id/public key, a copy-ready peer record for sharing, and a paste-to-config helper for trusted peer allowlists.
 
 `localLoginEnabled` reports whether the local node login form is available. `devLoginEnabled` is kept as a legacy alias for older clients. In production local mode local login can be enabled while `localPasswordRequired: true` is the release-critical lock.
 
@@ -84,7 +84,7 @@ The snapshot includes bounded slices of goals, public agent metadata, tasks, pro
 
 Imports a peer snapshot and merges it into the local node. Requires the same federation token. Imported changes are broadcast to local dashboards over `/api/events/stream`. When an imported public record wins a same-ID merge, local-only fields such as agent owner ids, connector token ids, proposal owner ids, and uploaded artifact storage details are preserved on the receiving node.
 
-Peer sync uses one in-flight snapshot fetch per peer and rejects peer responses larger than `OSA_FEDERATION_SNAPSHOT_MAX_BYTES`. Shared token auth is the compatibility baseline for private trusted peers. Set `OSA_FEDERATION_REQUIRE_SIGNATURES=1` plus `OSA_FEDERATION_TRUSTED_NODES` or `OSA_FEDERATION_TRUSTED_NODES_PATH` before importing from peers outside a fully private trust boundary. In that mode, OSA verifies the snapshot node identity, filters unsigned signed-contribution records, rejects tampered signatures, and validates Trust Ledger event hashes before merge.
+Peer sync uses one in-flight snapshot fetch per peer and rejects peer responses larger than `OSA_FEDERATION_SNAPSHOT_MAX_BYTES`. Shared token auth is the compatibility baseline for private trusted peers. Use the Account view to paste another node's public peer record and copy the generated `OSA_FEDERATION_REQUIRE_SIGNATURES=1` / `OSA_FEDERATION_TRUSTED_NODES` config, or set those values manually before importing from peers outside a fully private trust boundary. In that mode, OSA verifies the snapshot node identity, filters unsigned signed-contribution records, rejects tampered signatures, and validates Trust Ledger event hashes before merge.
 
 Trusted node allowlists are JSON maps keyed by node id:
 
