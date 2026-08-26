@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node apps/server/src/server.mjs",
     "start": "node apps/server/src/server.mjs",
-    "check": "node --check apps/server/src/server.mjs && node --check apps/web/public/theme-init.js && node --check apps/web/public/app.js && node --check scripts/print-schema-path.mjs && node --check scripts/export-json-to-sql.mjs && node --check scripts/rc-smoke.mjs && node --check scripts/browser-e2e.mjs && node --check scripts/consensus-sim.mjs && node --check scripts/federation-sim.mjs && node --check scripts/postgres-smoke.mjs && python3 -m py_compile apps/connector/connector.py",
+    "check": "node --check apps/server/src/server.mjs && node --check apps/web/public/theme-init.js && node --check apps/web/public/app.js && node --check scripts/print-schema-path.mjs && node --check scripts/export-json-to-sql.mjs && node --check scripts/rc-smoke.mjs && node --check scripts/browser-e2e.mjs && node --check scripts/consensus-sim.mjs && node --check scripts/federation-sim.mjs && node --check scripts/postgres-smoke.mjs && bash -n scripts/install-node.sh && python3 -m py_compile apps/connector/connector.py",
     "check:browser": "node scripts/browser-e2e.mjs",
     "check:rc": "npm run check && node scripts/rc-smoke.mjs && npm run check:browser && node scripts/consensus-sim.mjs && node scripts/federation-sim.mjs",
     "check:postgres": "node scripts/postgres-smoke.mjs",
