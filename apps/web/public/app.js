@@ -22,6 +22,7 @@ const state = {
   authConfig: {
     providers: [],
     auth: {
+      localLoginEnabled: true,
       devLoginEnabled: true,
       localPasswordRequired: false,
       authMode: "local",
@@ -172,7 +173,7 @@ els.accountForm.addEventListener("submit", async (event) => {
 });
 
 async function signIn(email, name, password = "") {
-  if (!state.authConfig.auth.devLoginEnabled) {
+  if (!(state.authConfig.auth.localLoginEnabled ?? state.authConfig.auth.devLoginEnabled)) {
     showAuthFeedback("Local login disabled", "This node is configured for external authentication.");
     return;
   }
@@ -498,10 +499,10 @@ function setNavButtonState(button, active) {
 }
 
 function renderAuthControls() {
-  const devLoginEnabled = Boolean(state.authConfig.auth?.devLoginEnabled);
+  const localLoginEnabled = Boolean(state.authConfig.auth?.localLoginEnabled ?? state.authConfig.auth?.devLoginEnabled);
   const passwordRequired = Boolean(state.authConfig.auth?.localPasswordRequired);
-  els.authDevForm.classList.toggle("hidden", !devLoginEnabled);
-  els.accountForm.classList.toggle("dev-login-disabled", !devLoginEnabled);
+  els.authDevForm.classList.toggle("hidden", !localLoginEnabled);
+  els.accountForm.classList.toggle("dev-login-disabled", !localLoginEnabled);
   els.authPassword.required = passwordRequired;
   els.accountPassword.required = passwordRequired;
   els.authPassword.placeholder = passwordRequired ? "At least 12 characters" : "Optional on this node";
@@ -515,7 +516,7 @@ function renderAuthControls() {
     "not-configured",
     !state.authConfig.providers?.some((provider) => provider.id === "google" && provider.configured)
   );
-  if (!devLoginEnabled && !configuredProviders.length && !state.user) {
+  if (!localLoginEnabled && !configuredProviders.length && !state.user) {
     showAuthFeedback("External auth setup required", "This node has local login disabled and no external auth provider configured yet.");
   }
 }
@@ -612,9 +613,33 @@ function showConnectorFeedback({ title, reason, command = "" }) {
       <span class="section-label">Connector</span>
       <strong>${escapeHtml(title)}</strong>
       <p>${escapeHtml(reason)}</p>
-      ${command ? `<code class="command-block">${escapeHtml(command)}</code>` : ""}
+      ${
+        command
+          ? `<div class="command-shell"><code class="command-block">${escapeHtml(command)}</code><button class="copy-command" type="button">Copy command</button></div>`
+          : ""
+      }
     </div>
   `;
+  const copyButton = els.connectorFeedback.querySelector(".copy-command");
+  const commandBlock = els.connectorFeedback.querySelector(".command-block");
+  if (copyButton && commandBlock) {
+    copyButton.addEventListener("click", () => copyConnectorCommand(copyButton, commandBlock.textContent || ""));
+  }
+}
+
+async function copyConnectorCommand(button, command) {
+  try {
+    await navigator.clipboard.writeText(command);
+    button.textContent = "Copied";
+    setTimeout(() => {
+      button.textContent = "Copy command";
+    }, 1600);
+  } catch {
+    button.textContent = "Select command";
+    setTimeout(() => {
+      button.textContent = "Copy command";
+    }, 2200);
+  }
 }
 
 function renderStoredConnectorFeedback() {

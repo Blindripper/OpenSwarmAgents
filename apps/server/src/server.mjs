@@ -219,7 +219,7 @@ function recordSignedContribution(type, payload = {}, refs = {}) {
 function appendTrustLedger(signature, payload = {}, refs = {}) {
   if (!store) return null;
   store.trustLedger = normalizeTrustLedger(store.trustLedger || []);
-  const previousHash = store.trustLedger[0]?.eventHash || null;
+  const previousHash = localTrustHead();
   const objectHash = refs.objectHash || signature.payloadHash || objectHashForRefs(refs, payload);
   const entry = {
     id: `ledger-${randomUUID()}`,
@@ -247,6 +247,19 @@ function appendTrustLedger(signature, payload = {}, refs = {}) {
   });
   store.trustLedger.unshift(entry);
   return entry;
+}
+
+function localTrustHead() {
+  return (store?.trustLedger || []).find((entry) => entry.nodeId === nodeIdentity.nodeId)?.eventHash || null;
+}
+
+function trustHeadsByNode() {
+  const heads = {};
+  for (const entry of store?.trustLedger || []) {
+    if (!entry.nodeId || heads[entry.nodeId]) continue;
+    heads[entry.nodeId] = entry.eventHash;
+  }
+  return heads;
 }
 
 function objectHash(value) {
@@ -537,6 +550,11 @@ function sessionCookie(token, maxAge = 60 * 60 * 24 * 30) {
   return `osa_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
 }
 
+function oauthStateCookie(stateId = "", maxAge = 10 * 60) {
+  const secure = process.env.OSA_COOKIE_SECURE === "1" ? "; Secure" : "";
+  return `osa_oauth_state=${encodeURIComponent(stateId)}; Path=/api/auth/oauth; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure}`;
+}
+
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase().slice(0, 180);
 }
@@ -785,7 +803,7 @@ function publicState(auth = null) {
       pendingReviews: store.results.filter((result) => ["needs_review", "in_consensus"].includes(result.status)).length,
       acceptedClaims: store.claims.filter((claim) => claim.status === "accepted").length,
       trustEvents: (store.trustLedger || []).length,
-      trustHead: store.trustLedger?.[0]?.eventHash || null
+      trustHead: localTrustHead()
     },
     viewer: publicUser(auth?.user),
     viewerConnectors: auth ? publicConnectorTokensForUser(auth.user.id) : [],
@@ -829,7 +847,11 @@ function publicLockedState() {
 }
 
 function publicTrustLedger(limit = 50) {
-  return (store.trustLedger || []).slice(0, limit).map(publicTrustLedgerEntry);
+  return (store.trustLedger || [])
+    .slice()
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, limit)
+    .map(publicTrustLedgerEntry);
 }
 
 function publicTrustLedgerEntry(entry) {
@@ -895,7 +917,8 @@ function publicFederationSnapshot() {
     version: 1,
     generatedAt: now(),
     node: publicNodeIdentity(),
-    head: store.trustLedger?.[0]?.eventHash || null,
+    head: localTrustHead(),
+    headsByNode: trustHeadsByNode(),
     collections: {
       goals: federationSlice(store.goals).map(publicFederatedGoal),
       agents: federationSlice(store.agents).map(publicFederatedAgent),
@@ -1373,6 +1396,7 @@ function publicRuntime() {
     storageMode,
     nodeEnv: process.env.NODE_ENV || "development",
     authMode,
+    localLoginEnabled: isLocalLoginEnabled(),
     devLoginEnabled: isDevLoginEnabled(),
     localPasswordRequired: localPasswordRequired(),
     demoEndpointsEnabled: areDemoEndpointsEnabled(),
@@ -1469,10 +1493,14 @@ function normalizeFederationPeers(value) {
     .slice(0, 20);
 }
 
-function isDevLoginEnabled() {
+function isLocalLoginEnabled() {
   if (authMode === "oauth") return false;
   if (authMode === "local" || authMode === "hybrid") return true;
   return process.env.NODE_ENV !== "production";
+}
+
+function isDevLoginEnabled() {
+  return isLocalLoginEnabled();
 }
 
 function areDemoEndpointsEnabled() {
@@ -1493,6 +1521,7 @@ function publicOAuthProviders(req) {
       callbackUrl: `${originFromReq(req)}/api/auth/oauth/${id}/callback`
     })),
     auth: {
+      localLoginEnabled: isLocalLoginEnabled(),
       devLoginEnabled: isDevLoginEnabled(),
       localPasswordRequired: localPasswordRequired(),
       authMode,
@@ -1549,18 +1578,20 @@ async function startOAuth(req, res, provider, url) {
     authorizeUrl.searchParams.set("access_type", "online");
     authorizeUrl.searchParams.set("prompt", "select_account");
   }
-  return redirect(res, authorizeUrl.toString());
+  return redirect(res, authorizeUrl.toString(), { "set-cookie": oauthStateCookie(stateId) });
 }
 
 async function completeOAuth(req, res, provider, url) {
   const code = String(url.searchParams.get("code") || "");
   const stateId = String(url.searchParams.get("state") || "");
+  const stateCookie = cookieValue(req, "osa_oauth_state");
   const stateEntry = store.oauthStates.find((item) => item.id === stateId && item.provider === provider);
   store.oauthStates = store.oauthStates.filter((item) => item.id !== stateId);
   const credentials = providerCredentials(provider);
-  if (!code || !stateEntry || !credentials) {
+  const clearOAuthCookie = oauthStateCookie("", 0);
+  if (!code || !stateEntry || !credentials || stateCookie !== stateId) {
     await saveStore();
-    return redirect(res, `/?oauth=${provider}&error=invalid_callback#account`);
+    return redirect(res, `/?oauth=${provider}&error=invalid_callback#account`, { "set-cookie": clearOAuthCookie });
   }
 
   try {
@@ -1571,11 +1602,11 @@ async function completeOAuth(req, res, provider, url) {
     const session = createSession(user);
     event("user_signed_in", `${user.name} signed in with ${credentials.config.label}`, { userId: user.id, provider });
     await saveStore();
-    return redirect(res, stateEntry.redirectAfter || "/", { "set-cookie": sessionCookie(session.token) });
+    return redirect(res, stateEntry.redirectAfter || "/", { "set-cookie": [sessionCookie(session.token), clearOAuthCookie] });
   } catch (error) {
     event("oauth_error", `${credentials.config.label} OAuth failed: ${error.message}`, { provider });
     await saveStore();
-    return redirect(res, `/?oauth=${provider}&error=provider_failed#account`);
+    return redirect(res, `/?oauth=${provider}&error=provider_failed#account`, { "set-cookie": clearOAuthCookie });
   }
 }
 
@@ -2058,7 +2089,8 @@ async function handleApi(req, res, url) {
       }
       return sendJson(res, 200, {
         node: publicNodeIdentity(),
-        head: store.trustLedger?.[0]?.eventHash || null,
+        head: localTrustHead(),
+        headsByNode: trustHeadsByNode(),
         entries: publicTrustLedger(200),
         count: (store.trustLedger || []).length
       });
@@ -2094,7 +2126,8 @@ async function handleApi(req, res, url) {
         changed,
         changedTotal: totalChanged,
         node: publicNodeIdentity(),
-        head: store.trustLedger?.[0]?.eventHash || null
+        head: localTrustHead(),
+        headsByNode: trustHeadsByNode()
       });
     }
 
@@ -2543,6 +2576,7 @@ async function handleApi(req, res, url) {
         return;
       }
       if (task.assignedAgentId !== agent.id) return badRequest(res, "Task is not leased to this agent");
+      const artifacts = normalizeResultArtifacts(body.artifacts, task, agent, access);
 
       const result = {
         id: `result-${randomUUID()}`,
@@ -2551,7 +2585,7 @@ async function handleApi(req, res, url) {
         agentId: agent.id,
         summary: String(body.summary || "").slice(0, 240),
         content: String(body.content || "").slice(0, 10000),
-        artifacts: normalizeArtifacts(body.artifacts),
+        artifacts,
         sources: normalizeList(body.sources, []),
         confidence: clamp(Number(body.confidence || 0.5), 0, 1),
         status: "in_consensus",
@@ -3144,7 +3178,7 @@ function normalizeArtifacts(value) {
       const kind = normalizeArtifactKind(artifact.kind || artifact.type || mimeType || name);
       if (!name && !uri && !description) return null;
       return {
-        id: String(artifact.id || `artifact-${randomUUID()}`).slice(0, 100),
+        id: artifact.id ? String(artifact.id).slice(0, 100) : "",
         name: name || artifactNameForKind(kind),
         kind,
         mimeType,
@@ -3155,6 +3189,61 @@ function normalizeArtifacts(value) {
     })
     .filter(Boolean)
     .slice(0, 30);
+}
+
+function normalizeResultArtifacts(value, task, agent, access) {
+  return normalizeArtifacts(value).map((artifact) => {
+    const uriArtifactId = localArtifactIdFromUri(artifact.uri);
+    const declaredLocalId = String(artifact.id || "").startsWith("artifact-") ? artifact.id : "";
+    const localId = uriArtifactId || declaredLocalId;
+    if (!localId) return artifact;
+
+    const uploaded = store.uploadedArtifacts.find((item) => item.id === localId);
+    if (!uploaded) {
+      const error = new Error("Unknown uploaded artifact reference");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (!canAttachUploadedArtifact(uploaded, task, agent, access)) {
+      const error = new Error("Uploaded artifact is not scoped to this result");
+      error.statusCode = 403;
+      throw error;
+    }
+    return resultArtifactFromUpload(uploaded);
+  });
+}
+
+function localArtifactIdFromUri(uri) {
+  const match = String(uri || "").match(/^\/api\/artifacts\/([^/]+)\/download$/);
+  return match ? match[1] : "";
+}
+
+function canAttachUploadedArtifact(artifact, task, agent, access) {
+  if (artifact.agentId && artifact.agentId !== agent.id) return false;
+  if (artifact.goalId && artifact.goalId !== task.goalId) return false;
+  if (artifact.taskId && artifact.taskId !== task.id) return false;
+
+  if (access?.connector) {
+    return artifact.agentId === agent.id && artifact.goalId === task.goalId && (!artifact.taskId || artifact.taskId === task.id);
+  }
+
+  const userId = access?.auth?.user?.id || access?.user?.id || null;
+  if (userId && artifact.uploadedBy === userId) return true;
+  return artifact.agentId === agent.id;
+}
+
+function resultArtifactFromUpload(artifact) {
+  return {
+    id: artifact.id,
+    name: artifact.name,
+    kind: artifact.kind,
+    mimeType: artifact.mimeType,
+    uri: artifact.uri,
+    size: artifact.size,
+    description: artifact.description || "",
+    sha256: artifact.sha256 || null,
+    signature: artifact.signature || null
+  };
 }
 
 function normalizeArtifactUri(value) {

@@ -57,9 +57,9 @@ The local node keeps state in `data/agentswarm.json` by default. When `DATABASE_
 
 Each node creates an Ed25519 identity at `data/node-identity.json` or `OSA_IDENTITY_PATH`. Proposals, proposal votes, artifact uploads, task results, and result reviews are signed with that identity. The private key is local infrastructure state and must never be committed.
 
-Every signed contribution is appended to the local Trust Ledger. Entries include the node id, contribution type, object reference, payload hash, previous event hash, event hash, and signature metadata. This gives OSA a blockchain-ready audit trail without requiring a blockchain in the core workflow.
+Every signed contribution is appended to the local Trust Ledger. Entries include the node id, contribution type, object reference, payload hash, previous event hash, event hash, and signature metadata. Local entries link only to the previous local entry for that node. Imported peer entries are retained as a federated ledger cache with separate node heads. This gives OSA a blockchain-ready audit trail without requiring a blockchain in the core workflow.
 
-The current federation layer is intentionally simple and auditable: trusted peers exchange non-secret snapshots through `GET /api/federation/snapshot` and `POST /api/federation/import`. Each node merges proposals, votes, worker projects, tasks, results, reviews, Result Pool entries, public artifact metadata, activity events, and Trust Ledger entries. Local secrets stay local: users, sessions, connector tokens, provider keys, and private upload paths are never exported.
+The current federation layer is intentionally simple and auditable: trusted peers exchange non-secret snapshots through `GET /api/federation/snapshot` and `POST /api/federation/import`. Each node merges proposals, votes, worker projects, tasks, results, reviews, Result Pool entries, public artifact metadata, activity events, and Trust Ledger entries. Local secrets stay local: users, sessions, connector tokens, provider keys, and private upload paths are never exported. RC1 federation is shared-token trusted-peer sync; open federation still needs peer public-key allowlists and enforced object signature verification.
 
 The intended network upgrade after that is:
 

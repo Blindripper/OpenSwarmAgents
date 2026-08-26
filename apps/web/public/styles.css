@@ -169,10 +169,17 @@ button:disabled {
   opacity: 0.82;
 }
 
+.command-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  margin-top: 12px;
+}
+
 .command-block {
   display: block;
   overflow-x: auto;
-  margin-top: 12px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface-muted);
@@ -181,6 +188,13 @@ button:disabled {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 1.5;
+  white-space: nowrap;
+}
+
+.copy-command {
+  min-height: 34px;
+  font-size: 12px;
+  font-weight: 750;
   white-space: nowrap;
 }
 

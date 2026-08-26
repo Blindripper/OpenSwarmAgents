@@ -12,7 +12,7 @@ http://127.0.0.1:8788
 
 Returns runtime health metadata for container and reverse-proxy checks. It does not include sessions, connector tokens, provider API keys, or user secrets.
 
-`devLoginEnabled` currently reports whether the local login form is available. In production local mode this can be `true`; `localPasswordRequired: true` is the release-critical lock.
+`localLoginEnabled` reports whether the local node login form is available. `devLoginEnabled` is kept as a legacy alias for older clients. In production local mode local login can be enabled while `localPasswordRequired: true` is the release-critical lock.
 
 ```json
 {
@@ -21,6 +21,7 @@ Returns runtime health metadata for container and reverse-proxy checks. It does 
     "storageMode": "postgres-snapshot",
     "nodeEnv": "production",
     "authMode": "local",
+    "localLoginEnabled": true,
     "devLoginEnabled": true,
     "localPasswordRequired": true,
     "demoEndpointsEnabled": false,
@@ -63,13 +64,13 @@ Federation is opt-in. Enable it only between trusted peers and protect it with a
 ```bash
 OSA_FEDERATION_ENABLED=1
 OSA_FEDERATION_TOKEN=change-this-long-random-shared-peer-token
-OSA_FEDERATION_PEERS=http://peer-one:8788,http://peer-two:8788
+OSA_FEDERATION_PEERS=https://peer-one.example,https://peer-two.example
 OSA_FEDERATION_SYNC_MS=5000
 OSA_FEDERATION_COLLECTION_LIMIT=2000
 OSA_FEDERATION_SNAPSHOT_MAX_BYTES=4194304
 ```
 
-Federation endpoints reject requests when `OSA_FEDERATION_ENABLED=1` but `OSA_FEDERATION_TOKEN` is missing. `OSA_ALLOW_INSECURE_FEDERATION=1` exists only for isolated local experiments.
+Federation endpoints reject requests when `OSA_FEDERATION_ENABLED=1` but `OSA_FEDERATION_TOKEN` is missing. Use HTTPS or a private tunnel/network for peer URLs when tokens cross a network boundary. `http://` peer URLs are acceptable only for localhost, containers, or private networks you control. `OSA_ALLOW_INSECURE_FEDERATION=1` exists only for isolated local experiments.
 
 `GET /api/federation/snapshot`
 
@@ -93,7 +94,11 @@ Returns non-secret Trust Ledger metadata for the local node. This endpoint requi
     "nodeId": "node-...",
     "algorithm": "Ed25519"
   },
-  "head": "sha256-event-head",
+  "head": "local-node-sha256-event-head",
+  "headsByNode": {
+    "node-local": "local-node-sha256-event-head",
+    "node-peer": "peer-sha256-event-head"
+  },
   "count": 12,
   "entries": [
     {
@@ -111,6 +116,23 @@ Returns non-secret Trust Ledger metadata for the local node. This endpoint requi
   ]
 }
 ```
+
+`head` is the local node's current Trust Ledger head. `headsByNode` includes the latest known event head for each node id represented in the local ledger plus imported trusted peer ledger entries.
+
+## Signature Verification
+
+Signed contributions use Ed25519 over a canonical UTF-8 JSON string:
+
+```js
+stableStringify({
+  type,
+  signedAt,
+  payloadHash,
+  payload
+})
+```
+
+Canonicalization sorts object keys lexicographically, omits `undefined` object fields, preserves array order, and JSON-encodes scalar values. `payloadHash` is the SHA-256 hex digest of the canonicalized payload object. The public key is available from `runtime.node.publicKeyPem`, `/api/health`, `/api/federation/snapshot`, or `/api/trust-ledger`. RC1 records signatures and exchanges them through trusted-peer federation, but import-time enforcement against peer public-key allowlists is still a known gap.
 
 ## Optional OAuth Login
 
@@ -152,6 +174,7 @@ Returns a user plus a session token. The node stores only a SHA-256 hash of the 
     "storageMode": "json",
     "nodeEnv": "development",
     "authMode": "local",
+    "localLoginEnabled": true,
     "devLoginEnabled": true
   }
 }
@@ -165,6 +188,7 @@ Authenticated responses include the node state and non-secret runtime metadata:
     "storageMode": "json",
     "nodeEnv": "development",
     "authMode": "local",
+    "localLoginEnabled": true,
     "devLoginEnabled": true,
     "localPasswordRequired": false,
     "demoEndpointsEnabled": true,
@@ -393,7 +417,7 @@ Requires the owning signed-in session or the connector token scoped to the submi
 
 Artifacts are first-class task outputs. Supported kinds are `code`, `image`, `pdf`, `csv`, `spreadsheet`, `bundle`, `video`, `audio`, and `file`. The RC supports local artifact uploads. Wider deployments should move artifact storage to S3 or MinIO plus signed upload URLs.
 
-For result metadata, `uri` accepts only local OSA artifact download URLs (`/api/artifacts/:id/download`) or `http://`/`https://` URLs. Connector-supplied local file paths are ignored so they do not leak into authenticated state or federation snapshots.
+For result metadata, `uri` accepts only local OSA artifact download URLs (`/api/artifacts/:id/download`) or `http://`/`https://` URLs. Local OSA artifact references must point to an existing uploaded artifact in the same agent/task/goal scope, then the server canonicalizes the result metadata from the stored upload record. Connector-supplied local file paths are ignored so they do not leak into authenticated state or federation snapshots.
 
 ## Review Result
 

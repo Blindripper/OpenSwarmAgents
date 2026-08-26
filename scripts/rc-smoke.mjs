@@ -21,7 +21,9 @@ try {
       OSA_IDENTITY_PATH: join(dataDir, "node-identity.json"),
       OSA_LOCAL_PASSWORD_REQUIRED: "1",
       OSA_DEMO_ENDPOINTS: "0",
-      OSA_RATE_LIMIT_MULTIPLIER: "0"
+      OSA_RATE_LIMIT_MULTIPLIER: "0",
+      OSA_GITHUB_CLIENT_ID: "rc-smoke-github-client",
+      OSA_GITHUB_CLIENT_SECRET: "rc-smoke-github-secret"
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -32,6 +34,7 @@ try {
   const health = await getJson("/api/health");
   assert(health.ok, "health endpoint should be ok");
   assert(health.runtime.authMode === "local", "auth mode should default to local");
+  assert(health.runtime.localLoginEnabled === true, "local login should be enabled in smoke");
   assert(health.runtime.localPasswordRequired === true, "local password should be required in smoke");
   assert(health.runtime.node?.nodeId, "node identity should be public");
 
@@ -61,6 +64,23 @@ try {
   await expectStatus("/api/voting/connect", 401, {
     name: "Unauthenticated Voting Agent"
   });
+  const oauthStart = await fetch(`${baseUrl}/api/auth/oauth/github/start?redirect=/`, { redirect: "manual" });
+  assert(oauthStart.status === 302, "OAuth start should redirect when provider credentials are configured");
+  const oauthCookie = oauthStart.headers.get("set-cookie") || "";
+  const oauthLocation = oauthStart.headers.get("location") || "";
+  assert(oauthCookie.includes("osa_oauth_state="), "OAuth start should bind state to an HttpOnly cookie");
+  assert(oauthCookie.includes("HttpOnly"), "OAuth state cookie should be HttpOnly");
+  assert(oauthCookie.includes("SameSite=Strict"), "OAuth state cookie should use SameSite=Strict");
+  const oauthState = new URL(oauthLocation).searchParams.get("state");
+  assert(oauthState && oauthCookie.includes(encodeURIComponent(oauthState)), "OAuth cookie should match redirect state");
+  const oauthCallbackWithoutCookie = await fetch(`${baseUrl}/api/auth/oauth/github/callback?code=fake-code&state=${encodeURIComponent(oauthState)}`, {
+    redirect: "manual"
+  });
+  assert(oauthCallbackWithoutCookie.status === 302, "OAuth callback without state cookie should redirect");
+  assert(
+    (oauthCallbackWithoutCookie.headers.get("location") || "").includes("error=invalid_callback"),
+    "OAuth callback without state cookie should be rejected before provider exchange"
+  );
 
   await expectStatus("/api/auth/login", 400, {
     email: "rc@example.com",
@@ -177,6 +197,66 @@ try {
   );
   assert(scopedArtifact.artifact.agentId === worker.agent.id, "connector artifact should be attributed to its agent");
   assert(scopedArtifact.artifact.goalId === "goal-agent-collab", "connector artifact should stay in its scoped goal");
+
+  await expectStatus(`/api/tasks/${claimed.task.id}/result`, 400, {
+    agentId: worker.agent.id,
+    summary: "Fake artifact result",
+    content: "Result submission must reject unknown local artifact download references.",
+    artifacts: [
+      {
+        name: "fake.md",
+        kind: "code",
+        uri: "/api/artifacts/artifact-does-not-exist/download"
+      }
+    ]
+  }, connectorHeaders);
+
+  const votingArtifact = await postJson(
+    "/api/artifacts/upload",
+    {
+      agentId: vote.agent.id,
+      goalId: "voting-pool",
+      name: "voting-agent.md",
+      kind: "code",
+      mimeType: "text/markdown",
+      dataBase64: Buffer.from("voting").toString("base64")
+    },
+    headers
+  );
+  await expectStatus(`/api/tasks/${claimed.task.id}/result`, 403, {
+    agentId: worker.agent.id,
+    summary: "Cross agent artifact result",
+    content: "Result submission must reject artifacts uploaded by another agent scope.",
+    artifacts: [
+      {
+        name: "stolen.md",
+        kind: "code",
+        uri: votingArtifact.artifact.uri
+      }
+    ]
+  }, connectorHeaders);
+
+  const result = await postJson(
+    `/api/tasks/${claimed.task.id}/result`,
+    {
+      agentId: worker.agent.id,
+      summary: "Scoped artifact result",
+      content: "The connector may attach only artifacts that match its agent, goal, and leased task scope.",
+      artifacts: [
+        {
+          name: "renamed.md",
+          kind: "code",
+          uri: scopedArtifact.artifact.uri
+        }
+      ],
+      sources: ["local-smoke"],
+      confidence: 0.82
+    },
+    connectorHeaders
+  );
+  assert(result.result.artifacts[0]?.id === scopedArtifact.artifact.id, "result should canonicalize uploaded artifact metadata");
+  assert(result.result.artifacts[0]?.sha256 === scopedArtifact.artifact.sha256, "result artifact should keep uploaded artifact hash");
+  assert(result.result.signature?.signature, "result should be signed");
 
   const artifact = await postJson(
     "/api/artifacts/upload",

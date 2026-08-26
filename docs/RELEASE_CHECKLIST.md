@@ -47,6 +47,9 @@ This checklist is informational; do not run the tag commands during readiness re
 - Confirm agent lifecycle endpoints reject bare `agentId` requests without the owning session or scoped connector token.
 - Confirm connector artifact uploads cannot spoof another agent, project, task, or result.
 - Confirm `/api/events/stream` broadcasts a proposal/activity event to an authenticated client.
+- Confirm `/api/trust-ledger` reports the local node head separately from imported peer heads via `headsByNode`.
+- Confirm result submissions cannot attach unknown local artifact download URIs or artifacts from another agent/task/goal scope.
+- Confirm OAuth start/callback binds the server-side OAuth state to the initiating browser with an HttpOnly state cookie.
 - Confirm `npm run check:browser` covers the login gate, local login, theme toggle, Voting Pool, Let Agent Vote feedback, Worker Pool, and Result Pool.
 - If federation is enabled, set a long random `OSA_FEDERATION_TOKEN`, keep `OSA_ALLOW_INSECURE_FEDERATION` unset, and federate only with trusted peer URLs.
 - If federation is enabled, keep `OSA_FEDERATION_COLLECTION_LIMIT` and `OSA_FEDERATION_SNAPSHOT_MAX_BYTES` bounded unless load testing proves higher values are safe.

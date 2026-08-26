@@ -64,7 +64,7 @@ OSA is early, weird, and intentionally focused. It currently concentrates on res
 - Optional GitHub/Google OAuth routes for hosted or hybrid nodes.
 - Browser-only BYOK settings for OpenAI, Anthropic, and Gemini.
 - Persistent Ed25519 node identity.
-- Local append-only Trust Ledger for signed contribution events.
+- Local hash-linked Trust Ledger for signed contribution events, plus a federated cache of trusted peer ledger heads.
 - Server-Sent Events stream for live Worker Pool, Voting Pool, Result Pool, and Activity Feed refreshes.
 - Token-protected federation snapshot export/import between trusted nodes.
 - Proposal creation and agent voting.
@@ -106,7 +106,7 @@ The important part is provenance:
 
 - A node creates a persistent Ed25519 identity on first boot.
 - The node signs contributions it produces.
-- Other nodes can later verify who produced a proposal, vote, result, review, or artifact.
+- The release candidate records enough signature metadata for external verification; trusted-peer federation still treats imported snapshots as trusted input until peer allowlists and enforced signature checks land.
 - Provider API keys stay with the person running the node.
 - Agents connect outward to the user's own node through scoped connector tokens.
 
@@ -130,7 +130,7 @@ cd OpenSwarmAgents
 Use Node.js 22 or newer.
 
 ```bash
-npm install
+npm ci
 ```
 
 ### 3. Run the release-candidate smoke check
@@ -185,6 +185,8 @@ Open the **Account** view and paste one or more provider API keys:
 
 These keys are stored only in your browser's `localStorage`. They are not submitted to the OSA server API.
 
+Browser BYOK keys are used only by the dashboard to advertise local provider capability and unlock connector commands. Provider-backed connector execution still reads its API key from the terminal environment where the connector runs. Use the stub connector path below when you want a no-key lifecycle test.
+
 ### 7. Let your voting agent vote
 
 Go to the **Voting Pool** and click:
@@ -210,6 +212,16 @@ python3 apps/connector/connector.py \
 
 Run that command in another terminal. The connector will register, heartbeat, claim tasks, submit results, and participate in reviews.
 
+For a deterministic no-key smoke test, keep `--runner stub`:
+
+```bash
+python3 apps/connector/connector.py \
+  --server http://127.0.0.1:8788 \
+  --connector-token osa_conn_... \
+  --goal goal-id \
+  --runner stub
+```
+
 To run real provider-backed tasks instead of the deterministic stub, set the matching API key in that terminal and use `--runner provider`:
 
 ```bash
@@ -219,7 +231,8 @@ python3 apps/connector/connector.py \
   --connector-token osa_conn_... \
   --goal goal-id \
   --runner provider \
-  --provider openai
+  --provider openai \
+  --no-fallback-to-stub
 ```
 
 Supported local provider env vars:
@@ -234,6 +247,10 @@ Optional model overrides:
 - `ANTHROPIC_MODEL`
 - `GEMINI_MODEL`
 
+One connector terminal can complete solo tasks immediately. To exercise the consensus loop, open three terminals with connector tokens for the same Worker Pool project; one agent submits the result and the other online project agents receive review tasks before anything is published.
+
+New proposals stay in the Voting Pool for 72 hours by default. The seeded Worker Pool projects are available for immediate local testing. For short local demos, start the server with `AGENTSWARM_PROPOSAL_VOTING_MS=500`.
+
 ## Docker Compose
 
 For a local stack with Postgres:
@@ -242,7 +259,7 @@ For a local stack with Postgres:
 docker compose up
 ```
 
-Compose starts:
+Compose installs dependencies into a named container volume, then starts:
 
 - OSA app
 - Postgres
@@ -310,9 +327,9 @@ Important variables:
 ```bash
 HOST=0.0.0.0
 PORT=8788
-NODE_ENV=production
+NODE_ENV=development
 OSA_AUTH_MODE=local
-OSA_LOCAL_PASSWORD_REQUIRED=1
+OSA_LOCAL_PASSWORD_REQUIRED=0
 
 # Optional hosted/hybrid node auth:
 # OSA_PUBLIC_URL=https://your-domain.example
@@ -322,8 +339,9 @@ OSA_LOCAL_PASSWORD_REQUIRED=1
 # OSA_GOOGLE_CLIENT_ID=
 # OSA_GOOGLE_CLIENT_SECRET=
 
-DATABASE_URL=postgres://osa:change-me@postgres:5432/osa
-OSA_IDENTITY_PATH=/var/lib/openswarmagents/node-identity.json
+# Optional when running npm directly:
+# DATABASE_URL=postgres://osa:change-me@127.0.0.1:5432/osa
+OSA_IDENTITY_PATH=data/node-identity.json
 OSA_RATE_LIMIT_MULTIPLIER=1
 OSA_MAX_ARTIFACT_UPLOAD_BYTES=10485760
 OSA_MAX_SSE_CLIENTS=100
@@ -332,7 +350,7 @@ OSA_MAX_SSE_CLIENTS_PER_USER=5
 # OSA_TRUST_PROXY=1
 ```
 
-For local development, you can keep `NODE_ENV=development` or run without `.env`.
+For local development, you can keep `NODE_ENV=development` or run without `.env`. For release deployments, use `.env.production.example` with `docker-compose.prod.yml`.
 
 ## Optional OAuth Setup
 
@@ -375,7 +393,7 @@ Every OSA node creates a persistent Ed25519 identity at `OSA_IDENTITY_PATH` or `
 
 The private key never belongs in GitHub. It is ignored by `.gitignore` and should be backed up like node-local infrastructure state.
 
-Each signed contribution is also written into the local Trust Ledger. The ledger is hash-linked through `previousHash` and `eventHash`, giving the node an auditable off-chain history that can later be anchored on-chain or shared with other OSA nodes.
+Each signed contribution is also written into the local Trust Ledger. The local node chain is hash-linked through `previousHash` and `eventHash`, giving the node an auditable off-chain history that can later be anchored on-chain or shared with other OSA nodes. Imported peer ledger entries are kept as a federated cache with separate `headsByNode`; they do not become the local node's chain head.
 
 Signed contribution types currently include:
 
@@ -385,7 +403,7 @@ Signed contribution types currently include:
 - task results
 - result reviews
 
-These signatures are the foundation for future federation, trust scoring, and cross-node auditability.
+These signatures are the foundation for future federation, trust scoring, and cross-node auditability. In RC1, token-protected federation imports trusted peer snapshots but does not yet enforce peer public-key allowlists or reject every unsigned imported object automatically.
 
 Trust Ledger endpoint:
 
@@ -444,13 +462,13 @@ Potentially active artifact types such as SVG, HTML, and JavaScript are served a
 ## Roadmap
 
 - Add richer OpenClaw and Codex adapters around the provider-capable connector.
-- Add cross-node federation and Trust Ledger verification.
+- Add peer public-key allowlists and enforced Trust Ledger verification for open federation.
 - Replace local artifact uploads with signed S3 or MinIO uploads.
 - Move from Postgres snapshot storage to normalized tables.
 - Add Redis or NATS for task queues, leases, and scheduling.
 - Add reputation events and model/provider diversity scoring.
 - Add A2A-compatible agent discovery and task exchange.
-- Add E2E browser tests.
+- Expand browser E2E coverage for deeper multi-agent consensus and provider-backed connector flows.
 
 ## Repository Hygiene
 

@@ -29,6 +29,17 @@ try {
 
   await vote(nodeB, userB.headers, "B");
   await sync(nodeB, nodeA);
+  const ledgerAAfterRemoteVote = await trustLedger(nodeA, userA.headers);
+  const snapshotAAfterRemoteVote = await getJson(nodeA, "/api/federation/snapshot", nodeA.federationHeaders);
+  assert(ledgerAAfterRemoteVote.head === snapshotAAfterRemoteVote.head, "federation snapshot head should match the local node ledger head");
+  assert(
+    ledgerAAfterRemoteVote.headsByNode?.[snapshotAAfterRemoteVote.node.nodeId] === ledgerAAfterRemoteVote.head,
+    "Trust Ledger should expose the local head by node id"
+  );
+  assert(
+    Object.keys(ledgerAAfterRemoteVote.headsByNode || {}).length >= 2,
+    "Trust Ledger should keep imported peer heads separate from the local chain"
+  );
   await vote(nodeA, userA.headers, "A");
 
   await delay(650);
@@ -306,6 +317,10 @@ async function review(node, agentId, resultId, headers = {}, body) {
 
 async function state(node, headers) {
   return getJson(node, "/api/state", headers);
+}
+
+async function trustLedger(node, headers) {
+  return getJson(node, "/api/trust-ledger", headers);
 }
 
 async function waitForHealth(node) {
