@@ -1613,6 +1613,7 @@ function publicConnectorToken(token) {
 }
 
 function publicRuntime() {
+  const federationTrust = federationTrustConfigStatus();
   return {
     storageMode,
     nodeEnv: process.env.NODE_ENV || "development",
@@ -1626,12 +1627,26 @@ function publicRuntime() {
     maxArtifactUploadBytes,
     federationEnabled,
     federationPeerCount: federationPeers.length,
+    federationSignatureVerificationEnabled: federationSignatureVerificationEnabled(),
+    federationTrustedNodeCount: federationTrust.trustedPeerCount,
+    federationTrustConfigError: federationTrust.error,
     node: publicNodeIdentity(),
     oauthConfigured: Object.fromEntries(
       Object.keys(oauthProviderConfig).map((provider) => [provider, Boolean(providerCredentials(provider))])
     ),
     productionReady: runtimeReadiness().ok
   };
+}
+
+function federationTrustConfigStatus() {
+  if (!federationSignatureVerificationEnabled()) {
+    return { trustedPeerCount: 0, error: null };
+  }
+  try {
+    return { trustedPeerCount: Math.max(0, loadFederationTrustedNodes().size - 1), error: null };
+  } catch (error) {
+    return { trustedPeerCount: 0, error: error.message };
+  }
 }
 
 function validateRuntimeConfig() {

@@ -12,6 +12,8 @@ http://127.0.0.1:8788
 
 Returns runtime health metadata for container and reverse-proxy checks. It does not include sessions, connector tokens, provider API keys, or user secrets.
 
+Federation-related runtime fields include `federationEnabled`, `federationPeerCount`, `federationSignatureVerificationEnabled`, `federationTrustedNodeCount`, and the public local `node` identity. The browser uses the same metadata to show the local node id/public key and copy-ready peer allowlist JSON.
+
 `localLoginEnabled` reports whether the local node login form is available. `devLoginEnabled` is kept as a legacy alias for older clients. In production local mode local login can be enabled while `localPasswordRequired: true` is the release-critical lock.
 
 ```json

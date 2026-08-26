@@ -260,6 +260,8 @@ The node signs local contributions and writes them into the Trust Ledger:
 
 The local Trust Ledger is hash-linked through `previousHash` and `eventHash`. Imported peer ledger entries are retained as a federated cache with separate `headsByNode`; peer entries do not become the local node's chain head.
 
+The **Account** view shows the current node id, public key, federation mode, trusted peer count, ledger head, and a copy-ready peer allowlist JSON block. To trust another node, exchange these public node records out of band and add them through `OSA_FEDERATION_TRUSTED_NODES` or `OSA_FEDERATION_TRUSTED_NODES_PATH`.
+
 ### Federation Status
 
 RC1 federation is trusted-peer snapshot sync:
@@ -315,7 +317,7 @@ Release deployments should use `.env.production.example` with `docker-compose.pr
 ## Roadmap
 
 - Deeper OpenClaw/Codex adapter presets, installer checks, and richer task-result mapping.
-- Richer trust UI for peer public-key allowlists and signature-verification failures.
+- Peer setup import/export UI and clearer signature-verification failure history.
 - Signed S3 or MinIO artifact uploads for larger deployments.
 - Normalized Postgres tables instead of snapshot storage.
 - Redis or NATS for queues, leases, scheduling, and realtime fanout.

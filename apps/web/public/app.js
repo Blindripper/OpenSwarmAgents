@@ -98,6 +98,11 @@ const els = {
   trustEventCount: document.querySelector("#trust-event-count"),
   trustNodeId: document.querySelector("#trust-node-id"),
   trustHeadHash: document.querySelector("#trust-head-hash"),
+  trustFederationMode: document.querySelector("#trust-federation-mode"),
+  trustPeerCount: document.querySelector("#trust-peer-count"),
+  trustPublicKey: document.querySelector("#trust-public-key"),
+  trustPeerJson: document.querySelector("#trust-peer-json"),
+  trustCopyPeer: document.querySelector("#trust-copy-peer"),
   trustLedger: document.querySelector("#trust-ledger")
 };
 
@@ -109,6 +114,7 @@ els.themeToggle.addEventListener("click", () => toggleTheme());
 els.oauthGithub.addEventListener("click", () => startOAuth("github"));
 els.oauthGoogle.addEventListener("click", () => startOAuth("google"));
 els.donateButton.addEventListener("click", () => donateEth());
+els.trustCopyPeer.addEventListener("click", () => copyTrustPeerJson());
 
 els.authDevForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -668,16 +674,21 @@ function showConnectorFeedback({ title, reason, command = "" }) {
 }
 
 async function copyConnectorCommand(button, command) {
+  await copyText(button, command);
+}
+
+async function copyText(button, text) {
+  const original = button.textContent;
   try {
-    await navigator.clipboard.writeText(command);
+    await navigator.clipboard.writeText(text);
     button.textContent = "Copied";
     setTimeout(() => {
-      button.textContent = "Copy command";
+      button.textContent = original;
     }, 1600);
   } catch {
-    button.textContent = "Select command";
+    button.textContent = "Select text";
     setTimeout(() => {
-      button.textContent = "Copy command";
+      button.textContent = original;
     }, 2200);
   }
 }
@@ -1242,8 +1253,17 @@ function renderTrustLedger() {
   const runtime = state.data.runtime || {};
   const stats = state.data.stats || {};
   const entries = state.data.trustLedger || [];
-  els.trustNodeId.textContent = runtime.node?.nodeId || "-";
+  const node = runtime.node || {};
+  const peerJson = trustedPeerJson(node);
+  els.trustNodeId.textContent = node.nodeId || "-";
   els.trustHeadHash.textContent = stats.trustHead ? shortHash(stats.trustHead) : "-";
+  els.trustHeadHash.title = stats.trustHead || "";
+  els.trustFederationMode.textContent = federationModeLabel(runtime);
+  els.trustPeerCount.textContent = `${runtime.federationTrustedNodeCount || 0} trusted · ${runtime.federationPeerCount || 0} configured`;
+  els.trustPeerCount.title = runtime.federationTrustConfigError || "";
+  els.trustPublicKey.textContent = node.publicKeyPem ? compactPublicKey(node.publicKeyPem) : "-";
+  els.trustPublicKey.title = node.publicKeyPem || "";
+  els.trustPeerJson.textContent = peerJson;
   els.trustEventCount.textContent = `${stats.trustEvents || 0} events`;
   renderList(
     els.trustLedger,
@@ -1262,6 +1282,38 @@ function renderTrustLedger() {
       detail: "Signed local node events will appear here when available."
     }
   );
+}
+
+function federationModeLabel(runtime) {
+  if (runtime.federationTrustConfigError) return "Trust config error";
+  if (!runtime.federationEnabled) return "Local only";
+  return runtime.federationSignatureVerificationEnabled ? "Signature verified" : "Shared token";
+}
+
+function trustedPeerJson(node) {
+  if (!node?.nodeId || !node?.publicKeyPem) return "{}";
+  return JSON.stringify(
+    {
+      [node.nodeId]: {
+        publicKeyPem: node.publicKeyPem,
+        algorithm: node.algorithm || "Ed25519"
+      }
+    },
+    null,
+    2
+  );
+}
+
+function compactPublicKey(value) {
+  return String(value || "")
+    .replace("-----BEGIN PUBLIC KEY-----", "")
+    .replace("-----END PUBLIC KEY-----", "")
+    .replace(/\s+/g, "")
+    .replace(/^(.{16}).+(.{16})$/, "$1...$2");
+}
+
+async function copyTrustPeerJson() {
+  await copyText(els.trustCopyPeer, els.trustPeerJson.textContent || "{}");
 }
 
 function filteredEvents() {

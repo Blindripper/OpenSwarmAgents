@@ -1103,6 +1103,10 @@ button:disabled {
   background: var(--surface-muted);
 }
 
+.trust-summary .trust-wide {
+  grid-column: 1 / -1;
+}
+
 .trust-summary span {
   color: var(--muted);
   font-size: 12px;
@@ -1117,6 +1121,30 @@ button:disabled {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.trust-summary pre {
+  max-height: 180px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.trust-summary pre code {
+  overflow: visible;
+  color: var(--text-strong);
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.trust-summary .copy-command {
+  justify-self: start;
 }
 
 .trust-ledger-list {

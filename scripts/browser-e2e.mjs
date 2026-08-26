@@ -68,6 +68,10 @@ try {
   await page.selectOption("#connector-runner", "openclaw");
   await page.click("#api-key-form button[type='submit']");
   await expectText(page, "#account-feedback", "Connector runner saved");
+  await expectText(page, "#trust-federation-mode", "Local only");
+  const peerJson = await page.locator("#trust-peer-json").textContent();
+  assert(peerJson?.includes("publicKeyPem"), "account trust panel should expose peer allowlist JSON");
+  assert(peerJson?.includes("node-"), "account trust panel should include this node id");
   await page.fill("#api-key-openai", "browser-e2e-local-placeholder");
   await page.click("#api-key-form button[type='submit']");
   await expectText(page, "#account-feedback", "Provider keys saved locally");
