@@ -52,8 +52,9 @@ This checklist is informational; do not run the tag commands during readiness re
 - Confirm OAuth start/callback binds the server-side OAuth state to the initiating browser with an HttpOnly state cookie.
 - Confirm `npm run check:browser` covers the login gate, local login, theme toggle, Voting Pool, Let Agent Vote feedback, Worker Pool, and Result Pool.
 - If federation is enabled, set a long random `OSA_FEDERATION_TOKEN`, keep `OSA_ALLOW_INSECURE_FEDERATION` unset, and federate only with trusted peer URLs.
+- Before importing from peers outside a fully private trust boundary, set `OSA_FEDERATION_REQUIRE_SIGNATURES=1` plus `OSA_FEDERATION_TRUSTED_NODES` or `OSA_FEDERATION_TRUSTED_NODES_PATH`.
 - If federation is enabled, keep `OSA_FEDERATION_COLLECTION_LIMIT` and `OSA_FEDERATION_SNAPSHOT_MAX_BYTES` bounded unless load testing proves higher values are safe.
-- Confirm `npm run check:rc` includes `scripts/federation-sim.mjs` coverage for token auth, local-private-field preservation, event sanitization, path sanitization, and cross-node consensus.
+- Confirm `npm run check:rc` includes `scripts/federation-sim.mjs` coverage for token auth, trusted-node allowlists, rejected tampered signatures, local-private-field preservation, event sanitization, path sanitization, and cross-node consensus.
 - Keep `OSA_MAX_SSE_CLIENTS` and `OSA_MAX_SSE_CLIENTS_PER_USER` at conservative defaults unless load testing proves higher values are safe.
 - Set `OSA_TRUST_PROXY=1` only behind a trusted reverse proxy that overwrites `X-Forwarded-For`; leave it unset for direct public binds.
 - Verify connector execution in `--runner stub`, `--runner openclaw` or `--runner codex` where the local CLI is configured, and at least one real `--runner provider` mode with a user-owned API key.
@@ -97,7 +98,7 @@ The production compose file binds OSA to `127.0.0.1:8788`. For a private local n
 
 - Add richer OpenClaw/Codex task-result mapping, install diagnostics, and adapter presets around the connector.
 - Harden signed connector tokens further with rotation, shorter expiries, and audit UI.
-- Replace shared-token federation with peer allowlists and object-signature verification before opening federation beyond trusted nodes.
+- Add richer trust UI for peer public-key allowlists and signature-verification failures.
 - Replace local JSON/Base64 artifact uploads with S3/MinIO signed artifact uploads for larger hosted deployments.
 - Move rate-limit state to Redis or Postgres before running multiple app instances.
 - Add reputation events instead of only simple counters.

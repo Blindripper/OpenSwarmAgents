@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import { join, extname, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -10,7 +10,8 @@ import {
   randomBytes,
   randomUUID,
   sign as signPayload,
-  timingSafeEqual
+  timingSafeEqual,
+  verify as verifyPayload
 } from "node:crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -39,6 +40,7 @@ const federationEnabled = process.env.OSA_FEDERATION_ENABLED === "1";
 const federationToken = process.env.OSA_FEDERATION_TOKEN || "";
 const federationTokenHash = federationToken ? hashToken(federationToken) : "";
 const federationPeers = normalizeFederationPeers(process.env.OSA_FEDERATION_PEERS || "");
+const federationTrustedNodesPath = process.env.OSA_FEDERATION_TRUSTED_NODES_PATH || "";
 const federationSyncMs = Math.max(1000, Number(process.env.OSA_FEDERATION_SYNC_MS || 5000));
 const federationCollectionLimit = Math.max(100, Math.min(5000, Number(process.env.OSA_FEDERATION_COLLECTION_LIMIT || 2000)));
 const federationSnapshotMaxBytes = Math.max(maxJsonBytes, Number(process.env.OSA_FEDERATION_SNAPSHOT_MAX_BYTES || maxJsonBytes * 4));
@@ -1082,6 +1084,7 @@ function publicFederatedProposal(proposal) {
     "id",
     "title",
     "description",
+    "createdByHash",
     "createdByName",
     "status",
     "score",
@@ -1124,6 +1127,224 @@ function sanitizeFederatedEventData(data) {
   return output;
 }
 
+function federationSignatureVerificationEnabled() {
+  return (
+    process.env.OSA_FEDERATION_REQUIRE_SIGNATURES === "1" ||
+    Boolean((process.env.OSA_FEDERATION_TRUSTED_NODES || "").trim()) ||
+    Boolean(federationTrustedNodesPath)
+  );
+}
+
+function loadFederationTrustedNodes() {
+  const trusted = new Map([[nodeIdentity.nodeId, publicNodeIdentity()]]);
+  addTrustedNodeEntries(trusted, process.env.OSA_FEDERATION_TRUSTED_NODES || "");
+  if (federationTrustedNodesPath) {
+    try {
+      addTrustedNodeEntries(trusted, readFileSync(federationTrustedNodesPath, "utf8"));
+    } catch (error) {
+      const wrapped = new Error(`Unable to read OSA_FEDERATION_TRUSTED_NODES_PATH: ${error.message}`);
+      wrapped.statusCode = 400;
+      throw wrapped;
+    }
+  }
+  return trusted;
+}
+
+function addTrustedNodeEntries(trusted, raw) {
+  const text = String(raw || "").trim();
+  if (!text) return;
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    const wrapped = new Error(`Invalid federation trusted node JSON: ${error.message}`);
+    wrapped.statusCode = 400;
+    throw wrapped;
+  }
+  const entries = Array.isArray(parsed)
+    ? parsed.map((item) => [item?.nodeId, item])
+    : Object.entries(parsed);
+  for (const [nodeId, value] of entries) {
+    const publicKeyPem = typeof value === "string" ? value : value?.publicKeyPem;
+    if (!nodeId || !publicKeyPem) continue;
+    trusted.set(String(nodeId), {
+      nodeId: String(nodeId),
+      publicKeyPem: String(publicKeyPem),
+      algorithm: typeof value === "object" && value?.algorithm ? String(value.algorithm) : "Ed25519"
+    });
+  }
+}
+
+function verifiedFederationCollections(snapshot) {
+  const collections = snapshot.collections || {};
+  if (!federationSignatureVerificationEnabled()) return collections;
+
+  const trusted = loadFederationTrustedNodes();
+  verifyFederationSnapshotNode(snapshot.node, trusted);
+  return {
+    ...collections,
+    proposals: verifiedSignedCollection("proposals", collections.proposals, trusted),
+    proposalVotes: verifiedSignedCollection("proposalVotes", collections.proposalVotes, trusted),
+    results: verifiedSignedCollection("results", collections.results, trusted),
+    reviews: verifiedSignedCollection("reviews", collections.reviews, trusted),
+    uploadedArtifacts: verifiedSignedCollection("uploadedArtifacts", collections.uploadedArtifacts, trusted),
+    trustLedger: verifiedTrustLedgerEntries(collections.trustLedger, trusted)
+  };
+}
+
+function verifyFederationSnapshotNode(node, trusted) {
+  if (!node?.nodeId || !node?.publicKeyPem) {
+    const error = new Error("Federation snapshot is missing node identity");
+    error.statusCode = 400;
+    throw error;
+  }
+  const trustedNode = trusted.get(node.nodeId);
+  if (!trustedNode) {
+    const error = new Error(`Federation node ${node.nodeId} is not in the trusted node allowlist`);
+    error.statusCode = 403;
+    throw error;
+  }
+  if (normalizePem(trustedNode.publicKeyPem) !== normalizePem(node.publicKeyPem)) {
+    const error = new Error(`Federation node ${node.nodeId} public key does not match the trusted allowlist`);
+    error.statusCode = 403;
+    throw error;
+  }
+  if (nodeIdForPublicKey(node.publicKeyPem) !== node.nodeId) {
+    const error = new Error(`Federation node ${node.nodeId} does not match its public key`);
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
+function verifiedSignedCollection(name, incoming, trusted) {
+  if (!Array.isArray(incoming)) return [];
+  return incoming.slice(0, federationCollectionLimit).filter((item) => verifyFederatedSignedItem(name, item, trusted));
+}
+
+function verifyFederatedSignedItem(name, item, trusted) {
+  if (!item?.signature?.signature) return false;
+  const payload = signedPayloadForFederatedItem(name, item);
+  if (!payload) return false;
+  const signature = item.signature;
+  const trustedNode = trusted.get(signature.nodeId);
+  if (!trustedNode) return false;
+  if (!verifySignedContribution(signature, payload, trustedNode.publicKeyPem)) {
+    const error = new Error(`Invalid ${name} signature for ${item.id || signature.type}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return true;
+}
+
+function signedPayloadForFederatedItem(name, item) {
+  if (name === "proposals") {
+    if (!item.createdByHash) return null;
+    return {
+      proposalId: item.id,
+      title: item.title,
+      descriptionHash: hashToken(item.description),
+      createdByHash: item.createdByHash
+    };
+  }
+  if (name === "proposalVotes") {
+    return {
+      voteId: item.id,
+      proposalId: item.proposalId,
+      agentId: item.agentId,
+      score: item.score,
+      reasonHash: hashToken(item.reason)
+    };
+  }
+  if (name === "results") {
+    return {
+      resultId: item.id,
+      taskId: item.taskId,
+      goalId: item.goalId,
+      agentId: item.agentId,
+      summaryHash: hashToken(item.summary),
+      contentHash: hashToken(item.content),
+      artifactIds: normalizeArtifacts(item.artifacts).map((artifact) => artifact.id).filter(Boolean)
+    };
+  }
+  if (name === "reviews") {
+    return {
+      reviewId: item.id,
+      resultId: item.resultId,
+      taskId: item.taskId,
+      agentId: item.agentId,
+      decision: item.decision,
+      score: item.score,
+      reasonHash: hashToken(item.reason)
+    };
+  }
+  if (name === "uploadedArtifacts") {
+    return {
+      artifactId: item.id,
+      name: item.name,
+      kind: item.kind,
+      size: item.size,
+      sha256: item.sha256
+    };
+  }
+  return null;
+}
+
+function verifySignedContribution(signature, payload, publicKeyPem) {
+  if (!signature?.signature || signature.algorithm !== "Ed25519") return false;
+  if (signature.payloadHash !== objectHash(payload)) return false;
+  const canonical = stableStringify({
+    type: signature.type,
+    signedAt: signature.signedAt,
+    payloadHash: signature.payloadHash,
+    payload
+  });
+  try {
+    return verifyPayload(null, Buffer.from(canonical), publicKeyPem, Buffer.from(signature.signature, "base64"));
+  } catch {
+    return false;
+  }
+}
+
+function verifiedTrustLedgerEntries(incoming, trusted) {
+  if (!Array.isArray(incoming)) return [];
+  return normalizeTrustLedger(incoming)
+    .slice(0, 1000)
+    .filter((entry) => verifyFederatedTrustLedgerEntry(entry, trusted));
+}
+
+function verifyFederatedTrustLedgerEntry(entry, trusted) {
+  if (!entry?.signature?.signature) return false;
+  if (entry.nodeId !== entry.signature.nodeId) return false;
+  if (!trusted.has(entry.nodeId)) return false;
+  if (entry.signature.payloadHash !== entry.payloadHash) return false;
+  const expectedEventHash = objectHashForRefs({
+    id: entry.id,
+    nodeId: entry.nodeId,
+    type: entry.type,
+    objectType: entry.objectType,
+    objectId: entry.objectId,
+    objectHash: entry.objectHash,
+    payloadHash: entry.payloadHash,
+    previousHash: entry.previousHash,
+    signature: entry.signature,
+    createdAt: entry.createdAt
+  });
+  if (expectedEventHash !== entry.eventHash) {
+    const error = new Error(`Invalid Trust Ledger event hash for ${entry.id || entry.eventHash}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return true;
+}
+
+function normalizePem(value) {
+  return String(value || "").replace(/\s+/g, "");
+}
+
+function nodeIdForPublicKey(publicKeyPem) {
+  return `node-${createHash("sha256").update(String(publicKeyPem)).digest("hex").slice(0, 32)}`;
+}
+
 function pick(input, keys) {
   const output = {};
   for (const key of keys) {
@@ -1136,7 +1357,7 @@ function importFederationSnapshot(snapshot) {
   if (!snapshot || snapshot.protocol !== "osa-federation-snapshot" || !snapshot.collections) {
     throw new Error("Invalid federation snapshot");
   }
-  const collections = snapshot.collections;
+  const collections = verifiedFederationCollections(snapshot);
   const changed = {
     goals: mergeFederatedCollection("goals", collections.goals, publicFederatedGoal),
     agents: mergeFederatedCollection("agents", collections.agents, publicFederatedAgent),
@@ -2374,6 +2595,7 @@ async function handleApi(req, res, url) {
         title: title.slice(0, 120),
         description: description.slice(0, 12000),
         createdBy: auth.user.id,
+        createdByHash: hashToken(auth.user.id),
         createdByName: auth.user.name,
         status: "voting",
         score: 0,
@@ -2385,7 +2607,7 @@ async function handleApi(req, res, url) {
         proposalId: proposal.id,
         title: proposal.title,
         descriptionHash: hashToken(proposal.description),
-        createdBy: proposal.createdBy
+        createdByHash: proposal.createdByHash
       }, {
         objectType: "proposal",
         objectId: proposal.id
@@ -2726,9 +2948,11 @@ function autoPromoteExpiredWinner() {
 
 function normalizeProposal(proposal) {
   const createdAt = proposal.createdAt || now();
+  const createdByHash = proposal.createdByHash || (proposal.createdBy ? hashToken(proposal.createdBy) : null);
   return {
     ...proposal,
     createdAt,
+    createdByHash,
     score: Number(proposal.score || 0),
     votes: Number(proposal.votes || 0),
     status: proposal.status || "voting",

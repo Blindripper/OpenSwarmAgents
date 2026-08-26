@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -22,8 +22,11 @@ try {
 
   const userA = await login(nodeA, "A");
   const userB = await login(nodeB, "B");
+  await configureTrustedNodes(nodeA, nodeB);
+  await assertSignatureEnforcement(nodeA, nodeB);
 
   const proposal = await createProposal(nodeA, userA.headers);
+  await assertTamperedSignatureRejected(nodeA, nodeB, proposal.id);
   await sync(nodeA, nodeB);
   assert((await state(nodeB, userB.headers)).proposals.some((item) => item.id === proposal.id), "node B should import node A proposal");
 
@@ -139,12 +142,13 @@ try {
   assert(stateB.agents.filter((agent) => agent.goalId === goal.id && agent.status === "online").length === 0, "completed federated project should disconnect agents");
   assert(stateB.events.some((event) => event.type === "federation_imported"), "activity feed should show federation imports");
 
+  const snapshotAForPrivacyProbe = await getJson(nodeA, "/api/federation/snapshot", nodeA.federationHeaders);
   await postJson(
     nodeB,
     "/api/federation/import",
     {
       protocol: "osa-federation-snapshot",
-      node: { nodeId: "node-privacy-probe" },
+      node: snapshotAForPrivacyProbe.node,
       collections: {
         agents: [
           {
@@ -219,6 +223,8 @@ async function startNode(label, port, peerPort) {
       OSA_FEDERATION_ENABLED: "1",
       OSA_FEDERATION_TOKEN: federationToken,
       OSA_FEDERATION_PEERS: `http://127.0.0.1:${peerPort}`,
+      OSA_FEDERATION_REQUIRE_SIGNATURES: "1",
+      OSA_FEDERATION_TRUSTED_NODES_PATH: join(dataDir, "trusted-nodes.json"),
       OSA_FEDERATION_SYNC_MS: "1000",
       OSA_RATE_LIMIT_MULTIPLIER: "0",
       AGENTSWARM_PROPOSAL_VOTING_MS: "500"
@@ -231,6 +237,7 @@ async function startNode(label, port, peerPort) {
     dataDir,
     server,
     baseUrl: `http://127.0.0.1:${port}`,
+    trustedNodesPath: join(dataDir, "trusted-nodes.json"),
     federationHeaders: { "x-osa-federation-token": federationToken }
   };
   await waitForHealth(node);
@@ -240,6 +247,49 @@ async function startNode(label, port, peerPort) {
 async function stopNode(node) {
   node.server.kill("SIGTERM");
   await rm(node.dataDir, { recursive: true, force: true });
+}
+
+async function configureTrustedNodes(nodeA, nodeB) {
+  const snapshotA = await getJson(nodeA, "/api/federation/snapshot", nodeA.federationHeaders);
+  const snapshotB = await getJson(nodeB, "/api/federation/snapshot", nodeB.federationHeaders);
+  await writeTrustedNodes(nodeA, [snapshotB.node]);
+  await writeTrustedNodes(nodeB, [snapshotA.node]);
+}
+
+async function writeTrustedNodes(node, peers) {
+  const trusted = {};
+  for (const peer of peers) {
+    trusted[peer.nodeId] = {
+      publicKeyPem: peer.publicKeyPem,
+      algorithm: peer.algorithm || "Ed25519"
+    };
+  }
+  await writeFile(node.trustedNodesPath, `${JSON.stringify(trusted, null, 2)}\n`);
+}
+
+async function assertSignatureEnforcement(nodeA, nodeB) {
+  const snapshotA = await getJson(nodeA, "/api/federation/snapshot", nodeA.federationHeaders);
+  await expectPostStatus(
+    nodeB,
+    "/api/federation/import",
+    403,
+    {
+      ...snapshotA,
+      node: {
+        ...snapshotA.node,
+        nodeId: "node-untrusted-transport"
+      }
+    },
+    nodeB.federationHeaders
+  );
+}
+
+async function assertTamperedSignatureRejected(from, to, proposalId) {
+  const snapshot = await getJson(from, "/api/federation/snapshot", from.federationHeaders);
+  const proposal = snapshot.collections.proposals.find((item) => item.id === proposalId);
+  assert(proposal?.signature?.signature, "fresh proposal should carry a signature");
+  proposal.title = `${proposal.title} tampered`;
+  await expectPostStatus(to, "/api/federation/import", 400, { snapshot }, to.federationHeaders);
 }
 
 async function sync(from, to) {

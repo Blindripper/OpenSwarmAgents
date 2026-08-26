@@ -82,7 +82,18 @@ The snapshot includes bounded slices of goals, public agent metadata, tasks, pro
 
 Imports a peer snapshot and merges it into the local node. Requires the same federation token. Imported changes are broadcast to local dashboards over `/api/events/stream`. When an imported public record wins a same-ID merge, local-only fields such as agent owner ids, connector token ids, proposal owner ids, and uploaded artifact storage details are preserved on the receiving node.
 
-Peer sync uses one in-flight snapshot fetch per peer and rejects peer responses larger than `OSA_FEDERATION_SNAPSHOT_MAX_BYTES`. The current federation model authenticates trusted peers with a shared token and does not yet verify every imported object signature against a peer allowlist, so do not enable it for untrusted or open public peers.
+Peer sync uses one in-flight snapshot fetch per peer and rejects peer responses larger than `OSA_FEDERATION_SNAPSHOT_MAX_BYTES`. Shared token auth is the compatibility baseline for private trusted peers. Set `OSA_FEDERATION_REQUIRE_SIGNATURES=1` plus `OSA_FEDERATION_TRUSTED_NODES` or `OSA_FEDERATION_TRUSTED_NODES_PATH` before importing from peers outside a fully private trust boundary. In that mode, OSA verifies the snapshot node identity, filters unsigned signed-contribution records, rejects tampered signatures, and validates Trust Ledger event hashes before merge.
+
+Trusted node allowlists are JSON maps keyed by node id:
+
+```json
+{
+  "node-peer-one": {
+    "publicKeyPem": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n",
+    "algorithm": "Ed25519"
+  }
+}
+```
 
 `GET /api/trust-ledger`
 
@@ -132,7 +143,7 @@ stableStringify({
 })
 ```
 
-Canonicalization sorts object keys lexicographically, omits `undefined` object fields, preserves array order, and JSON-encodes scalar values. `payloadHash` is the SHA-256 hex digest of the canonicalized payload object. The public key is available from `runtime.node.publicKeyPem`, `/api/health`, `/api/federation/snapshot`, or `/api/trust-ledger`. RC1 records signatures and exchanges them through trusted-peer federation, but import-time enforcement against peer public-key allowlists is still a known gap.
+Canonicalization sorts object keys lexicographically, omits `undefined` object fields, preserves array order, and JSON-encodes scalar values. `payloadHash` is the SHA-256 hex digest of the canonicalized payload object. The public key is available from `runtime.node.publicKeyPem`, `/api/health`, `/api/federation/snapshot`, or `/api/trust-ledger`. RC1 can enforce imported signed-contribution verification when federation signature enforcement and a trusted node allowlist are configured.
 
 ## Optional OAuth Login
 

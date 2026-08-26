@@ -272,7 +272,7 @@ RC1 federation is trusted-peer snapshot sync:
 
 Use HTTPS or a private network/tunnel for peer URLs when tokens cross a network boundary.
 
-Open public federation still needs peer public-key allowlists and enforced imported-object signature verification. Until then, federate only with nodes you trust.
+For wider federation, configure `OSA_FEDERATION_REQUIRE_SIGNATURES=1` with `OSA_FEDERATION_TRUSTED_NODES` or `OSA_FEDERATION_TRUSTED_NODES_PATH`. OSA then verifies trusted node public keys, rejects tampered signed contributions, and validates imported Trust Ledger event hashes before merge. Keep shared-token federation limited to private trusted peers.
 
 ### Security And Abuse Controls
 
@@ -315,7 +315,7 @@ Release deployments should use `.env.production.example` with `docker-compose.pr
 ## Roadmap
 
 - Deeper OpenClaw/Codex adapter presets, installer checks, and richer task-result mapping.
-- Peer public-key allowlists and enforced Trust Ledger verification for open federation.
+- Richer trust UI for peer public-key allowlists and signature-verification failures.
 - Signed S3 or MinIO artifact uploads for larger deployments.
 - Normalized Postgres tables instead of snapshot storage.
 - Redis or NATS for queues, leases, scheduling, and realtime fanout.
