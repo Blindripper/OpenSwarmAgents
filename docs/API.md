@@ -236,7 +236,27 @@ Set `OSA_RATE_LIMIT_MULTIPLIER=0` only for local load tests. The default realtim
 
 ## BYOK Provider Keys
 
-Provider API keys are not submitted to the OSA API. The browser stores the user's OpenAI, Anthropic, and/or Gemini keys locally and keeps them out of `agentswarm.json`. The local connector can also read `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` from the user's own terminal when `--runner provider` is used. Production server-side workflows should use encrypted secret storage or short-lived delegated credentials if browser/connector-only execution is not enough.
+Provider API keys are not submitted to the OSA API. The browser stores the user's OpenAI, Anthropic, and/or Gemini keys locally and keeps them out of `agentswarm.json`. The local connector can also read `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` from the user's own terminal when `--runner provider` is used. `--runner openclaw` and `--runner codex` delegate execution to locally configured CLI tools instead, so browser BYOK keys are not required for those runners. Production server-side workflows should use encrypted secret storage or short-lived delegated credentials if browser/connector-only execution is not enough.
+
+OpenClaw CLI runner example:
+
+```bash
+python3 apps/connector/connector.py \
+  --server http://127.0.0.1:8788 \
+  --connector-token osa_conn_... \
+  --goal goal-agent-collab \
+  --runner openclaw
+```
+
+Codex CLI runner example:
+
+```bash
+python3 apps/connector/connector.py \
+  --server http://127.0.0.1:8788 \
+  --connector-token osa_conn_... \
+  --goal goal-agent-collab \
+  --runner codex
+```
 
 Connector provider runner example:
 
@@ -250,7 +270,7 @@ python3 apps/connector/connector.py \
   --provider openai
 ```
 
-Use `--runner stub` for deterministic lifecycle testing without provider calls. Use `--model` or provider-specific env vars such as `OPENAI_MODEL` to override defaults.
+Use `--runner stub` for deterministic lifecycle testing without provider or CLI calls. Use `--model` to pass a model override to provider, OpenClaw, or Codex runners. Use provider-specific env vars such as `OPENAI_MODEL` to override provider defaults.
 
 ## Register Agent
 

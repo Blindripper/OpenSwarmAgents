@@ -4,6 +4,7 @@ const PROVIDERS = [
   { id: "gemini", label: "Gemini" }
 ];
 
+const CONNECTOR_RUNNERS = ["stub", "openclaw", "codex", "provider"];
 const THEME_STORAGE_KEY = "osaTheme";
 const DONATION_ADDRESS = "0x0D92d175943336E3Ad099e55FBe4248dC6fA947b";
 const DONATION_AMOUNT_WEI = 2_000_000_000_000_000n;
@@ -90,6 +91,7 @@ const els = {
   apiKeyOpenai: document.querySelector("#api-key-openai"),
   apiKeyAnthropic: document.querySelector("#api-key-anthropic"),
   apiKeyGemini: document.querySelector("#api-key-gemini"),
+  connectorRunner: document.querySelector("#connector-runner"),
   apiProviderDefault: document.querySelector("#api-provider-default"),
   apiKeyStatus: document.querySelector("#api-key-status"),
   apiKeyClear: document.querySelector("#api-key-clear"),
@@ -289,12 +291,19 @@ els.apiKeyForm.addEventListener("submit", (event) => {
   for (const [provider, value] of Object.entries(updates)) {
     if (value) next[provider] = value;
   }
+  const runner = selectedConnectorRunner();
+  localStorage.setItem("agentswarmConnectorRunner", runner);
+  localStorage.setItem("agentswarmDefaultProvider", els.apiProviderDefault.value);
   if (!Object.keys(next).length) {
-    showAccountFeedback("Provider key missing", "Paste at least one provider API key before saving locally.");
+    if (runner === "provider") {
+      showAccountFeedback("Provider key missing", "Paste at least one provider API key before using the provider connector runner.");
+      return;
+    }
+    showAccountFeedback("Connector runner saved", "No provider key was saved. This is fine for Stub, OpenClaw, and Codex runners.");
+    render();
     return;
   }
   localStorage.setItem("agentswarmProviderKeys", JSON.stringify(next));
-  localStorage.setItem("agentswarmDefaultProvider", els.apiProviderDefault.value);
   clearProviderInputs();
   showAccountFeedback("Provider keys saved locally", "Keys are stored only in this browser and were not sent to the OSA server.");
   render();
@@ -305,6 +314,11 @@ els.apiKeyClear.addEventListener("click", () => {
   localStorage.removeItem("agentswarmOpenAIKey");
   clearProviderInputs();
   showAccountFeedback("Provider keys cleared", "All local BYOK provider keys were removed from this browser.");
+  render();
+});
+
+els.connectorRunner.addEventListener("change", () => {
+  localStorage.setItem("agentswarmConnectorRunner", selectedConnectorRunner());
   render();
 });
 
@@ -553,28 +567,31 @@ function renderThemeToggle() {
 
 async function connectWorkerGoal(goal) {
   if (!requireAccount("Sign in before connecting your agent to a worker project.")) return;
-  if (!requireProviderKey("Add at least one provider API key before connecting your agent to a worker project.")) return;
+  const runner = selectedConnectorRunner();
+  if (runner === "provider" && !requireProviderKey("Add at least one provider API key before using the provider connector runner.")) return;
   if (localStorage.getItem("agentswarmWorkerGoalId")) return;
   showConnectorFeedback({
     title: "Creating connector token",
     reason: `Preparing a scoped connector command for ${goal.title}.`
   });
+  const provider = runner === "provider" ? preferredProvider() : "unknown";
+  const providers = runner === "provider" ? enabledProviders() : [];
   const response = await post("/api/connectors/token", {
     mode: "worker",
     name: `${state.user?.name || "Local"} Worker Agent`,
     goalId: goal.id,
     capabilities: ["research", "review", "synthesis"],
-    models: [`connector:${preferredProvider()}`],
-    provider: preferredProvider(),
-    providers: enabledProviders()
+    models: [`connector:${runner}`],
+    provider,
+    providers
   });
   localStorage.setItem("agentswarmWorkerConnectorId", response.connector.id);
   localStorage.setItem("agentswarmWorkerGoalId", goal.id);
   state.selectedGoalId = goal.id;
   showConnectorFeedback({
     title: `Connector ready for ${goal.title}`,
-    reason: `Run this command on the machine where your agent should work. Set ${providerEnvName(preferredProvider())} in that terminal first. The raw token is shown only once.`,
-    command: connectorCommand(response.token, goal.id)
+    reason: connectorReason(runner),
+    command: connectorCommand(response.token, goal.id, runner)
   });
   await refresh();
 }
@@ -599,11 +616,34 @@ async function disconnectWorkerGoal(goal) {
   await refresh();
 }
 
-function connectorCommand(token, goalId) {
+function connectorCommand(token, goalId, runner = selectedConnectorRunner()) {
   const server = window.location.origin;
-  const provider = preferredProvider();
-  const providers = enabledProviders().join(",");
-  return `python3 apps/connector/connector.py --server ${server} --connector-token ${token} --goal ${goalId} --runner provider --provider ${provider} --providers ${providers}`;
+  const base = `python3 apps/connector/connector.py --server ${server} --connector-token ${token} --goal ${goalId}`;
+  if (runner === "provider") {
+    const provider = preferredProvider();
+    const providers = enabledProviders().join(",");
+    return `${base} --runner provider --provider ${provider} --providers ${providers} --no-fallback-to-stub`;
+  }
+  if (runner === "openclaw") {
+    return `${base} --runner openclaw --agent-name "Local OpenClaw Agent"`;
+  }
+  if (runner === "codex") {
+    return `${base} --runner codex --agent-name "Local Codex Agent"`;
+  }
+  return `${base} --runner stub`;
+}
+
+function connectorReason(runner = selectedConnectorRunner()) {
+  if (runner === "provider") {
+    return `Run this command on the machine where your agent should work. Set ${providerEnvName(preferredProvider())} in that terminal first. The raw token is shown only once.`;
+  }
+  if (runner === "openclaw") {
+    return "Run this on a machine with the OpenClaw CLI configured. The raw token is shown only once.";
+  }
+  if (runner === "codex") {
+    return "Run this on a machine with the Codex CLI configured. The raw token is shown only once.";
+  }
+  return "Run this no-key demo connector to exercise the local OSA task, result, review, and publication loop. The raw token is shown only once.";
 }
 
 function showConnectorFeedback({ title, reason, command = "" }) {
@@ -677,6 +717,11 @@ function hasProviderKey() {
   return enabledProviders().length > 0;
 }
 
+function selectedConnectorRunner() {
+  const value = els.connectorRunner?.value || localStorage.getItem("agentswarmConnectorRunner") || "stub";
+  return CONNECTOR_RUNNERS.includes(value) ? value : "stub";
+}
+
 function renderAccount() {
   const user = state.user;
   const providers = enabledProviders();
@@ -684,6 +729,7 @@ function renderAccount() {
   els.apiKeyStatus.textContent = providers.length ? `${providers.length}/${PROVIDERS.length} local` : "No keys";
   els.accountLogout.disabled = !user;
   els.apiProviderDefault.value = preferredProvider();
+  els.connectorRunner.value = selectedConnectorRunner();
   if (user) {
     els.accountEmail.value = user.email || "";
     els.accountName.value = user.name || "";

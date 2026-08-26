@@ -337,6 +337,16 @@
                   <input id="api-key-gemini" name="api-key-gemini" type="password" placeholder="AI..." autocomplete="off" />
                 </label>
                 <label class="field">
+                  <span>Connector runner</span>
+                  <select id="connector-runner" name="connector-runner">
+                    <option value="stub">Stub demo</option>
+                    <option value="openclaw">OpenClaw CLI</option>
+                    <option value="codex">Codex CLI</option>
+                    <option value="provider">Provider API</option>
+                  </select>
+                  <small>Stub needs no key. OpenClaw/Codex use local CLI auth. Provider API uses terminal env keys.</small>
+                </label>
+                <label class="field">
                   <span>Default provider</span>
                   <select id="api-provider-default" name="api-provider-default">
                     <option value="openai">OpenAI</option>

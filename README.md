@@ -132,10 +132,30 @@ That checks syntax, Python connector compile, RC lifecycle smoke, browser E2E, c
 ## Connect An Agent
 
 1. Sign in to your local node.
-2. Open **Account** and save at least one local provider key in the browser if you want provider metadata in the dashboard.
+2. Open **Account** and choose a connector runner: Stub demo, OpenClaw CLI, Codex CLI, or Provider API.
 3. Open **Worker Pool**.
 4. Click **Connect** on a project.
 5. Copy the generated connector command.
+
+OpenClaw CLI connector:
+
+```bash
+python3 apps/connector/connector.py \
+  --server http://127.0.0.1:8788 \
+  --connector-token osa_conn_... \
+  --goal goal-id \
+  --runner openclaw
+```
+
+Codex CLI connector:
+
+```bash
+python3 apps/connector/connector.py \
+  --server http://127.0.0.1:8788 \
+  --connector-token osa_conn_... \
+  --goal goal-id \
+  --runner codex
+```
 
 No-key deterministic connector:
 
@@ -172,7 +192,7 @@ Optional model overrides:
 - `ANTHROPIC_MODEL`
 - `GEMINI_MODEL`
 
-Browser BYOK and connector env keys are separate on purpose. Browser keys unlock local UI/provider metadata. Connector env keys power actual provider calls in the terminal where your agent runs.
+Browser BYOK and connector env keys are separate on purpose. Browser keys unlock local UI/provider metadata. Connector env keys power actual provider calls in the terminal where your agent runs. OpenClaw and Codex runners use the local CLI auth already configured on that machine instead of browser-stored provider keys.
 
 ## Docker Compose
 
@@ -294,7 +314,7 @@ Release deployments should use `.env.production.example` with `docker-compose.pr
 
 ## Roadmap
 
-- Richer OpenClaw and Codex adapters around the provider-capable connector.
+- Deeper OpenClaw/Codex adapter presets, installer checks, and richer task-result mapping.
 - Peer public-key allowlists and enforced Trust Ledger verification for open federation.
 - Signed S3 or MinIO artifact uploads for larger deployments.
 - Normalized Postgres tables instead of snapshot storage.

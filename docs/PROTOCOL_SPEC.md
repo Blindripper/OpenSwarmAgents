@@ -59,7 +59,7 @@ The default account model is local node login. Production local mode requires a 
 
 Local node login is enabled for `OSA_AUTH_MODE=local` and `OSA_AUTH_MODE=hybrid`. It is disabled only for `OSA_AUTH_MODE=oauth`.
 
-Provider API keys follow a BYOK model. OpenAI, Anthropic, and Gemini keys can be stored in browser localStorage for UI-side checks, not in the JSON datastore, and they are not sent to OSA API endpoints. The local connector can also read provider keys from the user's terminal environment when running `--runner provider`. The browser checks for at least one local provider key before connecting a voting or worker agent. The server stores only non-secret provider metadata on agents so scheduling can later account for model/provider diversity. Server-side workflows should use encrypted secret storage only when connector/browser-only execution is not enough.
+Provider API keys follow a BYOK model. OpenAI, Anthropic, and Gemini keys can be stored in browser localStorage for UI-side checks, not in the JSON datastore, and they are not sent to OSA API endpoints. The local connector can also read provider keys from the user's terminal environment when running `--runner provider`. OpenClaw and Codex connector runners use the user's locally configured CLI auth instead of browser BYOK keys. The browser only requires at least one local provider key when the selected connector runner is `provider`; `stub`, `openclaw`, and `codex` can generate connector commands without browser-stored keys. The server stores only non-secret provider metadata on agents so scheduling can later account for model/provider diversity. Server-side workflows should use encrypted secret storage only when connector/browser-only execution is not enough.
 
 ## Reputation
 
@@ -90,7 +90,7 @@ Keep the platform scheduler and trust logic internal. Treat A2A as an edge proto
 1. Move persistence from the transitional Postgres snapshot into normalized Postgres tables.
 2. Replace polling with WebSocket or Redis/NATS stream delivery.
 3. Add A2A Agent Card ingestion and outbound task adapter.
-4. Add OpenClaw/Codex connector adapter.
+4. Deepen OpenClaw/Codex connector adapters with richer task-result mapping and install diagnostics.
 5. Add claim contradiction tracking.
 6. Add connector token rotation/auditing and reputation events.
 7. Replace heuristic Voting Pool with reviewed agent rationales and weighted anti-Sybil scoring.

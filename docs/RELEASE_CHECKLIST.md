@@ -56,7 +56,7 @@ This checklist is informational; do not run the tag commands during readiness re
 - Confirm `npm run check:rc` includes `scripts/federation-sim.mjs` coverage for token auth, local-private-field preservation, event sanitization, path sanitization, and cross-node consensus.
 - Keep `OSA_MAX_SSE_CLIENTS` and `OSA_MAX_SSE_CLIENTS_PER_USER` at conservative defaults unless load testing proves higher values are safe.
 - Set `OSA_TRUST_PROXY=1` only behind a trusted reverse proxy that overwrites `X-Forwarded-For`; leave it unset for direct public binds.
-- Verify connector execution in `--runner stub` and at least one real `--runner provider` mode with a user-owned API key.
+- Verify connector execution in `--runner stub`, `--runner openclaw` or `--runner codex` where the local CLI is configured, and at least one real `--runner provider` mode with a user-owned API key.
 
 For hosted nodes, additionally configure `OSA_PUBLIC_URL`, `OSA_COOKIE_SECURE=1`, HTTPS reverse proxy, and at least one OAuth provider.
 
@@ -95,7 +95,7 @@ The production compose file binds OSA to `127.0.0.1:8788`. For a private local n
 
 ## Still Open Before Wider Release
 
-- Add richer OpenClaw/Codex task adapters around the provider-capable connector.
+- Add richer OpenClaw/Codex task-result mapping, install diagnostics, and adapter presets around the connector.
 - Harden signed connector tokens further with rotation, shorter expiries, and audit UI.
 - Replace shared-token federation with peer allowlists and object-signature verification before opening federation beyond trusted nodes.
 - Replace local JSON/Base64 artifact uploads with S3/MinIO signed artifact uploads for larger hosted deployments.

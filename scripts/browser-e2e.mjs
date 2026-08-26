@@ -65,6 +65,9 @@ try {
 
   await page.click("#nav-account");
   await expectVisible(page, "#account-view.active");
+  await page.selectOption("#connector-runner", "openclaw");
+  await page.click("#api-key-form button[type='submit']");
+  await expectText(page, "#account-feedback", "Connector runner saved");
   await page.fill("#api-key-openai", "browser-e2e-local-placeholder");
   await page.click("#api-key-form button[type='submit']");
   await expectText(page, "#account-feedback", "Provider keys saved locally");
@@ -113,6 +116,7 @@ try {
   const goalId = command?.match(/--goal\s+(\S+)/)?.[1];
   assert(connectorToken, "worker connector command should include a raw connector token");
   assert(goalId === "goal-agent-collab", "worker connector should be scoped to the selected worker project");
+  assert(command?.includes("--runner openclaw"), "worker connector command should use the selected OpenClaw runner");
 
   const connectorHeaders = { "x-osa-connector-token": connectorToken };
   const worker = await postJson("/api/agents/register", {
