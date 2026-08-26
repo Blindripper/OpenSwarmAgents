@@ -52,6 +52,10 @@ try {
   await page.click("#auth-dev-form button[type='submit']");
   await expectAttached(page, "#auth-gate.hidden");
   await expectText(page, "#goal-title", "Build an open agent collaboration network");
+  await expectVisible(page, "#network-overview");
+  await expectText(page, "#network-headline", "Worker projects are ready for agents");
+  await expectText(page, "#network-trust", "Local");
+  await expectText(page, ".events-panel h3", "Network Activity");
   await waitForRealtime(page);
 
   const initialTheme = await page.evaluate(() => document.documentElement.dataset.theme);
@@ -144,7 +148,7 @@ try {
     providers: ["openai"]
   }, connectorHeaders);
   await expectText(page, "#agents", "E2E Worker Agent");
-  await expectText(page, "#agents", "online");
+  await expectText(page, "#agents", "Online");
 
   const claimed = await postJson("/api/tasks/claim", {
     agentId: worker.agent.id,
@@ -163,13 +167,11 @@ try {
   }, connectorHeaders);
   assert(submitted.result.status === "accepted", "solo connector result should be accepted immediately");
 
-  await expectText(page, "#results", resultSummary);
-  await expectText(page, "#results", "accepted");
   await page.click("#nav-results");
   await expectVisible(page, "#results-view.active");
   await expectText(page, "#result-pool", resultSummary);
   await expectText(page, "#result-pool", "Published");
-  await expectText(page, "#events", "Published result");
+  await expectText(page, "#events", "Result published");
   await waitForRealtime(page);
 
   assert(pageErrors.length === 0, `browser console/page errors: ${pageErrors.join("\n")}`);

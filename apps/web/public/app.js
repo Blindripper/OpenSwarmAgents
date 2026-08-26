@@ -52,6 +52,8 @@ const els = {
   votingSidebar: document.querySelector("#voting-sidebar"),
   resultsSidebar: document.querySelector("#results-sidebar"),
   accountSidebar: document.querySelector("#account-sidebar"),
+  supportSidebar: document.querySelector("#support-sidebar"),
+  githubSidebar: document.querySelector("#github-sidebar"),
   workerView: document.querySelector("#worker-view"),
   votingView: document.querySelector("#voting-view"),
   resultsView: document.querySelector("#results-view"),
@@ -80,6 +82,22 @@ const els = {
   proposalForm: document.querySelector("#proposal-form"),
   proposalTitle: document.querySelector("#proposal-title"),
   proposalDescription: document.querySelector("#proposal-description"),
+  networkOverview: document.querySelector("#network-overview"),
+  networkHeadline: document.querySelector("#network-headline"),
+  networkSubline: document.querySelector("#network-subline"),
+  networkLive: document.querySelector("#network-live"),
+  networkIdeas: document.querySelector("#network-ideas"),
+  networkIdeasDetail: document.querySelector("#network-ideas-detail"),
+  networkWork: document.querySelector("#network-work"),
+  networkWorkDetail: document.querySelector("#network-work-detail"),
+  networkAgents: document.querySelector("#network-agents"),
+  networkAgentsDetail: document.querySelector("#network-agents-detail"),
+  networkReview: document.querySelector("#network-review"),
+  networkReviewDetail: document.querySelector("#network-review-detail"),
+  networkResults: document.querySelector("#network-results"),
+  networkResultsDetail: document.querySelector("#network-results-detail"),
+  networkTrust: document.querySelector("#network-trust"),
+  networkTrustDetail: document.querySelector("#network-trust-detail"),
   accountFeedback: document.querySelector("#account-feedback"),
   accountForm: document.querySelector("#account-form"),
   accountEmail: document.querySelector("#account-email"),
@@ -134,7 +152,7 @@ els.connectVotingAgent.addEventListener("click", async () => {
   showVoteFeedback({
     label: "Agent Decision",
     title: "Agent is evaluating proposals",
-    reason: "Your agent is reading the Voting Pool and choosing the strongest project."
+    reason: "Your agent is reading Project Votes and choosing the strongest project."
   });
   try {
     const response = await post("/api/voting/connect", {
@@ -444,18 +462,21 @@ function render() {
     return;
   }
   renderSelectedGoal();
+  renderNetworkOverview();
   renderMetrics();
 
   const goalId = state.selectedGoalId;
   const tasks = state.data.tasks.filter((item) => item.goalId === goalId);
   const agents = state.data.agents.filter((item) => item.goalId === goalId);
-  const results = state.data.results.filter((item) => item.goalId === goalId);
-  const claims = state.data.claims.filter((item) => item.goalId === goalId);
+  const results = state.data.results
+    .filter((item) => item.goalId === goalId)
+    .filter((item) => item.status !== "accepted");
+  const claims = state.data.claims || [];
 
   els.taskCount.textContent = `${activeWorkerGoals().length} projects`;
   els.agentCount.textContent = `${agents.length}`;
   els.resultCount.textContent = `${results.length}`;
-  els.claimCount.textContent = `${claims.length}`;
+  els.claimCount.textContent = `${claims.length} claims`;
   els.proposalCount.textContent = `${state.data.proposals.length} proposals`;
   els.voteCount.textContent = `${(state.data.proposalVotes || []).length} votes`;
   els.resultPoolCount.textContent = `${(state.data.resultPool || []).length} results`;
@@ -511,6 +532,9 @@ function renderShell() {
   els.votingSidebar.classList.toggle("hidden", !authenticated || !isVoting);
   els.resultsSidebar.classList.toggle("hidden", !authenticated || !isResults);
   els.accountSidebar.classList.toggle("hidden", !authenticated || !isAccount);
+  els.supportSidebar?.classList.toggle("hidden", authenticated && !isAccount);
+  els.githubSidebar?.classList.toggle("hidden", authenticated && !isAccount);
+  els.networkOverview.classList.toggle("hidden", !authenticated);
   renderAuthControls();
   renderThemeToggle();
 }
@@ -781,38 +805,97 @@ function renderSelectedGoal() {
   els.goalDescription.textContent = goal?.description || "";
 }
 
+function renderNetworkOverview() {
+  const stats = state.data.stats || {};
+  const runtime = state.data.runtime || {};
+  const proposals = state.data.proposals || [];
+  const events = state.data.events || [];
+  const votingCount = stats.votingProposals ?? proposals.filter((proposal) => proposal.status === "voting").length;
+  const activeProjects = activeWorkerGoals().length;
+  const openTasks = stats.openTasks || 0;
+  const onlineAgents = stats.onlineAgents || 0;
+  const pendingReviews = stats.pendingReviews || 0;
+  const publishedResults = stats.resultPool || 0;
+  const latestEvent = events[0];
+  const trustMode = networkTrustLabel(runtime);
+
+  els.networkHeadline.textContent = networkHeadline({
+    votingCount,
+    activeProjects,
+    openTasks,
+    onlineAgents,
+    pendingReviews,
+    publishedResults
+  });
+  els.networkSubline.textContent = latestEvent
+    ? `Last activity: ${eventTitle(latestEvent)} at ${new Date(latestEvent.createdAt).toLocaleTimeString()}`
+    : "No activity yet. Start with a proposal or connect an agent.";
+  els.networkLive.textContent = realtimeConnected ? "Realtime live" : "Polling fallback";
+  els.networkLive.classList.toggle("live", realtimeConnected);
+  els.networkLive.classList.toggle("polling", !realtimeConnected);
+  els.networkIdeas.textContent = String(votingCount);
+  els.networkIdeasDetail.textContent = `${(state.data.proposalVotes || []).length} ${plural("vote", (state.data.proposalVotes || []).length)}`;
+  els.networkWork.textContent = String(activeProjects);
+  els.networkWorkDetail.textContent = `${openTasks} open ${plural("task", openTasks)}`;
+  els.networkAgents.textContent = String(onlineAgents);
+  els.networkAgentsDetail.textContent = `${state.data.agents.length} registered`;
+  els.networkReview.textContent = String(pendingReviews);
+  els.networkReviewDetail.textContent = pendingReviews ? "needs attention" : "clear";
+  els.networkResults.textContent = String(publishedResults);
+  els.networkResultsDetail.textContent = `${state.data.results.filter((result) => result.status === "accepted").length} accepted`;
+  els.networkTrust.textContent = trustMode.label;
+  els.networkTrustDetail.textContent = trustMode.detail;
+}
+
+function networkHeadline({ votingCount, activeProjects, openTasks, onlineAgents, pendingReviews, publishedResults }) {
+  if (pendingReviews > 0) return "Results are waiting for review";
+  if (openTasks > 0 && onlineAgents > 0) return "Agents are working on open tasks";
+  if (activeProjects > 0) return "Worker projects are ready for agents";
+  if (votingCount > 0) return "Project ideas are being voted on";
+  if (publishedResults > 0) return "Reviewed results are published";
+  return "Local node is ready";
+}
+
+function networkTrustLabel(runtime) {
+  if (runtime.federationTrustConfigError) return { label: "Check", detail: "trust config error" };
+  const trusted = runtime.federationTrustedNodeCount || 0;
+  const configured = runtime.federationPeerCount || 0;
+  if (!runtime.federationEnabled) return { label: "Local", detail: "no peers" };
+  if (runtime.federationSignatureVerificationEnabled) {
+    return { label: "Verified", detail: `${trusted} trusted · ${configured} configured` };
+  }
+  return { label: "Private", detail: `${configured} configured` };
+}
+
+function plural(label, count) {
+  return count === 1 ? label : `${label}s`;
+}
+
 function renderMetrics() {
   const stats = state.data.stats;
-  const votingAgents = state.data.agents.filter((agent) => agent.goalId === "voting-pool").length;
   const promoted = state.data.proposals.filter((proposal) => proposal.status === "promoted").length;
   const metricsByView = {
     worker: [
-      ["Worker Projects", stats.goals],
-      ["Online Agents", stats.onlineAgents],
-      ["Open Tasks", stats.openTasks],
-      ["Pending Reviews", stats.pendingReviews],
-      ["Claims", stats.acceptedClaims]
+      ["Next Action", workerNextAction(stats)],
+      ["Active Work", `${activeWorkerGoals().length} ${plural("project", activeWorkerGoals().length)}`],
+      ["Needs Review", stats.pendingReviews ? `${stats.pendingReviews} waiting` : "Clear"]
     ],
     voting: [
-      ["Voting Proposals", stats.votingProposals],
-      ["Voting Agents", votingAgents],
-      ["Votes Cast", (state.data.proposalVotes || []).length],
-      ["Promoted", promoted],
-      ["Worker Projects", stats.goals]
+      ["Next Action", stats.votingProposals ? "Ask agent" : "Add idea"],
+      ["Ideas Open", `${stats.votingProposals} ${plural("idea", stats.votingProposals)}`],
+      ["Votes Cast", `${(state.data.proposalVotes || []).length} total`],
+      ["Moved To Work", promoted]
     ],
     results: [
-      ["Published Results", stats.resultPool],
-      ["Completed Projects", state.data.goals.filter((goal) => goal.status === "completed").length],
-      ["Accepted Claims", stats.acceptedClaims],
-      ["Reviewed Results", state.data.results.filter((result) => result.status === "accepted").length],
-      ["Worker Projects", stats.goals]
+      ["Published", `${stats.resultPool} ${plural("result", stats.resultPool)}`],
+      ["Completed Work", state.data.goals.filter((goal) => goal.status === "completed").length],
+      ["Verified Claims", stats.acceptedClaims]
     ],
     account: [
       ["Account", state.user ? "Active" : "Missing"],
-      ["BYOK Keys", hasProviderKey() ? enabledProviders().join(", ") : "Missing"],
-      ["Server Users", stats.users],
-      ["Trust Events", stats.trustEvents || 0],
-      ["Ledger Head", stats.trustHead ? shortHash(stats.trustHead) : "None"]
+      ["Provider Keys", hasProviderKey() ? enabledProviders().join(", ") : "Missing"],
+      ["Trust", networkTrustLabel(state.data.runtime || {}).label],
+      ["Ledger", stats.trustHead ? shortHash(stats.trustHead) : "None"]
     ]
   };
   const metrics = metricsByView[state.view] || metricsByView.worker;
@@ -832,6 +915,14 @@ function renderMetrics() {
       return node;
     })
   );
+}
+
+function workerNextAction(stats) {
+  if (stats.pendingReviews > 0) return "Review results";
+  if (stats.openTasks > 0 && stats.onlineAgents === 0) return "Connect worker";
+  if (stats.openTasks > 0) return "Watch agents";
+  if (activeWorkerGoals().length > 0) return "Ready";
+  return "Add idea";
 }
 
 function metricColor(index) {
@@ -877,7 +968,7 @@ function renderProposals(proposals) {
         <div class="item">
           <div class="item-head">
             <strong>${escapeHtml(proposal.title)}</strong>
-            <span class="chip ${proposal.status === "promoted" ? "accepted" : "open"}">${escapeHtml(proposal.status)}</span>
+            <span class="chip ${proposal.status === "promoted" ? "accepted" : "open"}">${escapeHtml(statusLabel(proposal.status))}</span>
           </div>
           <p>${escapeHtml(proposal.description)}</p>
           <div class="chips">
@@ -888,7 +979,7 @@ function renderProposals(proposals) {
     },
     {
       title: "No proposals are open",
-      detail: "Submit a project brief above to start the Voting Pool."
+      detail: "Submit a new idea below to start Project Votes."
     }
   );
 }
@@ -904,7 +995,7 @@ function renderVoteFeedback() {
   showVoteFeedback({
     label: alreadyVoted ? "Existing Agent Decision" : "Agent Decision",
     title: vote ? `${agent.name} voted for ${proposal.title}` : `${agent.name} found no open proposal`,
-    reason: reason || vote?.reason || "The agent selected this proposal as the strongest option in the Voting Pool."
+    reason: reason || vote?.reason || "The agent selected this proposal as the strongest option in Project Votes."
   });
 }
 
@@ -925,7 +1016,7 @@ function renderWorkerProjects(goals) {
     els.tasks.replaceChildren(
       createEmptyState({
         title: "No active worker projects",
-        detail: "Submit and rank a proposal in the Voting Pool to create work."
+        detail: "Submit and rank a proposal in Project Votes to create work."
       })
     );
     return;
@@ -961,7 +1052,7 @@ function renderWorkerProjects(goals) {
           ${projectTasks.map((task) => `
             <div class="project-task-row">
               <strong>${escapeHtml(task.title)}</strong>
-              <span class="chip ${task.status}">${escapeHtml(task.status)}</span>
+              <span class="chip ${task.status}">${escapeHtml(statusLabel(task.status))}</span>
             </div>
           `).join("") || `<div class="empty compact"><strong>No active tasks</strong><span>This project is waiting for new work.</span></div>`}
         </div>
@@ -985,7 +1076,7 @@ function renderAgents(agents) {
       <div class="item">
         <div class="item-head">
           <strong>${escapeHtml(agent.name)}</strong>
-          <span class="chip ${agent.status}">${escapeHtml(agent.status)}</span>
+          <span class="chip ${agent.status}">${escapeHtml(statusLabel(agent.status))}</span>
         </div>
         <p>${escapeHtml((agent.models || []).join(", "))}</p>
         <div class="chips">
@@ -1015,11 +1106,11 @@ function renderResults(results) {
         <div class="item">
           <div class="item-head">
             <strong>${escapeHtml(result.summary || "Untitled result")}</strong>
-            <span class="chip ${result.status}">${escapeHtml(result.status)}</span>
+            <span class="chip ${result.status}">${escapeHtml(statusLabel(result.status))}</span>
           </div>
           <p>${escapeHtml(result.content)}</p>
           <div class="chips">
-            ${consensus ? `<span class="chip">consensus ${accepted}/${required}</span>` : ""}
+            ${consensus ? `<span class="chip">${accepted} of ${required} reviewers accepted</span>` : ""}
             <span class="chip">iteration ${result.iteration || 1}</span>
             <span class="chip">confidence ${Math.round(result.confidence * 100)}%</span>
             ${(result.sources || []).map((source) => `<span class="chip">${escapeHtml(source)}</span>`).join("")}
@@ -1029,7 +1120,7 @@ function renderResults(results) {
       `;
     },
     {
-      title: "No submitted results yet",
+      title: "No results in review yet",
       detail: "Worker outputs appear here when agents submit tasks for review."
     }
   );
@@ -1245,12 +1336,12 @@ function renderEvents(events) {
     (event) => `
       <div class="event-row">
         <span>${new Date(event.createdAt).toLocaleTimeString()}</span>
-        <span><strong>${escapeHtml(event.type)}</strong> ${escapeHtml(event.message)}</span>
+        <span><strong>${escapeHtml(eventTitle(event))}</strong> ${escapeHtml(event.message)}</span>
       </div>
     `,
     {
-      title: "No activity for this view",
-      detail: "Realtime events will appear as the node changes."
+      title: "No visible network activity",
+      detail: "Votes, agent work, reviews, published results, and trust updates will appear here."
     }
   );
 }
@@ -1404,19 +1495,36 @@ async function copyPeerTrustConfig() {
 }
 
 function filteredEvents() {
+  const highSignalTypes = new Set([
+    "proposal_created",
+    "proposal_voted",
+    "proposal_promoted",
+    "agent_registered",
+    "agent_disconnected",
+    "task_leased",
+    "result_submitted",
+    "result_reviewed",
+    "consensus_progress",
+    "result_published",
+    "goal_completed",
+    "agents_disconnected",
+    "federation_imported",
+    "artifact_uploaded"
+  ]);
   if (state.view === "voting") {
     return state.data.events
       .filter((event) => event.type.startsWith("proposal") || event.type === "agent_registered")
-      .slice(0, 12);
+      .slice(0, 5);
   }
   if (state.view === "results") {
     return state.data.events
       .filter((event) => ["result_published", "goal_completed", "agents_disconnected"].includes(event.type))
-      .slice(0, 12);
+      .slice(0, 5);
   }
   return state.data.events
     .filter((event) => !event.data?.goalId || event.data.goalId === state.selectedGoalId)
-    .slice(0, 12);
+    .filter((event) => highSignalTypes.has(event.type))
+    .slice(0, 5);
 }
 
 function renderList(container, items, renderItem, emptyCopy = {}) {
@@ -1473,6 +1581,46 @@ function statusWeight(status) {
     done: 4,
     rejected: 5
   }[status] ?? 9;
+}
+
+function statusLabel(status) {
+  return {
+    open: "Waiting for agent",
+    leased: "Agent working",
+    in_consensus: "Awaiting review",
+    needs_review: "Awaiting review",
+    needs_revision: "Needs another pass",
+    accepted: "Published",
+    promoted: "Moved to work",
+    done: "Done",
+    rejected: "Rejected",
+    online: "Online",
+    offline: "Offline",
+    voting: "Voting"
+  }[status] || String(status || "Unknown").replaceAll("_", " ");
+}
+
+function eventTitle(event) {
+  return {
+    proposal_created: "New idea added",
+    proposal_voted: "Agent voted",
+    proposal_promoted: "Idea moved to work",
+    agent_registered: "Agent joined",
+    agent_disconnected: "Agent left",
+    agents_disconnected: "Project agents disconnected",
+    task_leased: "Agent started a task",
+    result_submitted: "Result submitted",
+    result_reviewed: "Review completed",
+    consensus_progress: "Review progress",
+    result_published: "Result published",
+    goal_completed: "Project completed",
+    federation_imported: "Peer update imported",
+    artifact_uploaded: "Artifact uploaded",
+    connector_token_created: "Connector command created",
+    connector_token_revoked: "Connector disconnected",
+    user_created: "User signed in",
+    user_signed_in: "User signed in"
+  }[event.type] || statusLabel(event.type);
 }
 
 function escapeHtml(value) {

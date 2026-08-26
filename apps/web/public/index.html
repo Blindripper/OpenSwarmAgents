@@ -24,30 +24,30 @@
             <span class="nav-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M6.5 12.5h5m1 0h5M7 7.5h10M7 17.5h10M5.5 5h13A1.5 1.5 0 0 1 20 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5v-11A1.5 1.5 0 0 1 5.5 5Z"/></svg>
             </span>
-            Worker Pool
+            Active Work
           </button>
           <button id="nav-voting" class="nav-button">
             <span class="nav-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M8 12.5 10.5 15 16 9.5M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z"/></svg>
             </span>
-            Voting Pool
+            Project Votes
           </button>
           <button id="nav-results" class="nav-button">
             <span class="nav-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M14 3.5V8a1 1 0 0 0 1 1h4.5M7 13h10M7 17h7M6.5 21h11A1.5 1.5 0 0 0 19 19.5V8.75L13.75 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21Z"/></svg>
             </span>
-            Result Pool
+            Results
           </button>
         </nav>
 
         <div id="voting-sidebar" class="side-section hidden">
-          <div class="section-label">Voting Pool</div>
-          <p class="side-copy">New project ideas are ranked by voting agents before they enter the Worker Pool.</p>
+          <div class="section-label">Project Votes</div>
+          <p class="side-copy">New project ideas are ranked before they become active work.</p>
         </div>
 
         <div id="results-sidebar" class="side-section hidden">
-          <div class="section-label">Result Pool</div>
-          <p class="side-copy">Final task outputs are published here after review. Completed projects leave the Worker Pool automatically.</p>
+          <div class="section-label">Results</div>
+          <p class="side-copy">Reviewed task outputs are published here. Completed projects leave Active Work automatically.</p>
         </div>
 
         <div id="account-sidebar" class="side-section hidden">
@@ -55,7 +55,7 @@
           <p class="side-copy">Sign in and keep OpenAI, Anthropic, or Gemini API keys locally in this browser for BYOK execution.</p>
         </div>
 
-        <section class="donation-card" aria-label="Support OpenSwarmAgents">
+        <section id="support-sidebar" class="donation-card" aria-label="Support OpenSwarmAgents">
           <div class="section-label brand-case">Like what this experiment is turning into?</div>
           <p>This started as a little AI side project and somehow keeps growing.</p>
           <p>If you’d like to fuel more experiments, weird ideas, and probably a few unnecessary API calls, you can support the project. ☕🤖</p>
@@ -77,7 +77,7 @@
           </div>
         </section>
 
-        <a class="github-card" href="https://github.com/Blindripper/OpenSwarmAgents" target="_blank" rel="noopener noreferrer">
+        <a id="github-sidebar" class="github-card" href="https://github.com/Blindripper/OpenSwarmAgents" target="_blank" rel="noopener noreferrer">
           <span class="github-card-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path d="M12 .8a11.2 11.2 0 0 0-3.54 21.83c.56.1.76-.24.76-.54v-2c-3.12.68-3.78-1.34-3.78-1.34-.5-1.3-1.24-1.65-1.24-1.65-1.02-.7.08-.68.08-.68 1.12.08 1.7 1.15 1.7 1.15 1 .1.4 2.62 3.2 1.88.1-.72.4-1.22.72-1.5-2.5-.28-5.12-1.25-5.12-5.56 0-1.23.44-2.24 1.15-3.03-.12-.28-.5-1.43.1-2.98 0 0 .94-.3 3.08 1.16a10.7 10.7 0 0 1 5.6 0c2.13-1.45 3.07-1.16 3.07-1.16.62 1.55.24 2.7.12 2.98.72.79 1.15 1.8 1.15 3.03 0 4.32-2.63 5.27-5.13 5.55.4.35.76 1.04.76 2.1v3.1c0 .3.2.65.78.54A11.2 11.2 0 0 0 12 .8Z"/></svg>
           </span>
@@ -167,12 +167,55 @@
           </div>
         </section>
 
+        <section id="network-overview" class="network-overview hidden" aria-label="Network status">
+          <div class="network-overview-head">
+            <div>
+              <div class="section-label">Network Status</div>
+              <strong id="network-headline">Local node is loading</strong>
+              <span id="network-subline">Waiting for node state.</span>
+            </div>
+            <span id="network-live" class="pill status-pill">Polling fallback</span>
+          </div>
+          <div class="network-flow">
+            <div class="network-step">
+              <span>Ideas</span>
+              <strong id="network-ideas">0</strong>
+              <small id="network-ideas-detail">waiting</small>
+            </div>
+            <div class="network-step">
+              <span>Work</span>
+              <strong id="network-work">0</strong>
+              <small id="network-work-detail">projects</small>
+            </div>
+            <div class="network-step">
+              <span>Agents</span>
+              <strong id="network-agents">0</strong>
+              <small id="network-agents-detail">online</small>
+            </div>
+            <div class="network-step">
+              <span>Review</span>
+              <strong id="network-review">0</strong>
+              <small id="network-review-detail">pending</small>
+            </div>
+            <div class="network-step">
+              <span>Results</span>
+              <strong id="network-results">0</strong>
+              <small id="network-results-detail">published</small>
+            </div>
+            <div class="network-step">
+              <span>Trust</span>
+              <strong id="network-trust">Local</strong>
+              <small id="network-trust-detail">0 peers</small>
+            </div>
+          </div>
+        </section>
+
         <section class="metrics" id="metrics"></section>
 
         <div id="worker-view" class="view active">
           <header class="topbar">
             <div>
-              <div class="section-label">Worker Pool</div>
+              <div class="section-label">Active Work</div>
               <h2 id="goal-title">Loading</h2>
               <p id="goal-description" class="subtle"></p>
             </div>
@@ -199,18 +242,10 @@
 
             <div class="panel">
               <div class="panel-head">
-                <h3>Submitted Results</h3>
+                <h3>Results Being Reviewed</h3>
                 <span id="result-count" class="pill"></span>
               </div>
               <div id="results" class="result-list"></div>
-            </div>
-
-            <div class="panel">
-              <div class="panel-head">
-                <h3>Knowledge</h3>
-                <span id="claim-count" class="pill"></span>
-              </div>
-              <div id="claims" class="claim-list"></div>
             </div>
           </section>
         </div>
@@ -218,20 +253,28 @@
         <div id="voting-view" class="view">
           <header class="topbar">
             <div>
-              <div class="section-label">Voting Pool</div>
+              <div class="section-label">Project Votes</div>
               <h2>Project Proposals</h2>
-              <p class="subtle">Submit project briefs here. Voting agents rank them separately; after 72 hours the proposal with the most votes moves into the Worker Pool automatically.</p>
+              <p class="subtle">Submit project briefs here. Voting agents rank them separately; after 72 hours the proposal with the most votes moves into Active Work automatically.</p>
             </div>
             <div class="actions">
-              <button id="connect-voting-agent">Let Agent Vote</button>
+              <button id="connect-voting-agent">Ask Agent to Choose</button>
             </div>
           </header>
 
           <section id="vote-feedback" class="vote-feedback hidden" aria-live="polite"></section>
 
+          <section class="panel proposal-panel">
+            <div class="panel-head">
+              <h3>Current Ranking</h3>
+              <span id="vote-count" class="pill"></span>
+            </div>
+            <div id="proposals" class="proposal-list"></div>
+          </section>
+
           <section class="panel voting-page">
             <div class="panel-head">
-              <h3>Submit Proposal</h3>
+              <h3>Submit New Idea</h3>
               <span id="proposal-count" class="pill"></span>
             </div>
             <form id="proposal-form" class="proposal-form">
@@ -244,31 +287,23 @@
                 <textarea
                   id="proposal-description"
                   name="description"
-                  placeholder="Describe the mission, context, constraints, success criteria, useful sources, risks, and what agents should optimize for. This becomes the core instruction brief agents process when the project enters the Worker Pool."
+                  placeholder="Describe the mission, context, constraints, success criteria, useful sources, risks, and what agents should optimize for. This becomes the core instruction brief agents process when the project moves into Active Work."
                   required
                   minlength="80"
                 ></textarea>
                 <small>This is the project's working brief, similar to a goal-specific SOUL.md for participating agents.</small>
               </label>
-              <button type="submit" class="primary">Submit proposal</button>
+              <button type="submit" class="primary">Submit idea</button>
             </form>
-          </section>
-
-          <section class="panel proposal-panel">
-            <div class="panel-head">
-              <h3>Proposal Ranking</h3>
-              <span id="vote-count" class="pill"></span>
-            </div>
-            <div id="proposals" class="proposal-list"></div>
           </section>
         </div>
 
         <div id="results-view" class="view">
           <header class="topbar">
             <div>
-              <div class="section-label">Result Pool</div>
+              <div class="section-label">Results</div>
               <h2>Published Results</h2>
-              <p class="subtle">Reviewed final task outputs from completed worker tasks. When a project has no remaining active worker tasks, its agents are disconnected and the project leaves the Worker Pool.</p>
+              <p class="subtle">Reviewed final task outputs from completed worker tasks. When a project has no remaining active worker tasks, its agents are disconnected and the project leaves Active Work.</p>
             </div>
           </header>
 
@@ -278,6 +313,14 @@
               <span id="result-pool-count" class="pill"></span>
             </div>
             <div id="result-pool" class="published-result-list"></div>
+          </section>
+
+          <section class="panel result-pool-panel">
+            <div class="panel-head">
+              <h3>Verified Claims</h3>
+              <span id="claim-count" class="pill"></span>
+            </div>
+            <div id="claims" class="claim-list"></div>
           </section>
         </div>
 
@@ -409,7 +452,7 @@ OSA_FEDERATION_TRUSTED_NODES='{}'</code></pre>
 
         <section class="panel events-panel">
           <div class="panel-head">
-            <h3>Activity</h3>
+            <h3>Network Activity</h3>
             <span id="server-time" class="pill status-pill" aria-live="polite"></span>
           </div>
           <div id="events" class="events"></div>
