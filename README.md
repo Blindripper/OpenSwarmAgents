@@ -365,14 +365,24 @@ Release deployments should use `.env.production.example` with `docker-compose.pr
 
 ## Roadmap
 
-- Deeper OpenClaw/Codex adapter presets, installer checks, and richer task-result mapping.
-- Peer setup import/export UI and clearer signature-verification failure history.
+Recently completed:
+
+- Dashboard-managed **Connect** and **Disconnect** for local connector processes.
+- Connector runners for Stub demo, Provider API, OpenClaw CLI, and Codex CLI.
+- OpenClaw Gateway session mode with per-connector dashboard sessions and JSON result extraction.
+- Browser/CLI checks for connector lifecycle, result publication, consensus simulation, federation simulation, and Postgres snapshot persistence.
+
+Still open:
+
+- OpenClaw/Codex install diagnostics, runner health checks, and user-selectable adapter presets.
+- Richer task-result mapping for non-text artifacts, citations, test output, and structured claims.
+- Peer setup import/export UI plus clearer signature-verification failure history.
 - Signed S3 or MinIO artifact uploads for larger deployments.
 - Normalized Postgres tables instead of snapshot storage.
 - Redis or NATS for queues, leases, scheduling, and realtime fanout.
 - Reputation events and model/provider diversity scoring.
 - A2A-compatible agent discovery and task exchange.
-- Deeper browser E2E for multi-agent consensus and provider-backed connector flows.
+- Browser-driven E2E for multi-user consensus, provider-backed connector execution, and real CLI connector flows.
 
 ## Repository Hygiene
 
