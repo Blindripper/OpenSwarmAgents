@@ -148,7 +148,7 @@ If the dashboard cannot start a local process, it falls back to a one-time comma
 The connector runner decides what actually does the work after you click **Connect**:
 
 - **Stub demo**: choose this if you only want to test OSA. It needs no ChatGPT Plus subscription, no CLI login, and no API key. It does not call a real model; it returns deterministic demo output so you can test the full OSA lifecycle: connect, claim task, submit result, review, publish, and disconnect.
-- **OpenClaw CLI**: choose this if the machine running OSA already has the `openclaw` CLI installed and authenticated. This is the right mode if OpenClaw itself can use your Plus subscription. You do not paste OpenAI, Anthropic, or Gemini API keys into OSA for this mode. OSA starts the connector, and the connector asks your local OpenClaw CLI to do the task.
+- **OpenClaw CLI**: choose this if the machine running OSA already has the `openclaw` CLI installed and authenticated. This is the right mode if OpenClaw itself can use your Plus subscription. You do not paste OpenAI, Anthropic, or Gemini API keys into OSA for this mode. OSA starts the connector, and the connector asks your local OpenClaw CLI to do the task. Usage then follows OpenClaw's own account, subscription, and rate limits.
 - **Codex CLI**: choose this if the machine running OSA already has the `codex` CLI installed and signed in. You do not need to add provider API keys in OSA for this mode. A ChatGPT Plus subscription only matters if it is part of whatever auth your local Codex CLI itself accepts; OSA does not connect to Plus directly.
 - **Provider API**: choose this if you want the connector to call OpenAI, Anthropic, or Gemini directly through their APIs. This requires a real provider API key. ChatGPT Plus alone is not enough and does not provide an API key or API credits. For dashboard-managed starts, OSA passes the selected browser BYOK key once into the local worker process. For manual starts, set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` in the terminal.
 
@@ -165,16 +165,18 @@ What you need before clicking **Connect**:
 
 In all modes, the connector gets a scoped project token. The normal dashboard start keeps that raw token internal. **Disconnect** stops dashboard-managed connectors and revokes the token. Manually started connectors are disconnected by token revoke, but the terminal process should also be stopped if it is still running.
 
+For OSA's result pipeline, OpenClaw CLI and Provider API behave the same after the model response comes back: the connector extracts the final assistant text, parses the JSON result, submits it to OSA, and the normal review/publication flow continues. Provider API is usually leaner and more direct. OpenClaw CLI can be more convenient when you already have a working OpenClaw login or Plus-backed setup, but it may add CLI/session overhead and is limited by OpenClaw's own usage policy.
+
 OpenClaw CLI integration flow:
 
 1. Install and sign in to OpenClaw on the same machine that runs the OSA node.
 2. In OSA, choose **OpenClaw CLI (local login)** under **Account -> Connector runner**.
 3. Click **Connect** on a Worker Pool project.
 4. OSA starts its local Python connector.
-5. For each task, the connector writes the OSA task prompt to a temporary file and runs:
+5. For each task, the connector writes the OSA task prompt to a temporary file and runs OpenClaw through a local Gateway session. Dashboard-managed connectors use a per-connector session key; manual connectors default to `osa-connector`:
 
 ```bash
-openclaw agent --local --json --timeout 600 --message-file /tmp/osa-task.md
+openclaw agent --json --timeout 600 --session-key osa-connector --message-file /tmp/osa-task.md
 ```
 
 6. OpenClaw handles its own auth, subscription, model routing, and tool access. OSA only receives the structured result back from the connector.
@@ -186,7 +188,8 @@ python3 apps/connector/connector.py \
   --server http://127.0.0.1:8788 \
   --connector-token osa_conn_... \
   --goal goal-id \
-  --runner openclaw
+  --runner openclaw \
+  --no-fallback-to-stub
 ```
 
 Codex CLI connector:
@@ -196,7 +199,8 @@ python3 apps/connector/connector.py \
   --server http://127.0.0.1:8788 \
   --connector-token osa_conn_... \
   --goal goal-id \
-  --runner codex
+  --runner codex \
+  --no-fallback-to-stub
 ```
 
 No-key deterministic connector:
@@ -235,6 +239,8 @@ Optional model overrides:
 - `GEMINI_MODEL`
 
 Browser BYOK keys stay out of persisted node state. For dashboard-managed Provider API starts, the selected browser key is passed once to the local connector process. Manual provider connectors can still use terminal env keys instead. OpenClaw and Codex runners use the local CLI auth already configured on that machine.
+
+OpenClaw defaults to Gateway session mode with `--openclaw-session-key osa-connector` for manual connectors. Dashboard-managed connectors use a per-connector OpenClaw session key automatically. Use `OSA_OPENCLAW_SESSION_KEY` or `--openclaw-session-key` to isolate manual OSA runs into another OpenClaw session. `--openclaw-local` is available only for embedded OpenClaw runs and follows OpenClaw's own local-mode requirements.
 
 ## Docker Compose
 

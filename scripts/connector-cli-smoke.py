@@ -28,6 +28,36 @@ json_lines = "\n".join(
 )
 assert json.loads(connector.extract_cli_text(json_lines))["content"] == "json lines"
 
+openclaw_output = json.dumps(
+    {
+        "status": "ok",
+        "summary": "completed",
+        "result": {
+            "payloads": [
+                {
+                    "text": json.dumps(
+                        {
+                            "summary": "openclaw",
+                            "content": "gateway result",
+                            "sources": ["openclaw-gateway"],
+                            "confidence": 0.91,
+                        }
+                    )
+                }
+            ]
+        },
+        "finalAssistantVisibleText": json.dumps(
+            {
+                "summary": "openclaw-visible",
+                "content": "visible gateway result",
+                "sources": ["openclaw-visible"],
+                "confidence": 0.92,
+            }
+        ),
+    }
+)
+assert json.loads(connector.extract_cli_text(openclaw_output))["summary"] == "openclaw-visible"
+
 cmd = connector.command_from_template(
     "agent --message-file {prompt_file} --timeout {timeout}",
     prompt_file="/tmp/osa prompt.md",

@@ -251,7 +251,9 @@ Set `OSA_RATE_LIMIT_MULTIPLIER=0` only for local load tests. The default realtim
 
 ## BYOK Provider Keys
 
-The browser stores the user's OpenAI, Anthropic, and/or Gemini keys locally and keeps them out of `agentswarm.json`. Dashboard-managed Provider API starts pass the selected key once to the local connector child process as an environment variable, but do not persist it in node state, events, federation snapshots, or connector audit metadata. Manual provider connectors can also read `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` from the user's own terminal when `--runner provider` is used. `--runner openclaw` and `--runner codex` delegate execution to locally configured CLI tools instead, so browser BYOK keys are not required for those runners. Production server-side workflows should use encrypted secret storage or short-lived delegated credentials if browser/connector-only execution is not enough.
+The browser stores the user's OpenAI, Anthropic, and/or Gemini keys locally and keeps them out of `agentswarm.json`. Dashboard-managed Provider API starts pass the selected key once to the local connector child process as an environment variable, but do not persist it in node state, events, federation snapshots, or connector audit metadata. Manual provider connectors can also read `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` from the user's own terminal when `--runner provider` is used. `--runner openclaw` and `--runner codex` delegate execution to locally configured CLI tools instead, so browser BYOK keys are not required for those runners. OpenClaw usage follows the local OpenClaw account, subscription, and rate limits. Production server-side workflows should use encrypted secret storage or short-lived delegated credentials if browser/connector-only execution is not enough.
+
+After a CLI runner returns, OSA uses the same result pipeline as Provider API: extract the final assistant text, parse the JSON result, submit it, review it, and publish accepted output.
 
 OpenClaw CLI runner example:
 
@@ -260,8 +262,11 @@ python3 apps/connector/connector.py \
   --server http://127.0.0.1:8788 \
   --connector-token osa_conn_... \
   --goal goal-agent-collab \
-  --runner openclaw
+  --runner openclaw \
+  --no-fallback-to-stub
 ```
+
+OpenClaw CLI defaults to Gateway session mode and runs `openclaw agent --json --session-key osa-connector --message-file ...` for manual connectors. Dashboard-managed connectors use a per-connector OpenClaw session key automatically. That lets OpenClaw use its own configured auth or subscription while keeping project context isolated. Use `--openclaw-session-key` or `OSA_OPENCLAW_SESSION_KEY` to choose another OpenClaw session key for manual runs. Use `--openclaw-local` only for embedded OpenClaw runs that satisfy OpenClaw's local-mode requirements.
 
 Codex CLI runner example:
 
@@ -270,7 +275,8 @@ python3 apps/connector/connector.py \
   --server http://127.0.0.1:8788 \
   --connector-token osa_conn_... \
   --goal goal-agent-collab \
-  --runner codex
+  --runner codex \
+  --no-fallback-to-stub
 ```
 
 Connector provider runner example:

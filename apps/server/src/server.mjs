@@ -1707,6 +1707,12 @@ function connectorCommandArgs(rawToken, connector, origin) {
   if (runner === "provider") {
     args.push("--provider", connector.provider, "--providers", (connector.providers || []).join(","), "--no-fallback-to-stub");
   }
+  if (runner === "openclaw") {
+    args.push("--openclaw-session-key", `osa-${connector.id}`, "--no-fallback-to-stub");
+  }
+  if (runner === "codex") {
+    args.push("--no-fallback-to-stub");
+  }
   return args;
 }
 

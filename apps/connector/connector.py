@@ -157,13 +157,16 @@ def call_openclaw(args: argparse.Namespace, prompt: str, system: str) -> str:
         cmd = [
             command,
             "agent",
-            "--local",
             "--json",
             "--timeout",
             str(args.local_cli_timeout),
             "--message-file",
             message_file,
         ]
+        if args.openclaw_local:
+            cmd.append("--local")
+        if args.openclaw_session_key:
+            cmd.extend(["--session-key", args.openclaw_session_key])
         if args.openclaw_agent:
             cmd.extend(["--agent", args.openclaw_agent])
         if args.model:
@@ -279,7 +282,19 @@ def text_values(value: Any) -> list[str]:
     if not isinstance(value, dict):
         return []
 
-    direct_keys = ("final", "reply", "message", "content", "text", "output", "result", "last_message")
+    direct_keys = (
+        "final",
+        "reply",
+        "message",
+        "content",
+        "text",
+        "output",
+        "result",
+        "last_message",
+        "payloads",
+        "finalAssistantRawText",
+        "finalAssistantVisibleText",
+    )
     texts: list[str] = []
     for key in direct_keys:
         if key in value:
@@ -664,6 +679,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--local-cli-timeout", type=int, default=600)
     parser.add_argument("--openclaw-command", default=None, help="OpenClaw CLI binary. Defaults to OSA_OPENCLAW_COMMAND or openclaw.")
     parser.add_argument("--openclaw-agent", default=None, help="Optional OpenClaw agent id for --runner openclaw.")
+    parser.add_argument("--openclaw-session-key", default=os.environ.get("OSA_OPENCLAW_SESSION_KEY", "osa-connector"), help="OpenClaw Gateway session key for --runner openclaw.")
+    parser.add_argument("--openclaw-local", action="store_true", help="Run OpenClaw in embedded --local mode instead of the Gateway session mode.")
     parser.add_argument("--openclaw-thinking", default=None, help="Optional OpenClaw thinking level for --runner openclaw.")
     parser.add_argument("--codex-binary", default=os.environ.get("OSA_CODEX_BINARY", "codex"), help="Codex CLI binary for the default --runner codex command.")
     parser.add_argument("--codex-command", default=None, help="Optional Codex command template. Supports {prompt_file}, {prompt}, and {timeout}.")

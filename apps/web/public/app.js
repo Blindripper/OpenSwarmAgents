@@ -697,10 +697,10 @@ function connectorCommand(token, goalId, runner = selectedConnectorRunner()) {
     return `${base} --runner provider --provider ${provider} --providers ${providers} --no-fallback-to-stub`;
   }
   if (runner === "openclaw") {
-    return `${base} --runner openclaw --agent-name "Local OpenClaw Agent"`;
+    return `${base} --runner openclaw --agent-name "Local OpenClaw Agent" --no-fallback-to-stub`;
   }
   if (runner === "codex") {
-    return `${base} --runner codex --agent-name "Local Codex Agent"`;
+    return `${base} --runner codex --agent-name "Local Codex Agent" --no-fallback-to-stub`;
   }
   return `${base} --runner stub`;
 }
@@ -715,10 +715,10 @@ function connectorCommandForToken(token, connector) {
     return `${base} --runner provider --provider ${provider} --providers ${providers} --no-fallback-to-stub`;
   }
   if (runner === "openclaw") {
-    return `${base} --runner openclaw --agent-name "${escapeShellDouble(connector.name || "Local OpenClaw Agent")}"`;
+    return `${base} --runner openclaw --agent-name "${escapeShellDouble(connector.name || "Local OpenClaw Agent")}" --no-fallback-to-stub`;
   }
   if (runner === "codex") {
-    return `${base} --runner codex --agent-name "${escapeShellDouble(connector.name || "Local Codex Agent")}"`;
+    return `${base} --runner codex --agent-name "${escapeShellDouble(connector.name || "Local Codex Agent")}" --no-fallback-to-stub`;
   }
   return `${base} --runner stub`;
 }
@@ -738,10 +738,10 @@ function connectorReason(runner = selectedConnectorRunner()) {
     return `Run this command on the machine where your agent should work. Set ${providerEnvName(preferredProvider())} in that terminal first. The raw token is shown only once.`;
   }
   if (runner === "openclaw") {
-    return "Run this on a machine with the OpenClaw CLI configured. The raw token is shown only once.";
+    return "Run this on a machine with the OpenClaw CLI already signed in. No provider API key is needed in OSA. The raw token is shown only once.";
   }
   if (runner === "codex") {
-    return "Run this on a machine with the Codex CLI configured. The raw token is shown only once.";
+    return "Run this on a machine with the Codex CLI already signed in. No provider API key is needed in OSA. The raw token is shown only once.";
   }
   return "Run this no-key demo connector to exercise the local OSA task, result, review, and publication loop. The raw token is shown only once.";
 }
@@ -751,7 +751,7 @@ function dashboardConnectorReason(runner = selectedConnectorRunner()) {
     return "OSA started the local provider connector. The selected provider key was passed only to this local process and was not saved in OSA state.";
   }
   if (runner === "openclaw") {
-    return "OSA started the local OpenClaw connector on this node. Use Disconnect to stop it.";
+    return "OSA started the local OpenClaw connector on this node with its own OpenClaw session. Use Disconnect to stop it.";
   }
   if (runner === "codex") {
     return "OSA started the local Codex connector on this node. Use Disconnect to stop it.";
@@ -869,7 +869,7 @@ function renderConnectorRunnerHelp() {
   const provider = providerLabel(preferredProvider());
   els.connectorRunnerHelp.textContent = {
     stub: "Demo mode. No ChatGPT Plus, CLI login, or API key needed. Good for testing the full Connect -> Result -> Disconnect loop.",
-    openclaw: "Uses the OpenClaw CLI already signed in on this node. If OpenClaw can use your Plus subscription, OSA uses it through that local CLI login. No provider API key needed in OSA.",
+    openclaw: "Uses the OpenClaw CLI already signed in on this node. If OpenClaw can use your Plus subscription, OSA uses it through that local CLI login. No provider API key needed in OSA; usage follows OpenClaw's own limits.",
     codex: "Uses the Codex CLI already signed in on this node. OSA cannot connect directly to a ChatGPT Plus subscription; it only starts your local codex CLI.",
     provider: `Calls ${provider} directly through its API. Requires a real ${provider} API key; ChatGPT Plus alone is not an API key and does not provide API credits.`
   }[selectedConnectorRunner()];
