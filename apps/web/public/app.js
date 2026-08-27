@@ -15,6 +15,7 @@ let realtimeRefreshTimer = null;
 
 const state = {
   selectedGoalId: null,
+  selectedVisualizationTaskId: null,
   view: "worker",
   theme: initialTheme(),
   lastVote: null,
@@ -68,6 +69,8 @@ const els = {
   proposals: document.querySelector("#proposals"),
   resultPool: document.querySelector("#result-pool"),
   connectorFeedback: document.querySelector("#connector-feedback"),
+  myAgentWork: document.querySelector("#my-agent-work"),
+  taskVisualization: document.querySelector("#task-visualization"),
   voteFeedback: document.querySelector("#vote-feedback"),
   events: document.querySelector("#events"),
   taskCount: document.querySelector("#task-count"),
@@ -383,6 +386,9 @@ async function refresh() {
   if (!activeGoals.some((goal) => goal.id === state.selectedGoalId)) {
     state.selectedGoalId = activeGoals[0]?.id || null;
   }
+  if (state.selectedVisualizationTaskId && !state.data.tasks.some((task) => task.id === state.selectedVisualizationTaskId)) {
+    state.selectedVisualizationTaskId = null;
+  }
   syncRealtimeStream();
   render();
 }
@@ -488,6 +494,8 @@ function render() {
 
   renderWorkerProjects(activeWorkerGoals());
   renderStoredConnectorFeedback();
+  renderMyAgentWork();
+  renderTaskVisualization();
   renderAgents(agents);
   renderResults(results);
   renderClaims(claims);
@@ -1276,8 +1284,14 @@ function renderWorkerProjects(goals) {
         <div class="project-task-stack">
           ${projectTasks.map((task) => `
             <div class="project-task-row">
-              <strong>${escapeHtml(task.title)}</strong>
-              <span class="chip ${task.status}">${escapeHtml(statusLabel(task.status))}</span>
+              <div class="project-task-title">
+                <strong>${escapeHtml(task.title)}</strong>
+                <span>${escapeHtml(task.type || "task")}</span>
+              </div>
+              <div class="project-task-actions">
+                <span class="chip ${task.status}">${escapeHtml(statusLabel(task.status))}</span>
+                <button class="task-visualization-button" type="button" data-task-id="${escapeHtml(task.id)}" aria-label="Visualize ${escapeHtml(task.title)}">Visualization</button>
+              </div>
             </div>
           `).join("") || `<div class="empty compact"><strong>No active tasks</strong><span>This project is waiting for new work.</span></div>`}
         </div>
@@ -1286,11 +1300,245 @@ function renderWorkerProjects(goals) {
         state.selectedGoalId = goal.id;
         render();
       });
+      card.querySelectorAll(".task-visualization-button").forEach((button) => {
+        button.addEventListener("click", () => showTaskVisualization(button.dataset.taskId));
+      });
       card.querySelector(".project-connect").addEventListener("click", () => connectWorkerGoal(goal));
       card.querySelector(".project-disconnect").addEventListener("click", () => disconnectWorkerGoal(goal));
       return card;
     })
   );
+}
+
+function renderMyAgentWork() {
+  if (!els.myAgentWork) return;
+  const connector = currentWorkerConnector();
+  const agent = myWorkerAgent(connector);
+  const goal = connector?.goalId
+    ? state.data.goals.find((item) => item.id === connector.goalId)
+    : selectedGoal();
+  const task = agent ? currentTaskForAgent(agent) : null;
+  const runner = connector ? connectorModeLabel(connector) : "No connector";
+  const status = myAgentStatus(connector, agent, task);
+
+  els.myAgentWork.innerHTML = `
+    <div class="panel-head agent-work-head">
+      <div>
+        <h3>My Agent</h3>
+        <span>${escapeHtml(status.detail)}</span>
+      </div>
+      <span class="chip ${escapeHtml(status.kind)}">${escapeHtml(status.label)}</span>
+    </div>
+    <div class="agent-work-body">
+      <div class="agent-work-avatar" aria-hidden="true">${escapeHtml(agentInitials(agent?.name || connector?.name || "Agent"))}</div>
+      <div class="agent-work-copy">
+        <strong>${escapeHtml(agent?.name || connector?.name || "No local agent connected")}</strong>
+        <p>${escapeHtml(task ? task.description : status.body)}</p>
+        <div class="chips">
+          <span class="chip">${escapeHtml(runner)}</span>
+          ${goal ? `<span class="chip">${escapeHtml(goal.title)}</span>` : ""}
+          ${task ? `<span class="chip ${escapeHtml(task.status)}">${escapeHtml(statusLabel(task.status))}</span>` : ""}
+          ${task?.leaseUntil ? `<span class="chip">lease ${escapeHtml(formatRelativeTime(task.leaseUntil))}</span>` : ""}
+        </div>
+      </div>
+      <div class="agent-work-task">
+        <span class="section-label">Current task</span>
+        <strong>${escapeHtml(task?.title || "Waiting")}</strong>
+        ${task ? `<button class="task-visualization-button" type="button" data-task-id="${escapeHtml(task.id)}">Visualization</button>` : ""}
+      </div>
+    </div>
+  `;
+
+  els.myAgentWork.querySelector(".task-visualization-button")?.addEventListener("click", (event) => {
+    showTaskVisualization(event.currentTarget.dataset.taskId);
+  });
+}
+
+function showTaskVisualization(taskId) {
+  const task = state.data.tasks.find((item) => item.id === taskId);
+  if (!task) return;
+  state.selectedVisualizationTaskId = task.id;
+  state.selectedGoalId = task.goalId;
+  render();
+  els.taskVisualization?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderTaskVisualization() {
+  if (!els.taskVisualization) return;
+  const task = state.data.tasks.find((item) => item.id === state.selectedVisualizationTaskId);
+  if (!task) {
+    els.taskVisualization.classList.add("hidden");
+    els.taskVisualization.replaceChildren();
+    return;
+  }
+
+  const goal = state.data.goals.find((item) => item.id === task.goalId);
+  const agents = state.data.agents.filter((agent) => agent.goalId === task.goalId);
+  const assignedAgent = task.assignedAgentId ? agents.find((agent) => agent.id === task.assignedAgentId) : null;
+  const result = state.data.results.find((item) => item.taskId === task.id);
+  const reviews = result ? state.data.reviews.filter((review) => review.resultId === result.id) : [];
+  const published = result ? state.data.resultPool.some((item) => item.resultId === result.id) : false;
+  const stages = taskVisualizationStages(task, result, published);
+  const events = taskVisualizationEvents(task, result, reviews);
+
+  els.taskVisualization.classList.remove("hidden");
+  els.taskVisualization.innerHTML = `
+    <div class="panel-head visualization-head">
+      <div>
+        <h3>Task Visualization</h3>
+        <span>${escapeHtml(goal?.title || "Worker project")}</span>
+      </div>
+      <button class="ghost-button visualization-close" type="button" aria-label="Close task visualization">Close</button>
+    </div>
+    <div class="visualization-grid">
+      <div class="agent-floor" aria-label="Agent work visualization for ${escapeHtml(task.title)}">
+        ${stages.map((stage) => `
+          <div class="floor-zone ${escapeHtml(stage.state)}">
+            <span>${escapeHtml(stage.label)}</span>
+            <strong>${escapeHtml(stage.value)}</strong>
+          </div>
+        `).join("")}
+        <div class="agent-desk ${assignedAgent ? "occupied" : ""}">
+          <div class="desk-avatar">${escapeHtml(agentInitials(assignedAgent?.name || "AI"))}</div>
+          <div>
+            <strong>${escapeHtml(assignedAgent?.name || "Waiting for agent")}</strong>
+            <span>${escapeHtml(assignedAgent ? statusLabel(assignedAgent.status) : "No lease yet")}</span>
+          </div>
+        </div>
+      </div>
+      <div class="visualization-detail">
+        <span class="section-label">Selected task</span>
+        <strong>${escapeHtml(task.title)}</strong>
+        <p>${escapeHtml(task.description)}</p>
+        <div class="chips">
+          <span class="chip ${escapeHtml(task.status)}">${escapeHtml(statusLabel(task.status))}</span>
+          <span class="chip">${escapeHtml(task.type || "task")}</span>
+          <span class="chip">priority ${escapeHtml(task.priority ?? "-")}</span>
+          ${result ? `<span class="chip ${escapeHtml(result.status)}">${escapeHtml(statusLabel(result.status))}</span>` : ""}
+          ${reviews.length ? `<span class="chip">${reviews.length} ${escapeHtml(plural("review", reviews.length))}</span>` : ""}
+        </div>
+        ${result ? `<p class="visualization-result">${escapeHtml(result.summary || result.content || "Result submitted.")}</p>` : ""}
+      </div>
+    </div>
+    <div class="trace-strip">
+      ${events.map((event) => `
+        <div class="trace-step">
+          <span>${escapeHtml(formatRelativeTime(event.createdAt))}</span>
+          <strong>${escapeHtml(eventTitle(event))}</strong>
+          <p>${escapeHtml(event.message)}</p>
+        </div>
+      `).join("") || `<div class="trace-step muted"><strong>No trace yet</strong><p>The task has not emitted work events yet.</p></div>`}
+    </div>
+  `;
+
+  els.taskVisualization.querySelector(".visualization-close")?.addEventListener("click", () => {
+    state.selectedVisualizationTaskId = null;
+    renderTaskVisualization();
+  });
+}
+
+function currentWorkerConnector() {
+  const connectors = (state.data.viewerConnectors || []).filter((connector) => connector.mode === "worker");
+  const storedConnectorId = localStorage.getItem("agentswarmWorkerConnectorId");
+  const stored = connectors.find((connector) => connector.id === storedConnectorId);
+  if (stored) return stored;
+  return connectors.find((connector) => connector.status === "active" && ["starting", "running"].includes(connector.managed?.status)) ||
+    connectors.find((connector) => connector.status === "active") ||
+    null;
+}
+
+function myWorkerAgent(connector) {
+  const agentId = connector?.agentId || localStorage.getItem("agentswarmWorkerAgentId");
+  if (!agentId) return null;
+  return state.data.agents.find((agent) => agent.id === agentId) || null;
+}
+
+function currentTaskForAgent(agent) {
+  return state.data.tasks
+    .filter((task) => task.assignedAgentId === agent.id)
+    .filter((task) => !["done", "rejected"].includes(task.status))
+    .sort((a, b) => statusWeight(a.status) - statusWeight(b.status) || b.priority - a.priority)[0] || null;
+}
+
+function myAgentStatus(connector, agent, task) {
+  if (!connector) {
+    return {
+      kind: "offline",
+      label: "Not connected",
+      detail: "Connect a project to start a local worker.",
+      body: "Your local worker status will appear here after Connect starts a connector."
+    };
+  }
+  if (connector.status !== "active") {
+    return {
+      kind: connector.status,
+      label: statusLabel(connector.status),
+      detail: "Connector token is not active.",
+      body: "Reconnect this project to start a fresh worker."
+    };
+  }
+  if (connector.managed?.status === "starting" || !agent) {
+    return {
+      kind: "starting",
+      label: "Starting",
+      detail: "Local connector is starting.",
+      body: "OSA is waiting for the connector to register its agent."
+    };
+  }
+  if (task) {
+    return {
+      kind: task.status,
+      label: statusLabel(task.status),
+      detail: "Your local worker has an assigned task.",
+      body: task.description || "The agent is working on the selected project."
+    };
+  }
+  return {
+    kind: "online",
+    label: "Online",
+    detail: "Your local worker is online.",
+    body: "No matching task is currently leased to this agent."
+  };
+}
+
+function taskVisualizationStages(task, result, published) {
+  const hasResult = Boolean(result);
+  return [
+    {
+      label: "Queue",
+      value: task.status === "open" ? "Waiting" : "Claimed",
+      state: task.status === "open" ? "active" : "done"
+    },
+    {
+      label: "Desk",
+      value: task.status === "leased" ? "Working" : hasResult ? "Finished" : "Idle",
+      state: task.status === "leased" ? "active" : hasResult ? "done" : "waiting"
+    },
+    {
+      label: "Review",
+      value: result ? statusLabel(result.status) : "Pending",
+      state: result && result.status !== "accepted" ? "active" : result ? "done" : "waiting"
+    },
+    {
+      label: "Pool",
+      value: published ? "Published" : "Not yet",
+      state: published ? "done" : "waiting"
+    }
+  ];
+}
+
+function taskVisualizationEvents(task, result, reviews) {
+  const resultIds = new Set([result?.id, ...reviews.map((review) => review.resultId)].filter(Boolean));
+  const taskIds = new Set([task.id, ...reviews.map((review) => review.taskId)].filter(Boolean));
+  return (state.data.events || [])
+    .filter((event) => taskIds.has(event.data?.taskId) || resultIds.has(event.data?.resultId))
+    .slice(0, 5);
+}
+
+function agentInitials(name) {
+  const parts = String(name || "AI").trim().split(/\s+/).filter(Boolean);
+  const initials = (parts[0]?.[0] || "A") + (parts.length > 1 ? parts[1][0] : parts[0]?.[1] || "I");
+  return initials.toUpperCase();
 }
 
 function renderAgents(agents) {

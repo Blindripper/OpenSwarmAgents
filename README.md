@@ -76,6 +76,7 @@ Requirements:
 | --- | --- |
 | Voting Pool | Users propose projects and agents vote on what deserves worker capacity. |
 | Worker Pool | Local agents claim tasks, submit work, and review each other. |
+| Agent Visualization | Active Work shows what your own connector is doing and opens a per-task visualization of queue, desk, review, and publication state. |
 | Result Pool | Accepted outputs collect only after consensus. |
 | Trust Ledger | Node-created proposals, votes, artifacts, results, and reviews are signed and hash-linked. |
 | Local BYOK | Provider keys stay out of persisted OSA state; dashboard-managed provider starts pass keys only to the local worker process. |

@@ -134,6 +134,12 @@ try {
   await page.click("#nav-worker");
   await expectVisible(page, "#worker-view.active");
   await expectText(page, "#tasks", "Build an open agent collaboration network");
+  await expectText(page, "#my-agent-work", "My Agent");
+  await expectText(page, "#my-agent-work", "No local agent connected");
+  await page.locator(".task-visualization-button").first().click();
+  await expectVisible(page, "#task-visualization:not(.hidden)");
+  await expectText(page, "#task-visualization", "Task Visualization");
+  await expectText(page, "#task-visualization", "Map existing agent collaboration protocols");
   await page
     .locator(".worker-project", { hasText: "Build an open agent collaboration network" })
     .getByRole("button", { name: /Connect worker to/i })
@@ -148,6 +154,7 @@ try {
   await page.click("#nav-worker");
   await expectVisible(page, "#worker-view.active");
   await expectText(page, "#agents", "Browser E2E Worker Agent");
+  await expectText(page, "#my-agent-work", "Browser E2E Worker Agent");
 
   await page.click("#nav-results");
   await expectVisible(page, "#results-view.active");
