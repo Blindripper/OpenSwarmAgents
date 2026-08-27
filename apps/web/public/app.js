@@ -869,7 +869,7 @@ function renderConnectorRunnerHelp() {
   const provider = providerLabel(preferredProvider());
   els.connectorRunnerHelp.textContent = {
     stub: "Demo mode. No ChatGPT Plus, CLI login, or API key needed. Good for testing the full Connect -> Result -> Disconnect loop.",
-    openclaw: "Uses the OpenClaw CLI already configured on this node. Do not paste provider keys for this mode; set up OpenClaw locally first.",
+    openclaw: "Uses the OpenClaw CLI already signed in on this node. If OpenClaw can use your Plus subscription, OSA uses it through that local CLI login. No provider API key needed in OSA.",
     codex: "Uses the Codex CLI already signed in on this node. OSA cannot connect directly to a ChatGPT Plus subscription; it only starts your local codex CLI.",
     provider: `Calls ${provider} directly through its API. Requires a real ${provider} API key; ChatGPT Plus alone is not an API key and does not provide API credits.`
   }[selectedConnectorRunner()];

@@ -71,6 +71,8 @@ try {
   await expectVisible(page, "#account-view.active");
   await page.selectOption("#connector-runner", "stub");
   await expectText(page, "#connector-runner-help", "No ChatGPT Plus");
+  await page.selectOption("#connector-runner", "openclaw");
+  await expectText(page, "#connector-runner-help", "uses it through that local CLI login");
   await page.selectOption("#connector-runner", "codex");
   await expectText(page, "#connector-runner-help", "cannot connect directly to a ChatGPT Plus");
   await page.selectOption("#connector-runner", "provider");
