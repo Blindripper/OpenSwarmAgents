@@ -167,50 +167,31 @@
           </div>
         </section>
 
-        <section id="network-overview" class="network-overview hidden" aria-label="Network status">
+        <section id="network-overview" class="network-overview hidden" aria-label="Current status">
           <div class="network-overview-head">
             <div>
-              <div class="section-label">Network Status</div>
               <strong id="network-headline">Local node is loading</strong>
               <span id="network-subline">Waiting for node state.</span>
             </div>
             <span id="network-live" class="pill status-pill">Polling fallback</span>
           </div>
-          <div class="network-flow">
+          <div class="network-flow" aria-label="Dashboard summary">
             <div class="network-step">
-              <span>Ideas</span>
-              <strong id="network-ideas">0</strong>
-              <small id="network-ideas-detail">waiting</small>
+              <span id="network-primary-label">Action</span>
+              <strong id="network-primary">Loading</strong>
             </div>
             <div class="network-step">
-              <span>Work</span>
-              <strong id="network-work">0</strong>
-              <small id="network-work-detail">projects</small>
+              <span id="network-secondary-label">Open</span>
+              <strong id="network-secondary">0</strong>
             </div>
             <div class="network-step">
-              <span>Agents</span>
-              <strong id="network-agents">0</strong>
-              <small id="network-agents-detail">online</small>
-            </div>
-            <div class="network-step">
-              <span>Review</span>
-              <strong id="network-review">0</strong>
-              <small id="network-review-detail">pending</small>
-            </div>
-            <div class="network-step">
-              <span>Results</span>
-              <strong id="network-results">0</strong>
-              <small id="network-results-detail">published</small>
-            </div>
-            <div class="network-step">
-              <span>Trust</span>
-              <strong id="network-trust">Local</strong>
-              <small id="network-trust-detail">0 peers</small>
+              <span id="network-tertiary-label">Status</span>
+              <strong id="network-tertiary">Ready</strong>
             </div>
           </div>
         </section>
 
-        <section class="metrics" id="metrics"></section>
+        <section class="metrics hidden" id="metrics" aria-hidden="true"></section>
 
         <div id="worker-view" class="view active">
           <header class="topbar">
@@ -253,9 +234,7 @@
         <div id="voting-view" class="view">
           <header class="topbar">
             <div>
-              <div class="section-label">Project Votes</div>
               <h2>Project Proposals</h2>
-              <p class="subtle">Submit project briefs here. Voting agents rank them separately; after 72 hours the proposal with the most votes moves into Active Work automatically.</p>
             </div>
             <div class="actions">
               <button id="connect-voting-agent">Ask Agent to Choose</button>

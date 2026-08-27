@@ -86,18 +86,12 @@ const els = {
   networkHeadline: document.querySelector("#network-headline"),
   networkSubline: document.querySelector("#network-subline"),
   networkLive: document.querySelector("#network-live"),
-  networkIdeas: document.querySelector("#network-ideas"),
-  networkIdeasDetail: document.querySelector("#network-ideas-detail"),
-  networkWork: document.querySelector("#network-work"),
-  networkWorkDetail: document.querySelector("#network-work-detail"),
-  networkAgents: document.querySelector("#network-agents"),
-  networkAgentsDetail: document.querySelector("#network-agents-detail"),
-  networkReview: document.querySelector("#network-review"),
-  networkReviewDetail: document.querySelector("#network-review-detail"),
-  networkResults: document.querySelector("#network-results"),
-  networkResultsDetail: document.querySelector("#network-results-detail"),
-  networkTrust: document.querySelector("#network-trust"),
-  networkTrustDetail: document.querySelector("#network-trust-detail"),
+  networkPrimaryLabel: document.querySelector("#network-primary-label"),
+  networkPrimary: document.querySelector("#network-primary"),
+  networkSecondaryLabel: document.querySelector("#network-secondary-label"),
+  networkSecondary: document.querySelector("#network-secondary"),
+  networkTertiaryLabel: document.querySelector("#network-tertiary-label"),
+  networkTertiary: document.querySelector("#network-tertiary"),
   accountFeedback: document.querySelector("#account-feedback"),
   accountForm: document.querySelector("#account-form"),
   accountEmail: document.querySelector("#account-email"),
@@ -518,7 +512,7 @@ function renderShell() {
   const isAccount = state.view === "account";
   document.querySelector(".shell")?.classList.toggle("locked", !authenticated);
   els.authGate.classList.toggle("hidden", authenticated);
-  els.metrics.classList.toggle("hidden", !authenticated);
+  els.metrics.classList.add("hidden");
   document.querySelector(".events-panel")?.classList.toggle("hidden", !authenticated);
   els.navWorker.disabled = !authenticated;
   els.navVoting.disabled = !authenticated;
@@ -922,53 +916,96 @@ function renderSelectedGoal() {
 
 function renderNetworkOverview() {
   const stats = state.data.stats || {};
-  const runtime = state.data.runtime || {};
-  const proposals = state.data.proposals || [];
-  const events = state.data.events || [];
-  const votingCount = stats.votingProposals ?? proposals.filter((proposal) => proposal.status === "voting").length;
-  const activeProjects = activeWorkerGoals().length;
-  const openTasks = stats.openTasks || 0;
-  const onlineAgents = stats.onlineAgents || 0;
-  const pendingReviews = stats.pendingReviews || 0;
-  const publishedResults = stats.resultPool || 0;
-  const latestEvent = events[0];
-  const trustMode = networkTrustLabel(runtime);
+  const summary = networkSummaryForView(stats);
 
-  els.networkHeadline.textContent = networkHeadline({
-    votingCount,
-    activeProjects,
-    openTasks,
-    onlineAgents,
-    pendingReviews,
-    publishedResults
-  });
-  els.networkSubline.textContent = latestEvent
-    ? `Last activity: ${eventTitle(latestEvent)} at ${new Date(latestEvent.createdAt).toLocaleTimeString()}`
-    : "No activity yet. Start with a proposal or connect an agent.";
-  els.networkLive.textContent = realtimeConnected ? "Realtime live" : "Polling fallback";
+  els.networkHeadline.textContent = summary.headline;
+  els.networkSubline.textContent = summary.subline;
+  els.networkLive.textContent = realtimeConnected ? "Live" : "Offline";
   els.networkLive.classList.toggle("live", realtimeConnected);
   els.networkLive.classList.toggle("polling", !realtimeConnected);
-  els.networkIdeas.textContent = String(votingCount);
-  els.networkIdeasDetail.textContent = `${(state.data.proposalVotes || []).length} ${plural("vote", (state.data.proposalVotes || []).length)}`;
-  els.networkWork.textContent = String(activeProjects);
-  els.networkWorkDetail.textContent = `${openTasks} open ${plural("task", openTasks)}`;
-  els.networkAgents.textContent = String(onlineAgents);
-  els.networkAgentsDetail.textContent = `${state.data.agents.length} registered`;
-  els.networkReview.textContent = String(pendingReviews);
-  els.networkReviewDetail.textContent = pendingReviews ? "needs attention" : "clear";
-  els.networkResults.textContent = String(publishedResults);
-  els.networkResultsDetail.textContent = `${state.data.results.filter((result) => result.status === "accepted").length} accepted`;
-  els.networkTrust.textContent = trustMode.label;
-  els.networkTrustDetail.textContent = trustMode.detail;
+
+  setNetworkFact(els.networkPrimaryLabel, els.networkPrimary, summary.facts[0]);
+  setNetworkFact(els.networkSecondaryLabel, els.networkSecondary, summary.facts[1]);
+  setNetworkFact(els.networkTertiaryLabel, els.networkTertiary, summary.facts[2]);
 }
 
-function networkHeadline({ votingCount, activeProjects, openTasks, onlineAgents, pendingReviews, publishedResults }) {
-  if (pendingReviews > 0) return "Results are waiting for review";
-  if (openTasks > 0 && onlineAgents > 0) return "Agents are working on open tasks";
-  if (activeProjects > 0) return "Worker projects are ready for agents";
-  if (votingCount > 0) return "Project ideas are being voted on";
-  if (publishedResults > 0) return "Reviewed results are published";
-  return "Local node is ready";
+function networkSummaryForView(stats) {
+  if (state.view === "voting") return votingNetworkSummary(stats);
+  if (state.view === "results") return resultsNetworkSummary(stats);
+  if (state.view === "account") return accountNetworkSummary(stats);
+  return workerNetworkSummary(stats);
+}
+
+function workerNetworkSummary(stats) {
+  const action = workerNextAction(stats);
+  const openTasks = stats.openTasks || 0;
+  const activeProjects = activeWorkerGoals().length;
+  const pendingReviews = stats.pendingReviews || 0;
+  const headline =
+    pendingReviews > 0 ? "Review results" : openTasks > 0 ? "Active work is running" : "Ready for work";
+  const subline =
+    openTasks > 0
+      ? `${openTasks} open ${plural("task", openTasks)} across ${activeProjects} ${plural("project", activeProjects)}.`
+      : "Start with a project idea or connect an agent.";
+
+  return {
+    headline,
+    subline,
+    facts: [
+      ["Action", action],
+      ["Tasks", String(openTasks)],
+      ["Review", pendingReviews ? `${pendingReviews} waiting` : "Clear"]
+    ]
+  };
+}
+
+function votingNetworkSummary(stats) {
+  const ideas = stats.votingProposals || 0;
+  const votes = (state.data.proposalVotes || []).length;
+  return {
+    headline: "Project voting",
+    subline: ideas ? "Choose the next project to move into Active Work." : "Add a project idea to start voting.",
+    facts: [
+      ["Action", ideas ? "Ask agent" : "Add idea"],
+      ["Ideas", String(ideas)],
+      ["Votes", String(votes)]
+    ]
+  };
+}
+
+function resultsNetworkSummary(stats) {
+  const published = stats.resultPool || 0;
+  const acceptedClaims = stats.acceptedClaims || 0;
+  const completed = state.data.goals.filter((goal) => goal.status === "completed").length;
+  return {
+    headline: "Published results",
+    subline: published ? "Accepted work is ready to inspect." : "No accepted results yet.",
+    facts: [
+      ["Results", String(published)],
+      ["Claims", String(acceptedClaims)],
+      ["Done", String(completed)]
+    ]
+  };
+}
+
+function accountNetworkSummary(stats) {
+  const connectors = state.data.viewerConnectors || [];
+  const activeConnectors = connectors.filter((connector) => connector.status === "active").length;
+  return {
+    headline: "Account",
+    subline: "Manage login, connector tokens, and federation trust.",
+    facts: [
+      ["Status", state.user ? "Signed in" : "Missing"],
+      ["Tokens", connectors.length ? `${activeConnectors}/${connectors.length}` : "None"],
+      ["Trust", networkTrustLabel(state.data.runtime || {}).label]
+    ]
+  };
+}
+
+function setNetworkFact(labelNode, valueNode, fact) {
+  const [label, value] = fact || ["", ""];
+  labelNode.textContent = label;
+  valueNode.textContent = value;
 }
 
 function networkTrustLabel(runtime) {

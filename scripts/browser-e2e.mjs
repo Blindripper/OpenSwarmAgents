@@ -53,8 +53,8 @@ try {
   await expectAttached(page, "#auth-gate.hidden");
   await expectText(page, "#goal-title", "Build an open agent collaboration network");
   await expectVisible(page, "#network-overview");
-  await expectText(page, "#network-headline", "Worker projects are ready for agents");
-  await expectText(page, "#network-trust", "Local");
+  await expectVisible(page, "#network-headline");
+  await expectText(page, "#network-primary-label", "Action");
   await expectText(page, ".events-panel h3", "Network Activity");
   await waitForRealtime(page);
 

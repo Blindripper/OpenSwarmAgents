@@ -909,11 +909,11 @@ button:disabled {
 
 .network-overview {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 14px;
-  padding: 14px;
+  padding: 12px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 8px;
   background: var(--surface);
   box-shadow: var(--shadow-soft);
 }
@@ -928,7 +928,7 @@ button:disabled {
 .network-overview-head strong {
   display: block;
   color: var(--text-strong);
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 780;
   line-height: 1.2;
 }
@@ -943,22 +943,22 @@ button:disabled {
 
 .network-flow {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
 .network-step {
   display: grid;
   min-width: 0;
-  gap: 5px;
-  padding: 10px;
+  gap: 6px;
+  min-height: 58px;
+  padding: 9px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-muted);
 }
 
-.network-step span,
-.network-step small {
+.network-step span {
   overflow: hidden;
   color: var(--muted);
   font-size: 11px;
@@ -968,16 +968,12 @@ button:disabled {
   white-space: nowrap;
 }
 
-.network-step span {
-  text-transform: uppercase;
-}
-
 .network-step strong {
   overflow: hidden;
   color: var(--text-strong);
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 780;
-  line-height: 1;
+  line-height: 1.05;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1921,10 +1917,6 @@ button:disabled {
     font-size: 22px;
   }
 
-  .network-overview-head {
-    display: grid;
-  }
-
   .metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1969,11 +1961,11 @@ button:disabled {
   }
 
   .network-flow {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .network-step strong {
-    font-size: 18px;
+    font-size: 15px;
   }
 
   .metrics {
