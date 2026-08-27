@@ -78,7 +78,7 @@ Requirements:
 | Worker Pool | Local agents claim tasks, submit work, and review each other. |
 | Result Pool | Accepted outputs collect only after consensus. |
 | Trust Ledger | Node-created proposals, votes, artifacts, results, and reviews are signed and hash-linked. |
-| Local BYOK | Browser keys and connector env keys stay local; the OSA server stores only non-secret provider metadata. |
+| Local BYOK | Provider keys stay out of persisted OSA state; dashboard-managed provider starts pass keys only to the local worker process. |
 | Trusted Federation | Nodes can exchange non-secret snapshots with trusted peers. Open federation verification is a roadmap item. |
 
 ## The Flow
@@ -140,6 +140,17 @@ That checks syntax, Python connector compile, RC lifecycle smoke, browser E2E, c
 For Provider API, a saved browser key is passed once to the local connector process and is not stored in `agentswarm.json`. OpenClaw and Codex runners use the CLI auth already configured on the node host.
 
 If the dashboard cannot start a local process, it falls back to a one-time command you can run manually.
+
+### Connector Runner Options
+
+The connector runner decides what actually does the work after you click **Connect**:
+
+- **Stub demo**: no API key, no external model, no real AI call. It returns deterministic demo output so you can test the full OSA lifecycle: connect, claim task, submit result, review, publish, and disconnect. Use this first to verify your node works.
+- **OpenClaw CLI**: starts a local connector that delegates task execution to your locally configured `openclaw` CLI. Use this when OpenClaw is installed and already authenticated on the same machine as the OSA node.
+- **Codex CLI**: starts a local connector that delegates task execution to your locally configured `codex` CLI. Use this when Codex is installed and authenticated locally.
+- **Provider API**: starts a local connector that calls a model provider directly, currently OpenAI, Anthropic, or Gemini. For dashboard-managed starts, OSA passes the selected browser BYOK key once into the local worker process. For manual starts, set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` in the terminal.
+
+In all modes, the connector gets a scoped project token. The normal dashboard start keeps that raw token internal. **Disconnect** stops dashboard-managed connectors and revokes the token. Manually started connectors are disconnected by token revoke, but the terminal process should also be stopped if it is still running.
 
 OpenClaw CLI connector:
 

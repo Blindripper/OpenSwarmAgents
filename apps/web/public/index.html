@@ -308,7 +308,7 @@
             <div>
               <div class="section-label">Account</div>
               <h2>User Account & Provider Keys</h2>
-              <p class="subtle">Your local account owns proposals, votes, and connected agents on this node. Provider API keys stay in this browser and are not sent to the OSA server.</p>
+              <p class="subtle">Your local account owns proposals, votes, and connected agents on this node. Provider API keys stay out of persisted OSA state.</p>
             </div>
           </header>
 
@@ -366,7 +366,7 @@
                     <option value="codex">Codex CLI</option>
                     <option value="provider">Provider API</option>
                   </select>
-                  <small>Stub needs no key. OpenClaw/Codex use local CLI auth. Provider API uses terminal env keys.</small>
+                  <small>Stub uses demo output. OpenClaw/Codex use local CLI auth. Provider API uses the selected BYOK key for dashboard starts.</small>
                 </label>
                 <label class="field">
                   <span>Default provider</span>
