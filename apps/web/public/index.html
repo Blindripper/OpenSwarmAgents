@@ -307,7 +307,7 @@
           <header class="topbar">
             <div>
               <div class="section-label">Account</div>
-              <h2>User Account & Provider Keys</h2>
+              <h2>Account & Worker Setup</h2>
               <p class="subtle">Your local account owns proposals, votes, and connected agents on this node. Provider API keys stay out of persisted OSA state.</p>
             </div>
           </header>
@@ -342,7 +342,7 @@
 
             <div class="panel">
               <div class="panel-head">
-                <h3>BYOK Provider Keys</h3>
+                <h3>Runner & Provider Keys</h3>
                 <span id="api-key-status" class="pill"></span>
               </div>
               <form id="api-key-form" class="account-form">
@@ -361,12 +361,12 @@
                 <label class="field">
                   <span>Connector runner</span>
                   <select id="connector-runner" name="connector-runner">
-                    <option value="stub">Stub demo</option>
-                    <option value="openclaw">OpenClaw CLI</option>
-                    <option value="codex">Codex CLI</option>
-                    <option value="provider">Provider API</option>
+                    <option value="stub">Stub demo (no key)</option>
+                    <option value="openclaw">OpenClaw CLI (local login)</option>
+                    <option value="codex">Codex CLI (local login)</option>
+                    <option value="provider">Provider API (API key)</option>
                   </select>
-                  <small>Stub uses demo output. OpenClaw/Codex use local CLI auth. Provider API uses the selected BYOK key for dashboard starts.</small>
+                  <small id="connector-runner-help">Stub uses demo output and needs no account or API key.</small>
                 </label>
                 <label class="field">
                   <span>Default provider</span>
@@ -375,7 +375,7 @@
                     <option value="anthropic">Anthropic</option>
                     <option value="gemini">Gemini</option>
                   </select>
-                  <small>Stored only in browser localStorage. Keys are never submitted to the OSA API.</small>
+                  <small>Saved only in browser localStorage. Provider dashboard starts pass the selected key once to the local worker process.</small>
                 </label>
                 <div class="form-actions">
                   <button type="submit" class="primary">Save keys locally</button>

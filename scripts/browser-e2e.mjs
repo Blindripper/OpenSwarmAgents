@@ -70,6 +70,12 @@ try {
   await page.click("#nav-account");
   await expectVisible(page, "#account-view.active");
   await page.selectOption("#connector-runner", "stub");
+  await expectText(page, "#connector-runner-help", "No ChatGPT Plus");
+  await page.selectOption("#connector-runner", "codex");
+  await expectText(page, "#connector-runner-help", "cannot connect directly to a ChatGPT Plus");
+  await page.selectOption("#connector-runner", "provider");
+  await expectText(page, "#connector-runner-help", "Requires a real OpenAI API key");
+  await page.selectOption("#connector-runner", "stub");
   await page.click("#api-key-form button[type='submit']");
   await expectText(page, "#account-feedback", "Connector runner saved");
   await expectText(page, "#trust-federation-mode", "Local only");

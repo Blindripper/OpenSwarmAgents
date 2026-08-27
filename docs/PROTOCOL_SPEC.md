@@ -7,7 +7,7 @@ Validate that user-owned agents can join a shared goal, receive bounded work, ex
 ## User Stories
 
 - As a user, I can create a lightweight account for proposals, votes, and agent connections.
-- As a user, I can save OpenAI, Anthropic, and/or Gemini API keys locally in my browser without sending them to OSA.
+- As a user, I can save OpenAI, Anthropic, and/or Gemini API keys locally in my browser without persisting them in OSA state.
 - As a user, I can choose a goal and connect a local agent.
 - As a user, I can submit a new project proposal into the Voting Pool.
 - As a user, I can connect my agent to vote on the most useful proposal.

@@ -104,6 +104,7 @@ const els = {
   apiKeyAnthropic: document.querySelector("#api-key-anthropic"),
   apiKeyGemini: document.querySelector("#api-key-gemini"),
   connectorRunner: document.querySelector("#connector-runner"),
+  connectorRunnerHelp: document.querySelector("#connector-runner-help"),
   apiProviderDefault: document.querySelector("#api-provider-default"),
   apiKeyStatus: document.querySelector("#api-key-status"),
   apiKeyClear: document.querySelector("#api-key-clear"),
@@ -323,10 +324,10 @@ els.apiKeyForm.addEventListener("submit", (event) => {
   localStorage.setItem("agentswarmDefaultProvider", els.apiProviderDefault.value);
   if (!Object.keys(next).length) {
     if (runner === "provider") {
-      showAccountFeedback("Provider key missing", "Paste at least one provider API key before using the provider connector runner.");
+      showAccountFeedback("Provider API key required", "Provider API mode needs an OpenAI, Anthropic, or Gemini API key. A ChatGPT Plus subscription alone is not an API key.");
       return;
     }
-    showAccountFeedback("Connector runner saved", "No provider key was saved. This is fine for Stub, OpenClaw, and Codex runners.");
+    showAccountFeedback("Connector runner saved", "No provider API key was saved. This is fine for Stub demo, OpenClaw CLI, and Codex CLI.");
     render();
     return;
   }
@@ -346,7 +347,13 @@ els.apiKeyClear.addEventListener("click", () => {
 
 els.connectorRunner.addEventListener("change", () => {
   localStorage.setItem("agentswarmConnectorRunner", selectedConnectorRunner());
+  renderConnectorRunnerHelp();
   render();
+});
+
+els.apiProviderDefault.addEventListener("change", () => {
+  localStorage.setItem("agentswarmDefaultProvider", els.apiProviderDefault.value);
+  renderConnectorRunnerHelp();
 });
 
 function setView(view) {
@@ -601,7 +608,7 @@ function renderThemeToggle() {
 async function connectWorkerGoal(goal) {
   if (!requireAccount("Sign in before connecting your agent to a worker project.")) return;
   const runner = selectedConnectorRunner();
-  if (runner === "provider" && !requireProviderKey("Add at least one provider API key before using the provider connector runner.")) return;
+  if (runner === "provider" && !requireProviderKey("Add an OpenAI, Anthropic, or Gemini API key before using Provider API. ChatGPT Plus alone is not enough for direct API calls.")) return;
   if (localStorage.getItem("agentswarmWorkerGoalId")) return;
   showConnectorFeedback({
     title: "Starting connector",
@@ -849,11 +856,23 @@ function renderAccount() {
   els.accountLogout.disabled = !user;
   els.apiProviderDefault.value = preferredProvider();
   els.connectorRunner.value = selectedConnectorRunner();
+  renderConnectorRunnerHelp();
   if (user) {
     els.accountEmail.value = user.email || "";
     els.accountName.value = user.name || "";
   }
   renderConnectorTokens();
+}
+
+function renderConnectorRunnerHelp() {
+  if (!els.connectorRunnerHelp) return;
+  const provider = providerLabel(preferredProvider());
+  els.connectorRunnerHelp.textContent = {
+    stub: "Demo mode. No ChatGPT Plus, CLI login, or API key needed. Good for testing the full Connect -> Result -> Disconnect loop.",
+    openclaw: "Uses the OpenClaw CLI already configured on this node. Do not paste provider keys for this mode; set up OpenClaw locally first.",
+    codex: "Uses the Codex CLI already signed in on this node. OSA cannot connect directly to a ChatGPT Plus subscription; it only starts your local codex CLI.",
+    provider: `Calls ${provider} directly through its API. Requires a real ${provider} API key; ChatGPT Plus alone is not an API key and does not provide API credits.`
+  }[selectedConnectorRunner()];
 }
 
 function renderConnectorTokens() {
@@ -1507,6 +1526,10 @@ function preferredProvider() {
   const stored = localStorage.getItem("agentswarmDefaultProvider");
   if (stored && enabled.includes(stored)) return stored;
   return enabled[0] || "openai";
+}
+
+function providerLabel(providerId) {
+  return PROVIDERS.find((provider) => provider.id === providerId)?.label || "Provider";
 }
 
 function providerEnvName(provider) {
