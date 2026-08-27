@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { createReadStream, readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { join, extname, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -45,6 +46,13 @@ const federationSyncMs = Math.max(1000, Number(process.env.OSA_FEDERATION_SYNC_M
 const federationCollectionLimit = Math.max(100, Math.min(5000, Number(process.env.OSA_FEDERATION_COLLECTION_LIMIT || 2000)));
 const federationSnapshotMaxBytes = Math.max(maxJsonBytes, Number(process.env.OSA_FEDERATION_SNAPSHOT_MAX_BYTES || maxJsonBytes * 4));
 const federationPeerSyncs = new Set();
+const managedConnectorProcesses = new Map();
+const managedConnectorLogLimit = 12 * 1024;
+const providerEnvNames = {
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  gemini: "GEMINI_API_KEY"
+};
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -1621,6 +1629,7 @@ function publicConnectorTokensForUser(userId) {
 
 function publicConnectorToken(token) {
   const goal = store.goals.find((item) => item.id === token.goalId);
+  const managed = managedConnectorStatus(token.id);
   return {
     id: token.id,
     mode: token.mode,
@@ -1641,8 +1650,174 @@ function publicConnectorToken(token) {
     revokedAt: token.revokedAt || null,
     revokedReason: token.revokedReason || null,
     rotatedFromId: token.rotatedFromId || null,
-    rotatedToId: token.rotatedToId || null
+    rotatedToId: token.rotatedToId || null,
+    managed: managed
+      ? {
+          status: managed.status,
+          pid: managed.pid,
+          startedAt: managed.startedAt,
+          stoppedAt: managed.stoppedAt || null,
+          exitedAt: managed.exitedAt || null,
+          exitCode: managed.exitCode,
+          signal: managed.signal || null
+        }
+      : null
   };
+}
+
+function managedConnectorStatus(connectorId) {
+  const managed = managedConnectorProcesses.get(connectorId);
+  if (!managed) return null;
+  const connector = store.connectorTokens.find((item) => item.id === connectorId);
+  if (managed.exitCode === null && managed.status !== "stopping") {
+    managed.status = connector?.agentId ? "running" : "starting";
+  }
+  return managed;
+}
+
+function connectorRunner(connector) {
+  const model = (connector.models || []).find((item) => String(item).startsWith("connector:"));
+  const runner = String(model || "").replace("connector:", "");
+  return ["stub", "provider", "openclaw", "codex"].includes(runner) ? runner : "stub";
+}
+
+function requestOrigin(req) {
+  const fallbackHost = `${host}:${port}`;
+  const requestHost = String(req.headers.host || fallbackHost);
+  const forwardedProto = String(Array.isArray(req.headers["x-forwarded-proto"]) ? req.headers["x-forwarded-proto"][0] : req.headers["x-forwarded-proto"] || "");
+  const proto = trustProxyHeaders && forwardedProto ? forwardedProto.split(",")[0].trim() : "http";
+  return `${proto}://${requestHost}`;
+}
+
+function connectorCommandArgs(rawToken, connector, origin) {
+  const runner = connectorRunner(connector);
+  const args = [
+    "apps/connector/connector.py",
+    "--server",
+    origin,
+    "--connector-token",
+    rawToken
+  ];
+  if (connector.mode === "voting") {
+    args.push("--voting-pool");
+  } else {
+    args.push("--goal", connector.goalId);
+  }
+  args.push("--runner", runner, "--agent-name", connector.name || "Local Agent");
+  if (runner === "provider") {
+    args.push("--provider", connector.provider, "--providers", (connector.providers || []).join(","), "--no-fallback-to-stub");
+  }
+  return args;
+}
+
+function validateManagedConnectorStart(body = {}) {
+  const models = normalizeList(body.models, []);
+  const model = models.find((item) => String(item).startsWith("connector:"));
+  const runner = String(model || "connector:stub").replace("connector:", "");
+  if (!["stub", "provider", "openclaw", "codex"].includes(runner)) {
+    throw new Error("Unknown connector runner");
+  }
+  if (runner !== "provider") return;
+  const provider = normalizeProvider(body.provider);
+  const envName = providerEnvNames[provider];
+  if (!envName) throw new Error("Choose OpenAI, Anthropic, or Gemini before starting a provider connector");
+  const browserKey = String(body.providerKey || body.providerKeys?.[provider] || "").trim();
+  if (!browserKey && !String(process.env[envName] || "").trim()) {
+    throw new Error(`Set ${envName} on the node or keep the selected provider key in this browser before starting the provider connector`);
+  }
+}
+
+function startManagedConnector(req, rawToken, connector, body = {}) {
+  if (managedConnectorProcesses.get(connector.id)?.exitCode === null) {
+    throw new Error("Connector is already running from this dashboard");
+  }
+
+  const runner = connectorRunner(connector);
+  const env = { ...process.env };
+  if (runner === "provider") {
+    const provider = normalizeProvider(connector.provider);
+    const envName = providerEnvNames[provider];
+    const browserKey = String(body.providerKey || body.providerKeys?.[provider] || "").trim();
+    if (!envName) throw new Error("Choose OpenAI, Anthropic, or Gemini before starting a provider connector");
+    if (browserKey) env[envName] = browserKey;
+    if (!String(env[envName] || "").trim()) {
+      throw new Error(`Set ${envName} on the node or keep the selected provider key in this browser before starting the provider connector`);
+    }
+  }
+
+  const child = spawn("python3", connectorCommandArgs(rawToken, connector, requestOrigin(req)), {
+    cwd: rootDir,
+    env,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const managed = {
+    child,
+    pid: child.pid || null,
+    status: "starting",
+    startedAt: now(),
+    stoppedAt: null,
+    exitedAt: null,
+    exitCode: null,
+    signal: null,
+    output: ""
+  };
+  managedConnectorProcesses.set(connector.id, managed);
+  collectManagedConnectorOutput(managed, child.stdout);
+  collectManagedConnectorOutput(managed, child.stderr);
+  child.on("error", (error) => {
+    managed.status = "failed";
+    managed.exitedAt = now();
+    managed.exitCode = -1;
+    managed.output = trimManagedConnectorOutput(`${managed.output}\n${error.message}`);
+    event("managed_connector_failed", `Dashboard connector failed to start`, {
+      connectorId: connector.id,
+      goalId: connector.goalId,
+      runner
+    });
+  });
+  child.on("exit", (code, signal) => {
+    managed.exitedAt = now();
+    managed.exitCode = code;
+    managed.signal = signal || null;
+    managed.status = managed.status === "stopping" || signal === "SIGTERM" ? "stopped" : code === 0 ? "exited" : "failed";
+    event("managed_connector_exited", `Dashboard connector stopped`, {
+      connectorId: connector.id,
+      goalId: connector.goalId,
+      runner,
+      exitCode: code,
+      signal: signal || null
+    });
+    saveStore().catch((error) => console.warn(`Unable to save managed connector exit event: ${error.message}`));
+  });
+  event("managed_connector_started", `${connector.name} started from dashboard`, {
+    connectorId: connector.id,
+    goalId: connector.goalId,
+    runner,
+    pid: managed.pid
+  });
+  return managed;
+}
+
+function collectManagedConnectorOutput(managed, stream) {
+  stream?.on("data", (chunk) => {
+    managed.output = trimManagedConnectorOutput(`${managed.output}${chunk.toString()}`);
+  });
+}
+
+function trimManagedConnectorOutput(output) {
+  return String(output || "").slice(-managedConnectorLogLimit);
+}
+
+function stopManagedConnector(connectorId) {
+  const managed = managedConnectorProcesses.get(connectorId);
+  if (!managed || managed.exitCode !== null) return false;
+  managed.status = "stopping";
+  managed.stoppedAt = now();
+  managed.child.kill("SIGTERM");
+  setTimeout(() => {
+    if (managed.exitCode === null) managed.child.kill("SIGKILL");
+  }, 4000).unref?.();
+  return true;
 }
 
 function publicRuntime() {
@@ -2059,6 +2234,7 @@ function rotateConnectorToken(auth, connector) {
 
 function expireConnectorToken(connector) {
   if (connector.status === "expired") return;
+  stopManagedConnector(connector.id);
   connector.status = "expired";
   connector.expiredAt = now();
   connector.revokedReason = null;
@@ -2071,6 +2247,7 @@ function expireConnectorToken(connector) {
 
 function revokeConnectorToken(connector, reason = "user_disconnect") {
   if (connector.status === "revoked") return null;
+  stopManagedConnector(connector.id);
   connector.status = "revoked";
   connector.revokedAt = now();
   connector.revokedReason = reason;
@@ -2539,6 +2716,27 @@ async function handleApi(req, res, url) {
         await saveStore();
         return sendJson(res, 201, {
           token: rawToken,
+          connector: publicConnectorToken(connector),
+          state: publicState(auth)
+        });
+      } catch (error) {
+        return badRequest(res, error.message);
+      }
+    }
+
+    if (method === "POST" && path === "/api/connectors/start") {
+      const auth = authFromReq(req);
+      if (!auth) return unauthorized(res, "Sign in before starting connector workers");
+      if (!enforceRateLimit(req, res, "connector-managed-start", rateIdentity(req, auth), { limit: 12, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
+      const body = await readJson(req);
+      try {
+        validateManagedConnectorStart(body);
+        const { rawToken, connector } = createConnectorToken(auth, body);
+        startManagedConnector(req, rawToken, connector, body);
+        await saveStore();
+        return sendJson(res, 201, {
           connector: publicConnectorToken(connector),
           state: publicState(auth)
         });
@@ -3805,3 +4003,17 @@ server.listen(port, host, () => {
   console.log(`OpenSwarmAgents node listening on http://${host}:${port}`);
   startFederationPeerSync();
 });
+
+function stopManagedConnectorsForShutdown() {
+  for (const connectorId of managedConnectorProcesses.keys()) {
+    stopManagedConnector(connectorId);
+  }
+}
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    stopManagedConnectorsForShutdown();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref?.();
+  });
+}

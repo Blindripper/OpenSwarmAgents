@@ -43,6 +43,7 @@ try {
       OSA_LOCAL_PASSWORD_REQUIRED: "1",
       OSA_DEMO_ENDPOINTS: "0",
       OSA_RATE_LIMIT_MULTIPLIER: "0",
+      OSA_CODEX_COMMAND: `python3 ${fakeCodex} {prompt_file}`,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -56,8 +57,8 @@ try {
     password: "local-password-123",
   });
   const sessionHeaders = { "x-agentswarm-session": login.sessionToken };
-  const token = await postJson(
-    "/api/connectors/token",
+  const started = await postJson(
+    "/api/connectors/start",
     {
       mode: "worker",
       goalId: "goal-agent-collab",
@@ -67,10 +68,10 @@ try {
     },
     sessionHeaders,
   );
+  assert(!started.token, "dashboard-managed connector start should not return a raw connector token");
+  assert(started.connector?.managed?.status === "starting", "managed connector should report initial process status");
 
-  await runConnector(token.token);
-
-  const state = await getJson("/api/state", sessionHeaders);
+  const state = await waitForResult(sessionHeaders);
   const result = state.results.find((item) => item.summary === "Codex CLI adapter smoke result");
   assert(result, "Codex CLI adapter result should be visible in state");
   assert(result.status === "accepted", "solo connector result should be accepted");
@@ -78,37 +79,14 @@ try {
     state.resultPool.some((item) => item.resultId === result.id),
     "accepted connector result should publish into the Result Pool",
   );
+  const revoked = await postJson(`/api/connectors/${started.connector.id}/revoke`, {}, sessionHeaders);
+  assert(revoked.connector.status === "revoked", "managed connector should be revocable from the dashboard");
 
   console.log(`Connector runner E2E passed on ${baseUrl}`);
 } finally {
   if (server) server.kill("SIGTERM");
   await rm(dataDir, { recursive: true, force: true });
   await rm(helperDir, { recursive: true, force: true });
-}
-
-async function runConnector(connectorToken) {
-  const child = spawn(
-    "python3",
-    [
-      "apps/connector/connector.py",
-      "--server",
-      baseUrl,
-      "--connector-token",
-      connectorToken,
-      "--goal",
-      "goal-agent-collab",
-      "--runner",
-      "codex",
-      "--codex-command",
-      `python3 ${fakeCodex} {prompt_file}`,
-      "--no-fallback-to-stub",
-      "--once",
-    ],
-    { cwd: rootDir, stdio: ["ignore", "pipe", "pipe"] },
-  );
-  const output = await waitForExit(child, 20000);
-  assert(output.code === 0, `connector exited with ${output.code}:\n${output.text}`);
-  assert(output.text.includes("submitted result"), `connector should submit a result:\n${output.text}`);
 }
 
 async function waitForHealth(logs) {
@@ -125,6 +103,15 @@ async function waitForHealth(logs) {
     await delay(250);
   }
   throw new Error(`server did not become healthy:\n${logs()}`);
+}
+
+async function waitForResult(headers) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const state = await getJson("/api/state", headers);
+    if (state.results.some((item) => item.summary === "Codex CLI adapter smoke result")) return state;
+    await delay(250);
+  }
+  throw new Error("managed connector did not submit a Codex CLI result");
 }
 
 function collectLogs(child) {
@@ -152,30 +139,6 @@ async function postJson(path, body, headers = {}) {
   });
   if (!response.ok) throw new Error(`${path} failed with ${response.status}: ${await response.text()}`);
   return response.json();
-}
-
-function waitForExit(child, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    let text = "";
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error(`process timed out after ${timeoutMs}ms:\n${text}`));
-    }, timeoutMs);
-    child.stdout.on("data", (chunk) => {
-      text += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      text += chunk.toString();
-    });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on("exit", (code) => {
-      clearTimeout(timer);
-      resolve({ code, text });
-    });
-  });
 }
 
 function assert(condition, message) {

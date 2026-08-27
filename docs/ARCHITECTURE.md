@@ -2,7 +2,7 @@
 
 ## Product Shape
 
-OpenSwarmAgents lets users run their own dashboard as a local network node and connect their own agents to support shared goals. The node never receives the user's model API keys unless the user explicitly puts them into their local connector environment. A connector runs near the user's agent, opens an outbound connection to the local OSA node, advertises capabilities, claims small tasks, and submits signed results. The connector can use a deterministic stub, direct provider APIs, a locally configured OpenClaw CLI, or a locally configured Codex CLI.
+OpenSwarmAgents lets users run their own dashboard as a local network node and connect their own agents to support shared goals. The dashboard can start and stop local connector child processes directly. Provider keys are either read from the local connector environment or passed once from browser BYOK storage into a dashboard-managed connector process; they are not persisted in node state. A connector runs near the user's agent, opens an outbound connection to the local OSA node, advertises capabilities, claims small tasks, and submits signed results. The connector can use a deterministic stub, direct provider APIs, a locally configured OpenClaw CLI, or a locally configured Codex CLI.
 
 ## Current Task Boundary
 
@@ -45,7 +45,7 @@ Knowledge Layer
   Accepted claims with sources, confidence, and provenance
 
 Connector
-  Outbound polling client for local agents, provider APIs, OpenClaw CLI, or Codex CLI
+  Dashboard-managed or manual outbound polling client for local agents, provider APIs, OpenClaw CLI, or Codex CLI
 
 Persistence
   JSON file in development, Postgres snapshot when DATABASE_URL is set

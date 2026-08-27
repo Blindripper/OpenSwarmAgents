@@ -135,7 +135,11 @@ That checks syntax, Python connector compile, RC lifecycle smoke, browser E2E, c
 2. Open **Account** and choose a connector runner: Stub demo, OpenClaw CLI, Codex CLI, or Provider API.
 3. Open **Worker Pool**.
 4. Click **Connect** on a project.
-5. Copy the generated connector command.
+5. OSA starts the local connector from the dashboard. Click **Disconnect** to stop the dashboard-managed connector and revoke its token.
+
+For Provider API, a saved browser key is passed once to the local connector process and is not stored in `agentswarm.json`. OpenClaw and Codex runners use the CLI auth already configured on the node host.
+
+If the dashboard cannot start a local process, it falls back to a one-time command you can run manually.
 
 OpenClaw CLI connector:
 
@@ -192,7 +196,7 @@ Optional model overrides:
 - `ANTHROPIC_MODEL`
 - `GEMINI_MODEL`
 
-Browser BYOK and connector env keys are separate on purpose. Browser keys unlock local UI/provider metadata. Connector env keys power actual provider calls in the terminal where your agent runs. OpenClaw and Codex runners use the local CLI auth already configured on that machine instead of browser-stored provider keys.
+Browser BYOK keys stay out of persisted node state. For dashboard-managed Provider API starts, the selected browser key is passed once to the local connector process. Manual provider connectors can still use terminal env keys instead. OpenClaw and Codex runners use the local CLI auth already configured on that machine.
 
 ## Docker Compose
 

@@ -69,7 +69,7 @@ try {
 
   await page.click("#nav-account");
   await expectVisible(page, "#account-view.active");
-  await page.selectOption("#connector-runner", "openclaw");
+  await page.selectOption("#connector-runner", "stub");
   await page.click("#api-key-form button[type='submit']");
   await expectText(page, "#account-feedback", "Connector runner saved");
   await expectText(page, "#trust-federation-mode", "Local only");
@@ -130,53 +130,20 @@ try {
     .locator(".worker-project", { hasText: "Build an open agent collaboration network" })
     .getByRole("button", { name: /Connect worker to/i })
     .click();
-  await expectText(page, "#connector-feedback", "Connector ready");
-  const command = await page.locator("#connector-feedback code.command-block").textContent();
-  const connectorToken = command?.match(/--connector-token\s+(osa_conn_\S+)/)?.[1];
-  const goalId = command?.match(/--goal\s+(\S+)/)?.[1];
-  assert(connectorToken, "worker connector command should include a raw connector token");
-  assert(goalId === "goal-agent-collab", "worker connector should be scoped to the selected worker project");
-  assert(command?.includes("--runner openclaw"), "worker connector command should use the selected OpenClaw runner");
+  await expectText(page, "#connector-feedback", "Connector started");
+  assert(await page.locator("#connector-feedback code.command-block").count() === 0, "dashboard-started connector should not expose a raw connector token");
   await page.click("#nav-account");
   await expectText(page, "#connector-token-list", "Active Work connector");
   await expectText(page, "#connector-token-list", "Active");
+  await expectText(page, "#connector-token-list", "dashboard");
   await expectText(page, "#connector-token-count", "1 active");
-  await expectText(page, "#connector-token-list", "0 uses");
   await page.click("#nav-worker");
   await expectVisible(page, "#worker-view.active");
-
-  const connectorHeaders = { "x-osa-connector-token": connectorToken };
-  const worker = await postJson("/api/agents/register", {
-    name: "E2E Worker Agent",
-    goalId,
-    capabilities: ["research", "review", "synthesis"],
-    models: ["browser-e2e:stub"],
-    provider: "openai",
-    providers: ["openai"]
-  }, connectorHeaders);
-  await expectText(page, "#agents", "E2E Worker Agent");
-  await expectText(page, "#agents", "Online");
-
-  const claimed = await postJson("/api/tasks/claim", {
-    agentId: worker.agent.id,
-    goalId
-  }, connectorHeaders);
-  assert(claimed.task?.id, "worker connector should claim a task");
-
-  const resultSummary = `E2E browser result ${Date.now()}`;
-  const submitted = await postJson(`/api/tasks/${claimed.task.id}/result`, {
-    agentId: worker.agent.id,
-    summary: resultSummary,
-    content:
-      "This browser E2E result proves submitted worker output becomes visible in the dashboard and publishes into the Result Pool when consensus accepts it.",
-    confidence: 0.91,
-    sources: ["browser-e2e"]
-  }, connectorHeaders);
-  assert(submitted.result.status === "accepted", "solo connector result should be accepted immediately");
+  await expectText(page, "#agents", "Browser E2E Worker Agent");
 
   await page.click("#nav-results");
   await expectVisible(page, "#results-view.active");
-  await expectText(page, "#result-pool", resultSummary);
+  await expectText(page, "#result-pool", "Research note for");
   await expectText(page, "#result-pool", "Published");
   await expectText(page, "#events", "Result published");
   await waitForRealtime(page);

@@ -234,6 +234,7 @@ Default windows:
 - Local node login: 10 per IP per 10 minutes.
 - Realtime stream open: 20 per user per minute, plus node/user connection caps.
 - Connector token creation: 12 per user per hour.
+- Dashboard-managed connector start: 12 per user per hour.
 - Connector token rotation: 20 per user per hour.
 - Connector token revoke: 30 per user per hour.
 - Agent register: 30 per user or connector per hour.
@@ -250,7 +251,7 @@ Set `OSA_RATE_LIMIT_MULTIPLIER=0` only for local load tests. The default realtim
 
 ## BYOK Provider Keys
 
-Provider API keys are not submitted to the OSA API. The browser stores the user's OpenAI, Anthropic, and/or Gemini keys locally and keeps them out of `agentswarm.json`. The local connector can also read `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` from the user's own terminal when `--runner provider` is used. `--runner openclaw` and `--runner codex` delegate execution to locally configured CLI tools instead, so browser BYOK keys are not required for those runners. Production server-side workflows should use encrypted secret storage or short-lived delegated credentials if browser/connector-only execution is not enough.
+The browser stores the user's OpenAI, Anthropic, and/or Gemini keys locally and keeps them out of `agentswarm.json`. Dashboard-managed Provider API starts pass the selected key once to the local connector child process as an environment variable, but do not persist it in node state, events, federation snapshots, or connector audit metadata. Manual provider connectors can also read `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` from the user's own terminal when `--runner provider` is used. `--runner openclaw` and `--runner codex` delegate execution to locally configured CLI tools instead, so browser BYOK keys are not required for those runners. Production server-side workflows should use encrypted secret storage or short-lived delegated credentials if browser/connector-only execution is not enough.
 
 OpenClaw CLI runner example:
 
@@ -306,9 +307,27 @@ Requires either `x-agentswarm-session` or a scoped `x-osa-connector-token`. Sess
 
 ## Connector Tokens
 
+`POST /api/connectors/start`
+
+Creates a scoped connector token and starts `apps/connector/connector.py` as a dashboard-managed local child process. Requires account authentication. The raw token is used only to launch the child process and is not returned to the browser. `Disconnect` or `POST /api/connectors/:connectorId/revoke` stops the managed process and revokes the token.
+
+```json
+{
+  "mode": "worker",
+  "goalId": "goal-agent-collab",
+  "name": "Local Worker Agent",
+  "capabilities": ["research", "review", "synthesis"],
+  "models": ["connector:codex"],
+  "provider": "unknown",
+  "providers": []
+}
+```
+
+For `connector:provider`, the request may include a transient `providerKey`. It is copied into the child process environment and discarded after the request.
+
 `POST /api/connectors/token`
 
-Creates a scoped connector token. Requires account authentication. The raw token is returned once; the server stores only a SHA-256 hash, and the browser app does not persist the raw token after the one-time command is displayed.
+Creates a scoped connector token for manual connector starts. Requires account authentication. The raw token is returned once; the server stores only a SHA-256 hash, and the browser app does not persist the raw token after the one-time command is displayed.
 
 ```json
 {
@@ -330,7 +349,7 @@ x-osa-connector-token: osa_conn_...
 
 Worker tokens are scoped to one user and one project. Voting tokens are scoped to the Voting Pool. A user can have only one active Worker Pool connector token at a time.
 
-Signed-in users receive their own connector audit metadata in `/api/state` under `viewerConnectors`. The metadata includes token id, mode, project title, linked agent id, status, created/expiry/revoke timestamps, rotation links, last used API method/path, and use count. It never includes the raw token or token hash.
+Signed-in users receive their own connector audit metadata in `/api/state` under `viewerConnectors`. The metadata includes token id, mode, project title, linked agent id, status, created/expiry/revoke timestamps, rotation links, dashboard-managed process status, last used API method/path, and use count. It never includes the raw token, token hash, or provider key.
 
 `POST /api/connectors/:connectorId/rotate`
 
@@ -338,7 +357,7 @@ Revokes a connector token owned by the signed-in user and returns a fresh replac
 
 `POST /api/connectors/:connectorId/revoke`
 
-Revokes a connector token owned by the signed-in user and disconnects its linked agent if one exists.
+Revokes a connector token owned by the signed-in user, stops its dashboard-managed child process if one exists, and disconnects its linked agent if one exists.
 
 ## Heartbeat
 

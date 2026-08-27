@@ -332,7 +332,7 @@ els.apiKeyForm.addEventListener("submit", (event) => {
   }
   localStorage.setItem("agentswarmProviderKeys", JSON.stringify(next));
   clearProviderInputs();
-  showAccountFeedback("Provider keys saved locally", "Keys are stored only in this browser and were not sent to the OSA server.");
+  showAccountFeedback("Provider keys saved locally", "Keys are stored in this browser. Starting a provider connector passes the selected key once to the local worker process.");
   render();
 });
 
@@ -604,12 +604,33 @@ async function connectWorkerGoal(goal) {
   if (runner === "provider" && !requireProviderKey("Add at least one provider API key before using the provider connector runner.")) return;
   if (localStorage.getItem("agentswarmWorkerGoalId")) return;
   showConnectorFeedback({
-    title: "Creating connector token",
-    reason: `Preparing a scoped connector command for ${goal.title}.`
+    title: "Starting connector",
+    reason: `Starting a local worker for ${goal.title}.`
   });
+  const providerKey = runner === "provider" ? providerKeyring()[preferredProvider()] : "";
+  const payload = connectorRequestPayload(goal, runner);
+  try {
+    const response = await post("/api/connectors/start", {
+      ...payload,
+      providerKey
+    });
+    localStorage.setItem("agentswarmWorkerConnectorId", response.connector.id);
+    localStorage.setItem("agentswarmWorkerGoalId", goal.id);
+    state.selectedGoalId = goal.id;
+    showConnectorFeedback({
+      title: `Connector started for ${goal.title}`,
+      reason: dashboardConnectorReason(runner)
+    });
+    await refresh();
+  } catch (startError) {
+    await createManualConnectorFallback(goal, runner, payload, startError);
+  }
+}
+
+function connectorRequestPayload(goal, runner = selectedConnectorRunner()) {
   const provider = runner === "provider" ? preferredProvider() : "unknown";
   const providers = runner === "provider" ? enabledProviders() : [];
-  const response = await post("/api/connectors/token", {
+  return {
     mode: "worker",
     name: `${state.user?.name || "Local"} Worker Agent`,
     goalId: goal.id,
@@ -617,16 +638,27 @@ async function connectWorkerGoal(goal) {
     models: [`connector:${runner}`],
     provider,
     providers
-  });
-  localStorage.setItem("agentswarmWorkerConnectorId", response.connector.id);
-  localStorage.setItem("agentswarmWorkerGoalId", goal.id);
-  state.selectedGoalId = goal.id;
-  showConnectorFeedback({
-    title: `Connector ready for ${goal.title}`,
-    reason: connectorReason(runner),
-    command: connectorCommand(response.token, goal.id, runner)
-  });
-  await refresh();
+  };
+}
+
+async function createManualConnectorFallback(goal, runner, payload, startError) {
+  try {
+    const response = await post("/api/connectors/token", payload);
+    localStorage.setItem("agentswarmWorkerConnectorId", response.connector.id);
+    localStorage.setItem("agentswarmWorkerGoalId", goal.id);
+    state.selectedGoalId = goal.id;
+    showConnectorFeedback({
+      title: `Manual start required for ${goal.title}`,
+      reason: `${startError.message || "The dashboard could not start the local connector."} ${connectorReason(runner)}`,
+      command: connectorCommand(response.token, goal.id, runner)
+    });
+    await refresh();
+  } catch (fallbackError) {
+    showConnectorFeedback({
+      title: "Connector start failed",
+      reason: fallbackError.message || startError.message || "The connector could not be started."
+    });
+  }
 }
 
 async function disconnectWorkerGoal(goal) {
@@ -643,7 +675,7 @@ async function disconnectWorkerGoal(goal) {
   localStorage.removeItem("agentswarmWorkerConnectorId");
   localStorage.removeItem("agentswarmWorkerGoalId");
   showConnectorFeedback({
-    title: "Connector disconnected",
+    title: "Connector stopped",
     reason: `${goal.title} is no longer linked to this browser.`
   });
   await refresh();
@@ -707,6 +739,19 @@ function connectorReason(runner = selectedConnectorRunner()) {
   return "Run this no-key demo connector to exercise the local OSA task, result, review, and publication loop. The raw token is shown only once.";
 }
 
+function dashboardConnectorReason(runner = selectedConnectorRunner()) {
+  if (runner === "provider") {
+    return "OSA started the local provider connector. The selected provider key was passed only to this local process and was not saved in OSA state.";
+  }
+  if (runner === "openclaw") {
+    return "OSA started the local OpenClaw connector on this node. Use Disconnect to stop it.";
+  }
+  if (runner === "codex") {
+    return "OSA started the local Codex connector on this node. Use Disconnect to stop it.";
+  }
+  return "OSA started the local demo connector on this node. Use Disconnect to stop it.";
+}
+
 function showConnectorFeedback({ title, reason, command = "" }) {
   els.connectorFeedback.classList.remove("hidden");
   els.connectorFeedback.innerHTML = `
@@ -758,6 +803,14 @@ function renderStoredConnectorFeedback() {
   const connectorId = localStorage.getItem("agentswarmWorkerConnectorId");
   const goal = state.data.goals.find((item) => item.id === goalId);
   if (!goalId || !connectorId || !goal) return;
+  const connector = (state.data.viewerConnectors || []).find((item) => item.id === connectorId);
+  if (connector?.managed && ["starting", "running"].includes(connector.managed.status)) {
+    showConnectorFeedback({
+      title: `Connector ${connector.managed.status} for ${goal.title}`,
+      reason: "This worker was started from the dashboard. Use Disconnect to stop it."
+    });
+    return;
+  }
   showConnectorFeedback({
     title: `Connector exists for ${goal.title}`,
     reason: "The raw connector token was shown only when it was created and is not stored in this browser. Disconnect and reconnect to rotate the token and generate a fresh command."
@@ -820,6 +873,7 @@ function renderConnectorTokens() {
         </div>
         <p>${escapeHtml(connectorModeLabel(connector))} · ${escapeHtml(connector.goalTitle || connector.goalId || "Unknown project")}</p>
         <div class="chips connector-token-meta">
+          ${connector.managed ? `<span class="chip">dashboard ${escapeHtml(statusLabel(connector.managed.status))}</span>` : ""}
           <span class="chip">created ${escapeHtml(formatRelativeTime(connector.createdAt))}</span>
           <span class="chip">${Number(connector.useCount || 0)} ${plural("use", Number(connector.useCount || 0))}</span>
           <span class="chip">last ${escapeHtml(connector.lastUsedAt ? formatRelativeTime(connector.lastUsedAt) : "never")}</span>
@@ -837,7 +891,7 @@ function renderConnectorTokens() {
     `,
     {
       title: "No connector tokens yet",
-      detail: "Connect a worker project to create a scoped one-time connector command."
+      detail: "Connect a worker project to start a local worker."
     }
   );
 }
@@ -1070,9 +1124,9 @@ function renderMetrics() {
 }
 
 function workerNextAction(stats) {
-  if (stats.pendingReviews > 0) return "Review results";
-  if (stats.openTasks > 0 && stats.onlineAgents === 0) return "Connect worker";
-  if (stats.openTasks > 0) return "Watch agents";
+  if (stats.pendingReviews > 0) return "Review";
+  if (stats.openTasks > 0 && stats.onlineAgents === 0) return "Start";
+  if (stats.openTasks > 0) return "Watch";
   if (activeWorkerGoals().length > 0) return "Ready";
   return "Add idea";
 }
@@ -1195,7 +1249,7 @@ function renderWorkerProjects(goals) {
             <span>${connectedWorkers} connected workers · ${projectTasks.length} tasks</span>
           </button>
           <div class="worker-project-actions">
-            <button class="project-connect primary" type="button" aria-label="Connect worker to ${escapeHtml(goal.title)}" ${hasConnection ? "disabled" : ""}>Connect</button>
+            <button class="project-connect primary" type="button" aria-label="Connect worker to ${escapeHtml(goal.title)}" ${hasConnection ? "disabled" : ""}>${isConnected ? "Connected" : "Connect"}</button>
             <button class="project-disconnect" type="button" aria-label="Disconnect worker from ${escapeHtml(goal.title)}" ${isConnected ? "" : "disabled"}>Disconnect</button>
           </div>
         </div>
@@ -1774,7 +1828,13 @@ function statusLabel(status) {
     voting: "Voting",
     active: "Active",
     expired: "Expired",
-    revoked: "Revoked"
+    revoked: "Revoked",
+    starting: "Starting",
+    running: "Running",
+    stopping: "Stopping",
+    stopped: "Stopped",
+    exited: "Exited",
+    failed: "Failed"
   }[status] || String(status || "Unknown").replaceAll("_", " ");
 }
 
@@ -1794,9 +1854,12 @@ function eventTitle(event) {
     goal_completed: "Project completed",
     federation_imported: "Peer update imported",
     artifact_uploaded: "Artifact uploaded",
-    connector_token_created: "Connector command created",
+    connector_token_created: "Connector token created",
     connector_token_revoked: "Connector disconnected",
     connector_token_expired: "Connector expired",
+    managed_connector_started: "Connector started",
+    managed_connector_exited: "Connector stopped",
+    managed_connector_failed: "Connector failed",
     user_created: "User signed in",
     user_signed_in: "User signed in"
   }[event.type] || statusLabel(event.type);
