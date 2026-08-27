@@ -1160,8 +1160,45 @@ button:disabled {
   padding: 14px;
 }
 
+.connector-audit-panel,
 .trust-ledger-panel {
   grid-column: 1 / -1;
+}
+
+.connector-token-list {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.connector-token-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.connector-token-row .item-head,
+.connector-token-row p,
+.connector-token-row .connector-token-meta {
+  grid-column: 1;
+}
+
+.connector-token-actions {
+  display: grid;
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  grid-template-columns: 94px;
+  gap: 6px;
+}
+
+.connector-token-actions button {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.connector-token-meta .chip {
+  max-width: 100%;
 }
 
 .trust-summary {
@@ -1667,14 +1704,17 @@ button:disabled {
 
 .chip.done,
 .chip.accepted,
-.chip.online {
+.chip.online,
+.chip.active {
   border-color: color-mix(in srgb, var(--success) 28%, transparent);
   background: var(--success-soft);
   color: var(--success);
 }
 
 .chip.rejected,
-.chip.offline {
+.chip.offline,
+.chip.revoked,
+.chip.expired {
   border-color: color-mix(in srgb, var(--danger) 28%, transparent);
   background: var(--danger-soft);
   color: var(--danger);
@@ -1894,6 +1934,22 @@ button:disabled {
   }
 
   .worker-project-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .connector-token-row {
+    grid-template-columns: 1fr;
+  }
+
+  .connector-token-actions,
+  .connector-token-row .item-head,
+  .connector-token-row p,
+  .connector-token-row .connector-token-meta {
+    grid-column: 1;
+  }
+
+  .connector-token-actions {
+    grid-row: auto;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

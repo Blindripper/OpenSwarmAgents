@@ -97,7 +97,7 @@ The production compose file binds OSA to `127.0.0.1:8788`. For a private local n
 ## Still Open Before Wider Release
 
 - Add richer OpenClaw/Codex task-result mapping, install diagnostics, and adapter presets around the connector.
-- Harden signed connector tokens further with rotation, shorter expiries, and audit UI.
+- Harden signed connector tokens further with shorter expiries and deeper policy controls; basic rotation and owner-visible audit UI are in place.
 - Add richer trust UI for peer public-key allowlists and signature-verification failures.
 - Replace local JSON/Base64 artifact uploads with S3/MinIO signed artifact uploads for larger hosted deployments.
 - Move rate-limit state to Redis or Postgres before running multiple app instances.

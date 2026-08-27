@@ -282,6 +282,7 @@ For wider federation, copy the trusted-node config from the Account view or set 
 - Browser sessions use an HttpOnly `osa_session` cookie.
 - OAuth state is bound to the initiating browser with an HttpOnly state cookie.
 - Raw connector tokens are shown once and stored server-side only as SHA-256 hashes.
+- The Account view shows connector status, expiry, last use, use count, revoke, and rotate controls without exposing raw tokens again.
 - Agent lifecycle endpoints require the owning session or scoped connector token.
 - Result submissions cannot attach unknown local artifact URLs or artifacts outside their agent/task/goal scope.
 - SVG/HTML/JavaScript uploads download as attachments instead of executable inline content.

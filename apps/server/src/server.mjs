@@ -127,7 +127,7 @@ function normalizeStore(input) {
     claims: input.claims || [],
     users: input.users || [],
     sessions: input.sessions || [],
-    connectorTokens: input.connectorTokens || [],
+    connectorTokens: normalizeConnectorTokens(input.connectorTokens || []),
     uploadedArtifacts: input.uploadedArtifacts || [],
     trustLedger: normalizeTrustLedger(input.trustLedger || []),
     resultPool: input.resultPool || buildResultPoolFromAccepted(goals, tasks, results, reviews),
@@ -154,6 +154,26 @@ function normalizeTrustLedger(entries) {
       signature: entry.signature,
       createdAt: entry.createdAt || now()
     }));
+}
+
+function normalizeConnectorTokens(tokens) {
+  return tokens.map((token) => ({
+    ...token,
+    status: token.status || "active",
+    providers: token.providers || [],
+    capabilities: token.capabilities || [],
+    models: token.models || [],
+    useCount: Number(token.useCount || 0),
+    lastUsedAt: token.lastUsedAt || null,
+    lastUsedMethod: token.lastUsedMethod || null,
+    lastUsedPath: token.lastUsedPath || null,
+    expiresAt: token.expiresAt || null,
+    expiredAt: token.expiredAt || null,
+    revokedAt: token.revokedAt || null,
+    revokedReason: token.revokedReason || null,
+    rotatedFromId: token.rotatedFromId || null,
+    rotatedToId: token.rotatedToId || null
+  }));
 }
 
 async function saveStore(next = store) {
@@ -721,15 +741,21 @@ function connectorTokenFromReq(req) {
   const connector = store.connectorTokens.find((item) => item.tokenHash === hashToken(token));
   if (!connector || connector.status !== "active") return null;
   if (connector.expiresAt && Date.parse(connector.expiresAt) < Date.now()) {
-    connector.status = "expired";
-    connector.expiredAt = now();
+    expireConnectorToken(connector);
     return null;
   }
   const user = store.users.find((item) => item.id === connector.userId);
   if (!user) return null;
-  connector.lastUsedAt = now();
+  touchConnectorToken(connector, req);
   user.lastSeen = now();
   return { token: connector, user };
+}
+
+function touchConnectorToken(connector, req) {
+  connector.lastUsedAt = now();
+  connector.lastUsedMethod = String(req.method || "GET").slice(0, 12);
+  connector.lastUsedPath = String(req.url || "").split("?")[0].slice(0, 160);
+  connector.useCount = Number(connector.useCount || 0) + 1;
 }
 
 function authorizeConnectorAgent(req, agent) {
@@ -1607,8 +1633,15 @@ function publicConnectorToken(token) {
     providers: token.providers || [],
     createdAt: token.createdAt,
     lastUsedAt: token.lastUsedAt || null,
+    lastUsedMethod: token.lastUsedMethod || null,
+    lastUsedPath: token.lastUsedPath || null,
+    useCount: Number(token.useCount || 0),
     expiresAt: token.expiresAt || null,
-    revokedAt: token.revokedAt || null
+    expiredAt: token.expiredAt || null,
+    revokedAt: token.revokedAt || null,
+    revokedReason: token.revokedReason || null,
+    rotatedFromId: token.rotatedFromId || null,
+    rotatedToId: token.rotatedToId || null
   };
 }
 
@@ -1928,6 +1961,18 @@ function recoverExpiredLeases() {
   return changed;
 }
 
+function recoverExpiredConnectorTokens() {
+  let changed = false;
+  const timestamp = Date.now();
+  for (const connector of store.connectorTokens) {
+    if (connector.status === "active" && connector.expiresAt && Date.parse(connector.expiresAt) < timestamp) {
+      expireConnectorToken(connector);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function createConnectorToken(auth, body) {
   const mode = body.mode === "voting" ? "voting" : "worker";
   const goalId = mode === "voting" ? "voting-pool" : String(body.goalId || "");
@@ -1945,16 +1990,14 @@ function createConnectorToken(auth, body) {
       throw new Error("User is already connected to another worker project");
     }
     if (activeToken && activeToken.goalId === goalId) {
-      activeToken.status = "revoked";
-      activeToken.revokedAt = now();
+      revokeConnectorToken(activeToken, body.revokeExistingReason || "token_replaced");
     }
   }
 
   if (mode === "voting") {
     for (const token of store.connectorTokens) {
       if (token.userId === auth.user.id && token.mode === "voting" && token.status === "active") {
-        token.status = "revoked";
-        token.revokedAt = now();
+        revokeConnectorToken(token, body.revokeExistingReason || "token_replaced");
       }
     }
   }
@@ -1975,9 +2018,21 @@ function createConnectorToken(auth, body) {
     status: "active",
     createdAt: now(),
     lastUsedAt: null,
-    expiresAt: body.expiresAt || afterMs(now(), 30 * 24 * 60 * 60 * 1000)
+    lastUsedMethod: null,
+    lastUsedPath: null,
+    useCount: 0,
+    expiresAt: body.expiresAt || afterMs(now(), 30 * 24 * 60 * 60 * 1000),
+    expiredAt: null,
+    revokedAt: null,
+    revokedReason: null,
+    rotatedFromId: body.rotatedFromId || null,
+    rotatedToId: null
   };
   store.connectorTokens.push(connector);
+  if (connector.rotatedFromId) {
+    const previous = store.connectorTokens.find((token) => token.id === connector.rotatedFromId);
+    if (previous) previous.rotatedToId = connector.id;
+  }
   event("connector_token_created", `${auth.user.name} created a ${mode} connector token`, {
     connectorId: connector.id,
     mode,
@@ -1986,9 +2041,39 @@ function createConnectorToken(auth, body) {
   return { rawToken, connector };
 }
 
+function rotateConnectorToken(auth, connector) {
+  if (connector.status === "active") revokeConnectorToken(connector, "rotated");
+  return createConnectorToken(auth, {
+    mode: connector.mode,
+    goalId: connector.goalId,
+    name: connector.name,
+    capabilities: connector.capabilities || [],
+    models: connector.models || [],
+    provider: connector.provider,
+    providers: connector.providers || [],
+    expiresAt: afterMs(now(), 30 * 24 * 60 * 60 * 1000),
+    rotatedFromId: connector.id,
+    revokeExistingReason: "rotated"
+  });
+}
+
+function expireConnectorToken(connector) {
+  if (connector.status === "expired") return;
+  connector.status = "expired";
+  connector.expiredAt = now();
+  connector.revokedReason = null;
+  event("connector_token_expired", `Connector token expired`, {
+    connectorId: connector.id,
+    agentId: connector.agentId || null,
+    goalId: connector.goalId
+  });
+}
+
 function revokeConnectorToken(connector, reason = "user_disconnect") {
+  if (connector.status === "revoked") return null;
   connector.status = "revoked";
   connector.revokedAt = now();
+  connector.revokedReason = reason;
   const agent = connector.agentId ? findAgent(connector.agentId) : null;
   if (agent) {
     agent.status = "offline";
@@ -2476,6 +2561,29 @@ async function handleApi(req, res, url) {
       return sendJson(res, 201, { artifact: publicArtifact(artifact), state: publicState(auth) });
     }
 
+    const connectorRotateMatch = path.match(/^\/api\/connectors\/([^/]+)\/rotate$/);
+    if (method === "POST" && connectorRotateMatch) {
+      const auth = authFromReq(req);
+      if (!auth) return unauthorized(res, "Sign in before rotating connector tokens");
+      if (!enforceRateLimit(req, res, "connector-token-rotate", rateIdentity(req, auth), { limit: 20, windowMs: 60 * 60 * 1000 })) {
+        return;
+      }
+      const connector = store.connectorTokens.find((item) => item.id === connectorRotateMatch[1]);
+      if (!connector || connector.userId !== auth.user.id) return notFound(res);
+      try {
+        const rotated = rotateConnectorToken(auth, connector);
+        await saveStore();
+        return sendJson(res, 201, {
+          token: rotated.rawToken,
+          connector: publicConnectorToken(rotated.connector),
+          previousConnector: publicConnectorToken(connector),
+          state: publicState(auth)
+        });
+      } catch (error) {
+        return badRequest(res, error.message);
+      }
+    }
+
     const connectorRevokeMatch = path.match(/^\/api\/connectors\/([^/]+)\/revoke$/);
     if (method === "POST" && connectorRevokeMatch) {
       const auth = authFromReq(req);
@@ -2950,6 +3058,7 @@ function topExpiredVotingProposal() {
 function runMaintenance() {
   let changed = false;
   changed = recoverExpiredLeases() || changed;
+  changed = recoverExpiredConnectorTokens() || changed;
   changed = autoPromoteExpiredWinner() || changed;
   return changed;
 }

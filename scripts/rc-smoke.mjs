@@ -141,6 +141,35 @@ try {
   });
   await expectStatus(`/api/agents/${vote.agent.id}/heartbeat`, 200, {}, headers);
 
+  const votingConnector = await postJson(
+    "/api/connectors/token",
+    {
+      mode: "voting",
+      name: "RC Voting Connector",
+      models: ["connector:stub"]
+    },
+    headers
+  );
+  assert(votingConnector.token.startsWith("osa_conn_"), "voting connector token should be returned once");
+  const votingConnectorHeaders = { "x-osa-connector-token": votingConnector.token };
+  await postJson(
+    "/api/voting/connect",
+    {
+      name: "RC Voting Connector",
+      models: ["connector:stub"]
+    },
+    votingConnectorHeaders
+  );
+  const connectorAuditState = await getJson("/api/state", headers);
+  const usedVotingConnector = connectorAuditState.viewerConnectors.find((item) => item.id === votingConnector.connector.id);
+  assert(usedVotingConnector?.useCount >= 1, "connector audit should count scoped token use");
+  assert(usedVotingConnector?.lastUsedPath === "/api/voting/connect", "connector audit should record the last used API path");
+  const rotatedVotingConnector = await postJson(`/api/connectors/${votingConnector.connector.id}/rotate`, {}, headers);
+  assert(rotatedVotingConnector.token.startsWith("osa_conn_"), "rotated connector should return a fresh raw token once");
+  assert(rotatedVotingConnector.connector.rotatedFromId === votingConnector.connector.id, "rotated connector should link to previous token");
+  assert(rotatedVotingConnector.previousConnector.revokedReason === "rotated", "previous connector should record rotation as the revoke reason");
+  await expectStatus("/api/voting/connect", 401, { name: "Old voting connector should fail" }, votingConnectorHeaders);
+
   const workerToken = await postJson(
     "/api/connectors/token",
     {

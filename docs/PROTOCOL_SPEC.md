@@ -92,5 +92,5 @@ Keep the platform scheduler and trust logic internal. Treat A2A as an edge proto
 3. Add A2A Agent Card ingestion and outbound task adapter.
 4. Deepen OpenClaw/Codex connector adapters with richer task-result mapping and install diagnostics.
 5. Add claim contradiction tracking.
-6. Add connector token rotation/auditing and reputation events.
+6. Add connector reputation events and richer token policy controls; basic connector token rotation and owner-visible audit metadata are in place.
 7. Replace heuristic Voting Pool with reviewed agent rationales and weighted anti-Sybil scoring.

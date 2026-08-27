@@ -113,6 +113,8 @@ const els = {
   apiProviderDefault: document.querySelector("#api-provider-default"),
   apiKeyStatus: document.querySelector("#api-key-status"),
   apiKeyClear: document.querySelector("#api-key-clear"),
+  connectorTokenCount: document.querySelector("#connector-token-count"),
+  connectorTokenList: document.querySelector("#connector-token-list"),
   trustEventCount: document.querySelector("#trust-event-count"),
   trustNodeId: document.querySelector("#trust-node-id"),
   trustHeadHash: document.querySelector("#trust-head-hash"),
@@ -139,6 +141,7 @@ els.donateButton.addEventListener("click", () => donateEth());
 els.trustCopyPeer.addEventListener("click", () => copyTrustPeerJson());
 els.trustPeerInput.addEventListener("input", () => renderPeerTrustConfig());
 els.trustCopyConfig.addEventListener("click", () => copyPeerTrustConfig());
+els.connectorTokenList.addEventListener("click", (event) => handleConnectorTokenAction(event));
 
 els.authDevForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -669,6 +672,34 @@ function connectorCommand(token, goalId, runner = selectedConnectorRunner()) {
   return `${base} --runner stub`;
 }
 
+function connectorCommandForToken(token, connector) {
+  const runner = connectorRunnerFromMetadata(connector);
+  const goalFlag = connector.mode === "voting" ? "--voting-pool" : `--goal ${connector.goalId}`;
+  const base = `python3 apps/connector/connector.py --server ${window.location.origin} --connector-token ${token} ${goalFlag}`;
+  if (runner === "provider") {
+    const provider = connector.provider && connector.provider !== "unknown" ? connector.provider : preferredProvider();
+    const providers = (connector.providers?.length ? connector.providers : [provider]).join(",");
+    return `${base} --runner provider --provider ${provider} --providers ${providers} --no-fallback-to-stub`;
+  }
+  if (runner === "openclaw") {
+    return `${base} --runner openclaw --agent-name "${escapeShellDouble(connector.name || "Local OpenClaw Agent")}"`;
+  }
+  if (runner === "codex") {
+    return `${base} --runner codex --agent-name "${escapeShellDouble(connector.name || "Local Codex Agent")}"`;
+  }
+  return `${base} --runner stub`;
+}
+
+function connectorRunnerFromMetadata(connector) {
+  const model = (connector.models || []).find((item) => String(item).startsWith("connector:"));
+  const runner = String(model || "").replace("connector:", "");
+  return CONNECTOR_RUNNERS.includes(runner) ? runner : selectedConnectorRunner();
+}
+
+function escapeShellDouble(value) {
+  return String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("$", "\\$").replaceAll("`", "\\`");
+}
+
 function connectorReason(runner = selectedConnectorRunner()) {
   if (runner === "provider") {
     return `Run this command on the machine where your agent should work. Set ${providerEnvName(preferredProvider())} in that terminal first. The raw token is shown only once.`;
@@ -775,17 +806,101 @@ function renderAccount() {
     els.accountEmail.value = user.email || "";
     els.accountName.value = user.name || "";
   }
+  renderConnectorTokens();
 }
 
-function showAccountFeedback(title, reason) {
+function renderConnectorTokens() {
+  const connectors = state.data.viewerConnectors || [];
+  const activeCount = connectors.filter((connector) => connector.status === "active").length;
+  els.connectorTokenCount.textContent = connectors.length
+    ? `${activeCount} active · ${connectors.length} total`
+    : "No tokens";
+  renderList(
+    els.connectorTokenList,
+    connectors,
+    (connector) => `
+      <div class="connector-token-row item">
+        <div class="item-head">
+          <strong>${escapeHtml(connector.name || "Connector")}</strong>
+          <span class="chip ${escapeHtml(connector.status)}">${escapeHtml(statusLabel(connector.status))}</span>
+        </div>
+        <p>${escapeHtml(connectorModeLabel(connector))} · ${escapeHtml(connector.goalTitle || connector.goalId || "Unknown project")}</p>
+        <div class="chips connector-token-meta">
+          <span class="chip">created ${escapeHtml(formatRelativeTime(connector.createdAt))}</span>
+          <span class="chip">${Number(connector.useCount || 0)} ${plural("use", Number(connector.useCount || 0))}</span>
+          <span class="chip">last ${escapeHtml(connector.lastUsedAt ? formatRelativeTime(connector.lastUsedAt) : "never")}</span>
+          <span class="chip">expires ${escapeHtml(formatRelativeTime(connector.expiresAt))}</span>
+          ${connector.lastUsedPath ? `<span class="chip">${escapeHtml(connector.lastUsedMethod || "GET")} ${escapeHtml(connector.lastUsedPath)}</span>` : ""}
+          ${connector.revokedReason ? `<span class="chip">reason ${escapeHtml(connector.revokedReason)}</span>` : ""}
+          ${connector.rotatedFromId ? `<span class="chip">rotated from ${escapeHtml(shortHash(connector.rotatedFromId))}</span>` : ""}
+          ${connector.rotatedToId ? `<span class="chip">rotated to ${escapeHtml(shortHash(connector.rotatedToId))}</span>` : ""}
+        </div>
+        <div class="connector-token-actions">
+          <button type="button" data-connector-action="rotate" data-connector-id="${escapeHtml(connector.id)}">Rotate</button>
+          <button type="button" data-connector-action="revoke" data-connector-id="${escapeHtml(connector.id)}" ${connector.status === "active" ? "" : "disabled"}>Revoke</button>
+        </div>
+      </div>
+    `,
+    {
+      title: "No connector tokens yet",
+      detail: "Connect a worker project to create a scoped one-time connector command."
+    }
+  );
+}
+
+function connectorModeLabel(connector) {
+  return connector.mode === "voting" ? "Project Votes connector" : "Active Work connector";
+}
+
+async function handleConnectorTokenAction(event) {
+  const button = event.target.closest("[data-connector-action]");
+  if (!button) return;
+  const connectorId = button.dataset.connectorId;
+  const action = button.dataset.connectorAction;
+  if (!connectorId || !["rotate", "revoke"].includes(action)) return;
+  button.disabled = true;
+  try {
+    const response = await post(`/api/connectors/${connectorId}/${action}`, {});
+    state.data = response.state || state.data;
+    if (action === "rotate") {
+      const connector = response.connector;
+      const command = connectorCommandForToken(response.token, connector);
+      showAccountFeedback("Connector rotated", "Use this fresh connector command. The previous token is now revoked.", command);
+    } else {
+      if (localStorage.getItem("agentswarmWorkerConnectorId") === connectorId) {
+        localStorage.removeItem("agentswarmWorkerAgentId");
+        localStorage.removeItem("agentswarmWorkerConnectorId");
+        localStorage.removeItem("agentswarmWorkerGoalId");
+      }
+      showAccountFeedback("Connector revoked", "The connector token can no longer control its linked agent.");
+    }
+    render();
+  } catch (error) {
+    showAccountFeedback("Connector action failed", error.message || "The connector token could not be updated.");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function showAccountFeedback(title, reason, command = "") {
   els.accountFeedback.classList.remove("hidden");
   els.accountFeedback.innerHTML = `
     <div>
       <span class="section-label">Account</span>
       <strong>${escapeHtml(title)}</strong>
       <p>${escapeHtml(reason)}</p>
+      ${
+        command
+          ? `<div class="command-shell"><code class="command-block">${escapeHtml(command)}</code><button class="copy-command" type="button">Copy command</button></div>`
+          : ""
+      }
     </div>
   `;
+  const copyButton = els.accountFeedback.querySelector(".copy-command");
+  const commandBlock = els.accountFeedback.querySelector(".command-block");
+  if (copyButton && commandBlock) {
+    copyButton.addEventListener("click", () => copyText(copyButton, commandBlock.textContent || ""));
+  }
 }
 
 function showAuthFeedback(title, reason) {
@@ -1246,6 +1361,26 @@ function formatBytes(bytes) {
   return `${size >= 10 || unitIndex === 0 ? Math.round(size) : size.toFixed(1)} ${units[unitIndex]}`;
 }
 
+function formatRelativeTime(iso) {
+  if (!iso) return "never";
+  const timestamp = Date.parse(iso);
+  if (!Number.isFinite(timestamp)) return "unknown";
+  const diffMs = timestamp - Date.now();
+  const absMs = Math.abs(diffMs);
+  const units = [
+    ["day", 24 * 60 * 60 * 1000],
+    ["hour", 60 * 60 * 1000],
+    ["minute", 60 * 1000]
+  ];
+  for (const [label, size] of units) {
+    if (absMs >= size) {
+      const value = Math.round(absMs / size);
+      return diffMs < 0 ? `${value} ${plural(label, value)} ago` : `in ${value} ${plural(label, value)}`;
+    }
+  }
+  return diffMs < 0 ? "just now" : "soon";
+}
+
 function shortHash(value) {
   const text = String(value || "");
   if (text.length <= 18) return text;
@@ -1509,7 +1644,10 @@ function filteredEvents() {
     "goal_completed",
     "agents_disconnected",
     "federation_imported",
-    "artifact_uploaded"
+    "artifact_uploaded",
+    "connector_token_created",
+    "connector_token_revoked",
+    "connector_token_expired"
   ]);
   if (state.view === "voting") {
     return state.data.events
@@ -1596,7 +1734,10 @@ function statusLabel(status) {
     rejected: "Rejected",
     online: "Online",
     offline: "Offline",
-    voting: "Voting"
+    voting: "Voting",
+    active: "Active",
+    expired: "Expired",
+    revoked: "Revoked"
   }[status] || String(status || "Unknown").replaceAll("_", " ");
 }
 
@@ -1618,6 +1759,7 @@ function eventTitle(event) {
     artifact_uploaded: "Artifact uploaded",
     connector_token_created: "Connector command created",
     connector_token_revoked: "Connector disconnected",
+    connector_token_expired: "Connector expired",
     user_created: "User signed in",
     user_signed_in: "User signed in"
   }[event.type] || statusLabel(event.type);

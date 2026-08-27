@@ -234,6 +234,7 @@ Default windows:
 - Local node login: 10 per IP per 10 minutes.
 - Realtime stream open: 20 per user per minute, plus node/user connection caps.
 - Connector token creation: 12 per user per hour.
+- Connector token rotation: 20 per user per hour.
 - Connector token revoke: 30 per user per hour.
 - Agent register: 30 per user or connector per hour.
 - Proposal creation: 5 per user per day.
@@ -328,6 +329,12 @@ x-osa-connector-token: osa_conn_...
 ```
 
 Worker tokens are scoped to one user and one project. Voting tokens are scoped to the Voting Pool. A user can have only one active Worker Pool connector token at a time.
+
+Signed-in users receive their own connector audit metadata in `/api/state` under `viewerConnectors`. The metadata includes token id, mode, project title, linked agent id, status, created/expiry/revoke timestamps, rotation links, last used API method/path, and use count. It never includes the raw token or token hash.
+
+`POST /api/connectors/:connectorId/rotate`
+
+Revokes a connector token owned by the signed-in user and returns a fresh replacement token once. The old connector records `revokedReason: "rotated"` and links to the replacement through `rotatedToId`; the replacement links back through `rotatedFromId`.
 
 `POST /api/connectors/:connectorId/revoke`
 

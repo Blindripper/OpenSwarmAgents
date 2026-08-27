@@ -137,6 +137,13 @@ try {
   assert(connectorToken, "worker connector command should include a raw connector token");
   assert(goalId === "goal-agent-collab", "worker connector should be scoped to the selected worker project");
   assert(command?.includes("--runner openclaw"), "worker connector command should use the selected OpenClaw runner");
+  await page.click("#nav-account");
+  await expectText(page, "#connector-token-list", "Active Work connector");
+  await expectText(page, "#connector-token-list", "Active");
+  await expectText(page, "#connector-token-count", "1 active");
+  await expectText(page, "#connector-token-list", "0 uses");
+  await page.click("#nav-worker");
+  await expectVisible(page, "#worker-view.active");
 
   const connectorHeaders = { "x-osa-connector-token": connectorToken };
   const worker = await postJson("/api/agents/register", {
