@@ -18,6 +18,7 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "../../..");
 const publicDir = join(rootDir, "apps/web/public");
+const agentGuiDistDir = join(rootDir, "vendor/agent-gui/frontend/dist");
 const dataDir = process.env.OSA_DATA_DIR || join(rootDir, "data");
 const uploadDir = process.env.OSA_UPLOAD_DIR || join(dataDir, "uploads");
 const identityPath = process.env.OSA_IDENTITY_PATH || join(dataDir, "node-identity.json");
@@ -48,6 +49,8 @@ const federationSnapshotMaxBytes = Math.max(maxJsonBytes, Number(process.env.OSA
 const federationPeerSyncs = new Set();
 const managedConnectorProcesses = new Map();
 const managedConnectorLogLimit = 12 * 1024;
+const agentGuiHomeTeamId = "home-room";
+const agentGuiPublicTeamId = "public-room";
 const providerEnvNames = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
@@ -59,7 +62,15 @@ const contentTypes = {
   ".css": "text/css; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml; charset=utf-8"
+  ".svg": "image/svg+xml; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".map": "application/json; charset=utf-8"
 };
 
 const oauthProviderConfig = {
@@ -518,14 +529,16 @@ function tooManyRequests(res, result) {
   );
 }
 
-function securityHeaders() {
+function securityHeaders(options = {}) {
+  const styleSrc = options.allowInlineStyles ? "style-src 'self' 'unsafe-inline'" : "style-src 'self'";
+  const connectSrc = options.allowWebSockets ? "connect-src 'self' ws: wss:" : "connect-src 'self'";
   return {
     "content-security-policy": [
       "default-src 'self'",
       "script-src 'self'",
-      "style-src 'self'",
+      styleSrc,
       "img-src 'self' data: blob:",
-      "connect-src 'self'",
+      connectSrc,
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",
@@ -843,6 +856,7 @@ function publicState(auth = null) {
     },
     viewer: publicUser(auth?.user),
     viewerConnectors: auth ? publicConnectorTokensForUser(auth.user.id) : [],
+    connectorCommandCwd: rootDir,
     runtime: publicRuntime(),
     serverTime: now()
   };
@@ -877,6 +891,7 @@ function publicLockedState() {
     },
     viewer: null,
     viewerConnectors: [],
+    connectorCommandCwd: null,
     runtime: publicRuntime(),
     serverTime: now()
   };
@@ -2571,12 +2586,615 @@ function taskCollaborationContext(task) {
   };
 }
 
+function agentGuiSessions() {
+  const taskSessions = store.tasks
+    .filter((task) => !["done", "rejected"].includes(task.status))
+    .map(agentGuiTaskSession);
+  return taskSessions
+    .sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));
+}
+
+function agentGuiSessionById(id) {
+  return agentGuiSessions().find((session) => session.id === id) || null;
+}
+
+function agentGuiTaskSession(task) {
+  const goal = store.goals.find((item) => item.id === task.goalId);
+  const agent = task.assignedAgentId ? findAgent(task.assignedAgentId) : null;
+  const result = store.results.find((item) => item.taskId === task.id);
+  const managed = task.agentGuiConnectorId ? managedConnectorStatus(task.agentGuiConnectorId) : null;
+  const fallbackAgent = task.agentGuiAgent || "openclaw-codex";
+  const room = agentGuiTaskRoom(task);
+  const lastAt = task.updatedAt || result?.createdAt || task.createdAt;
+  return {
+    id: `${room}-${task.id}`,
+    started_at: task.createdAt,
+    ended_at: ["done", "in_consensus"].includes(task.status) ? lastAt : null,
+    source: room === "home" ? "osa-home" : "osa-public",
+    model: agent?.models?.[0] || task.agentGuiModel || agent?.provider || "OSA connector",
+    parent_session_id: null,
+    title: task.title,
+    message_count: agent ? 3 : 1,
+    token_estimate: task.description.length + (result?.content || "").length,
+    is_running: task.status === "leased" || ["starting", "running"].includes(managed?.status),
+    first_activity_at: task.createdAt,
+    last_activity_at: lastAt,
+    title_summary: room === "home" ? "Home" : goal?.title || "Public OSA task",
+    auto_continue: false,
+    task_solved: task.status === "done" || result?.status === "accepted",
+    workspace_path: null,
+    is_sleeping: false,
+    agent: agent ? agentGuiAgentId(agent) : fallbackAgent,
+    agent_model: agent?.models?.join(", ") || task.agentGuiModel || "Waiting for network agent",
+    agent_base_url: "",
+    desk_tools: task.requiredCapabilities || [task.type || "task"],
+    team_id: room === "home" ? agentGuiHomeTeamId : agentGuiPublicTeamId
+  };
+}
+
+function agentGuiTaskRoom(task) {
+  if (task.agentGuiRoom === "home" || task.source === "agent-gui-home") return "home";
+  if (task.agentGuiConnectorId && task.source === "agent-gui") return "home";
+  return "public";
+}
+
+function agentGuiAgents() {
+  const networkAgents = store.agents.map((agent) => ({
+    id: agentGuiAgentId(agent),
+    name: agent.name,
+    tagline: agentGoalTagline(agent),
+    color: agent.status === "online" ? "#4a8eff" : "#6a7a9a",
+    available: agent.status === "online",
+    model: (agent.models || []).join(", ") || agent.provider || "OSA connector",
+    base_url: "",
+    profile_path: `osa://agents/${agent.id}`,
+    is_prototype: false,
+    clone_from: "coder"
+  }));
+  return [...agentGuiPrototypes(), ...networkAgents];
+}
+
+function agentGuiPrototypes() {
+  return [
+    { id: "openclaw-codex", name: "Codex / OpenClaw", tagline: "Connect this OpenClaw agent to OSA work", color: "#22d3ee", available: true, model: "OpenClaw local agent", base_url: "", profile_path: "osa://prototype/openclaw-codex", is_prototype: true, clone_from: null },
+    { id: "codex-cli", name: "Codex CLI", tagline: "Run work through the local Codex CLI connector", color: "#60a5fa", available: true, model: "Codex CLI", base_url: "", profile_path: "osa://prototype/codex-cli", is_prototype: true, clone_from: null },
+    { id: "coder", name: "Worker Agent", tagline: "Claims and executes OSA tasks", color: "#4a8eff", available: true, model: "OSA connector", base_url: "", profile_path: "osa://prototype/worker", is_prototype: true, clone_from: null },
+    { id: "local-ollama", name: "Waiting Desk", tagline: "No decentralized agent is seated yet", color: "#58a6ff", available: true, model: "pending", base_url: "", profile_path: "osa://prototype/pending", is_prototype: true, clone_from: null }
+  ];
+}
+
+function agentGuiAgentId(agent) {
+  return `osa-${agent.id}`;
+}
+
+function agentGoalTagline(agent) {
+  const goal = store.goals.find((item) => item.id === agent.goalId);
+  if (!goal) return agent.status === "online" ? "Online in the OSA network" : "Offline OSA network agent";
+  return `${agent.status === "online" ? "Working" : "Registered"} on ${goal.title}`;
+}
+
+function agentGuiActivity(sessionId) {
+  const taskId = agentGuiTaskIdFromSessionId(sessionId);
+  if (taskId) return agentGuiTaskActivity(taskId);
+  return [];
+}
+
+function agentGuiTaskIdFromSessionId(sessionId) {
+  for (const prefix of ["home-", "public-", "office-"]) {
+    if (sessionId.startsWith(prefix)) return sessionId.slice(prefix.length);
+  }
+  return "";
+}
+
+function agentGuiSubagents(sessionId) {
+  const session = agentGuiSessionById(sessionId);
+  if (!session) return [];
+  const agents = agentGuiAgents()
+    .filter((agent) => !agent.is_prototype && (agent.available || session.agent === agent.id))
+    .slice(0, 12);
+  if (!agents.length && session.agent) {
+    const profile = agentGuiAgents().find((agent) => agent.id === session.agent);
+    if (profile) agents.push(profile);
+  }
+  return agents
+    .map((agent, index) => ({
+      subagent_id: agent.id,
+      parent_id: sessionId,
+      depth: 0,
+      model: agent.model || "OSA connector",
+      task_index: index,
+      task_count: Math.max(1, store.agents.length),
+      goal: session.title,
+      timeline: [
+        {
+          event: session.is_running ? "progress" : "start",
+          ts: Math.floor(Date.parse(session.last_activity_at || session.started_at || now()) / 1000),
+          text: agent.tagline || "OpenSwarmAgents network agent"
+        }
+      ],
+      status: session.is_running ? "working" : "idle",
+      output: ""
+    }));
+}
+
+function agentGuiTaskActivity(taskId) {
+  const task = store.tasks.find((item) => item.id === taskId);
+  if (!task) return [];
+  const relatedResults = store.results.filter((result) => result.taskId === taskId);
+  const relatedReviews = store.reviews.filter((review) => review.taskId === taskId);
+  const room = agentGuiTaskRoom(task);
+  const events = [
+    agentGuiActivityEvent(task.createdAt, "user_message", room === "home" ? "HOME" : "PUB", room === "home" ? "Home task created" : "Public task available", task.description, "task", false, [])
+  ];
+  if (task.assignedAgentId) {
+    const agent = findAgent(task.assignedAgentId);
+    events.push(agentGuiActivityEvent(task.updatedAt || task.createdAt, "tool_call", "RUN", `${agent?.name || "Agent"} is working`, statusLabelForAgentGui(task.status), "claim_task", false, []));
+  }
+  for (const result of relatedResults) {
+    const agent = findAgent(result.agentId);
+    events.push(agentGuiActivityEvent(result.createdAt, "message", "OUT", `${agent?.name || "Agent"} submitted output`, result.summary || result.content, "submit_result", false, []));
+  }
+  for (const review of relatedReviews) {
+    const agent = findAgent(review.agentId);
+    events.push(agentGuiActivityEvent(review.createdAt, "tool_result", "REV", `${agent?.name || "Agent"} reviewed output`, `${review.decision}: ${review.reason}`, "review_result", review.decision === "rejected", []));
+  }
+  return events.sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)));
+}
+
+function agentGuiActivityEvent(timestamp, eventType, icon, title, detail, toolName, isError, filesTouched) {
+  return {
+    timestamp,
+    event_type: eventType,
+    icon,
+    title,
+    detail: String(detail || "").slice(0, 3000),
+    tool_name: toolName,
+    is_error: Boolean(isError),
+    files_touched: filesTouched || [],
+    time_exact: true
+  };
+}
+
+function statusLabelForAgentGui(status) {
+  return String(status || "unknown").replaceAll("_", " ");
+}
+
+function agentGuiTodos(sessionId) {
+  const taskId = agentGuiTaskIdFromSessionId(sessionId);
+  if (taskId) {
+    const task = store.tasks.find((item) => item.id === taskId);
+    return {
+      tasks: [
+        { id: `${taskId}-claim`, title: "Claim task", status: task?.assignedAgentId ? "completed" : "pending" },
+        { id: `${taskId}-work`, title: task?.title || "Execute task", status: task?.status === "leased" ? "in_progress" : task?.status === "open" ? "pending" : "completed" },
+        { id: `${taskId}-review`, title: "Review and publish", status: ["in_consensus", "needs_review"].includes(task?.status) ? "in_progress" : task?.status === "done" ? "completed" : "pending" }
+      ],
+      summary: agentGuiTaskRoom(task || {}) === "home" ? "Home agent work" : "Public OSA task"
+    };
+  }
+  return { tasks: [], summary: "No task selected" };
+}
+
+function agentGuiTaskFile(sessionId) {
+  const taskId = agentGuiTaskIdFromSessionId(sessionId);
+  if (taskId) {
+    const task = store.tasks.find((item) => item.id === taskId);
+    const goal = task ? store.goals.find((item) => item.id === task.goalId) : null;
+    const room = task ? agentGuiTaskRoom(task) : "public";
+    return `# ${room === "home" ? "Home" : "Public"}\n\n## ${task?.title || "Task"}\n\nProject: ${goal?.title || "Unknown"}\n\n${task?.description || ""}\n`;
+  }
+  return "# OSA\n\nNo task selected.\n";
+}
+
+function agentGuiCapability(id) {
+  return {
+    id,
+    presets: {
+      chat: [],
+      lean: ["read", "write", "vote"],
+      full: ["read", "write", "vote", "review", "artifact"]
+    },
+    source: "global",
+    default_preset: "lean",
+    profile_disabled_toolsets: [],
+    skill_bundles: [],
+    skill_count: 0
+  };
+}
+
+async function startAgentGuiSession(req, body = {}) {
+  const content = String(body.content || "").trim();
+  if (!content) {
+    const error = new Error("Describe what OSA should work on before starting a desk.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const title = agentGuiSessionTitle(content);
+  const goal = agentGuiGoalForStart(body, title, content);
+  const agentId = String(body.agent || "openclaw-codex");
+  const runner = agentGuiRunnerForAgent(agentId);
+  const startedAt = now();
+  const task = {
+    id: `task-${randomUUID()}`,
+    goalId: goal.id,
+    type: "synthesis",
+    title,
+    description: content,
+    requiredCapabilities: normalizeList(body.tools, ["research", "review", "synthesis"]),
+    priority: 90,
+    status: "open",
+    createdAt: startedAt,
+    updatedAt: startedAt,
+    source: "agent-gui-home",
+    agentGuiRoom: "home",
+    agentGuiAgent: runner === "codex" ? "codex-cli" : "openclaw-codex",
+    agentGuiModel: runner === "codex" ? "Codex CLI" : "OpenClaw local agent"
+  };
+  store.tasks.unshift(task);
+
+  const connector = startAgentGuiTaskConnector(req, task, agentId);
+  event("agentgui_session_started", `OSA desk started from AgentGUI`, {
+    taskId: task.id,
+    goalId: goal.id,
+    connectorId: connector.id,
+    runner
+  });
+  await saveStore();
+
+  const session = agentGuiTaskSession(task);
+  return {
+    session_id: session.id,
+    workspace_path: null,
+    response: runner === "codex" ? "Connected to the local Codex CLI connector." : "Connected to this OpenClaw agent.",
+    session,
+    agent: session.agent
+  };
+}
+
+function resumeAgentGuiSession(req, sessionId, body = {}) {
+  const taskId = agentGuiTaskIdFromSessionId(sessionId);
+  const task = store.tasks.find((item) => item.id === taskId);
+  if (!task) {
+    const error = new Error("Only OSA task desks can connect a local agent.");
+    error.statusCode = 404;
+    throw error;
+  }
+  if (["done", "rejected"].includes(task.status)) {
+    const error = new Error("This OSA task is already closed.");
+    error.statusCode = 409;
+    throw error;
+  }
+  if (agentGuiTaskRoom(task) === "public") {
+    const error = new Error("Copy Public tasks into Home before connecting a local agent.");
+    error.statusCode = 409;
+    throw error;
+  }
+  const connector = startAgentGuiTaskConnector(req, task, String(body.agent || task.agentGuiAgent || "openclaw-codex"));
+  event("agentgui_session_resumed", `OSA desk connected from AgentGUI`, {
+    taskId: task.id,
+    goalId: task.goalId,
+    connectorId: connector.id,
+    runner: connectorRunner(connector)
+  });
+  return {
+    ok: true,
+    enabled: false,
+    max: 0,
+    content: agentGuiTaskFile(sessionId),
+    exists: true,
+    session: agentGuiTaskSession(task)
+  };
+}
+
+async function copyAgentGuiSessionToHome(sessionId) {
+  const taskId = agentGuiTaskIdFromSessionId(sessionId);
+  const sourceTask = store.tasks.find((item) => item.id === taskId);
+  if (!sourceTask) {
+    const error = new Error("Public task not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+  if (agentGuiTaskRoom(sourceTask) !== "public") {
+    const error = new Error("Only Public tasks can be copied into Home.");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const sourceGoal = store.goals.find((item) => item.id === sourceTask.goalId);
+  const copiedAt = now();
+  const goal = {
+    id: `goal-agentgui-copy-${slugify(sourceTask.title)}-${randomUUID().slice(0, 8)}`,
+    title: sourceTask.title,
+    description: sourceTask.description,
+    status: "active",
+    supporters: 0,
+    sourceProposalId: null,
+    source: "agent-gui-home",
+    copiedFromGoalId: sourceGoal?.id || null,
+    copiedFromTaskId: sourceTask.id,
+    createdAt: copiedAt
+  };
+  const task = {
+    id: `task-${randomUUID()}`,
+    goalId: goal.id,
+    type: sourceTask.type || "synthesis",
+    title: sourceTask.title,
+    description: sourceTask.description,
+    requiredCapabilities: sourceTask.requiredCapabilities || ["research", "review", "synthesis"],
+    priority: sourceTask.priority || 80,
+    status: "open",
+    createdAt: copiedAt,
+    updatedAt: copiedAt,
+    source: "agent-gui-home",
+    copiedFromTaskId: sourceTask.id,
+    copiedFromGoalId: sourceGoal?.id || null,
+    copiedFromAgentId: sourceTask.assignedAgentId || null,
+    agentGuiRoom: "home",
+    agentGuiAgent: "openclaw-codex",
+    agentGuiModel: "OpenClaw local agent"
+  };
+  store.goals.unshift(goal);
+  store.tasks.unshift(task);
+  event("agentgui_public_copied", `Copied Public task into Home`, {
+    sourceTaskId: sourceTask.id,
+    taskId: task.id,
+    goalId: goal.id
+  });
+  await saveStore();
+  const session = agentGuiTaskSession(task);
+  return {
+    ok: true,
+    session_id: session.id,
+    workspace_path: null,
+    response: "Copied into Home.",
+    session,
+    agent: session.agent
+  };
+}
+
+function startAgentGuiTaskConnector(req, task, agentId) {
+  const existing = task.agentGuiConnectorId ? store.connectorTokens.find((item) => item.id === task.agentGuiConnectorId) : null;
+  const existingManaged = existing ? managedConnectorStatus(existing.id) : null;
+  if (existing && existing.status === "active" && ["starting", "running"].includes(existingManaged?.status)) {
+    return existing;
+  }
+
+  const runner = agentGuiRunnerForAgent(agentId);
+  task.agentGuiAgent = runner === "codex" ? "codex-cli" : "openclaw-codex";
+  task.agentGuiModel = runner === "codex" ? "Codex CLI" : "OpenClaw local agent";
+  task.updatedAt = now();
+
+  const auth = agentGuiConnectorAuth(task.id);
+  const { rawToken, connector } = createConnectorToken(auth, {
+    mode: "worker",
+    goalId: task.goalId,
+    name: runner === "codex" ? "Codex CLI Agent" : "Codex OpenClaw Agent",
+    capabilities: task.requiredCapabilities || ["research", "review", "synthesis"],
+    models: [`connector:${runner}`],
+    provider: "unknown",
+    providers: [],
+    expiresAt: afterMs(now(), 7 * 24 * 60 * 60 * 1000)
+  });
+  task.agentGuiConnectorId = connector.id;
+  startManagedConnector(req, rawToken, connector, {
+    models: connector.models,
+    provider: connector.provider,
+    providers: connector.providers
+  });
+  return connector;
+}
+
+function agentGuiSessionTitle(content) {
+  const line = content.split(/\r?\n/).map((item) => item.trim()).find(Boolean) || "OSA task";
+  return line.replace(/^#+\s*/, "").slice(0, 120) || "OSA task";
+}
+
+function agentGuiGoalForStart(body, title, content) {
+  const teamId = String(body.team_id || "");
+  const goal = {
+    id: `goal-agentgui-${slugify(title)}-${randomUUID().slice(0, 8)}`,
+    title,
+    description: content,
+    status: "active",
+    supporters: 0,
+    sourceProposalId: null,
+    source: teamId === agentGuiPublicTeamId ? "agent-gui-public" : "agent-gui-home",
+    createdAt: now()
+  };
+  store.goals.unshift(goal);
+  event("agentgui_goal_created", `AgentGUI created ${goal.title}`, { goalId: goal.id });
+  return goal;
+}
+
+function agentGuiRunnerForAgent(agentId) {
+  if (agentId === "codex-cli") return "codex";
+  return "openclaw";
+}
+
+function agentGuiConnectorAuth(taskId) {
+  const user = upsertUser(`agent-gui-${taskId}@local.osa`, "OSA AgentGUI");
+  return { user, session: null };
+}
+
+async function maybeHandleAgentGuiApi(req, res, url, method, path) {
+  if (method === "GET" && path === "/api/sessions") {
+    return sendJson(res, 200, agentGuiSessions());
+  }
+
+  const sessionMatch = path.match(/^\/api\/sessions\/([^/]+)$/);
+  if (method === "GET" && sessionMatch) {
+    const session = agentGuiSessionById(decodeURIComponent(sessionMatch[1]));
+    return session ? sendJson(res, 200, session) : notFound(res);
+  }
+
+  const sessionChildMatch = path.match(/^\/api\/sessions\/([^/]+)\/([^/]+)$/);
+  if (sessionChildMatch) {
+    const sessionId = decodeURIComponent(sessionChildMatch[1]);
+    const child = sessionChildMatch[2];
+    if (method === "GET" && child === "activity") return sendJson(res, 200, agentGuiActivity(sessionId));
+    if (method === "GET" && child === "overview") {
+      const events = agentGuiActivity(sessionId);
+      return sendJson(res, 200, {
+        events,
+        started_at: events[0]?.timestamp || null,
+        last_at: events.at(-1)?.timestamp || null,
+        message_count: events.length,
+        session_ids: [sessionId],
+        truncated: false
+      });
+    }
+    if (method === "GET" && child === "todos") return sendJson(res, 200, agentGuiTodos(sessionId));
+    if (method === "GET" && (child === "files" || child === "workspace_tree")) return sendJson(res, 200, []);
+    if (method === "GET" && (child === "console" || child === "terminal")) return sendJson(res, 200, { text: "" });
+    if (method === "GET" && child === "history") {
+      const session = agentGuiSessionById(sessionId);
+      return session ? sendJson(res, 200, { desk_id: sessionId, profile: session.agent || "", sessions: [{ ...session, is_root: true, profile: session.agent || "" }] }) : notFound(res);
+    }
+    if (method === "GET" && child === "taskfile") {
+      return sendJson(res, 200, { content: agentGuiTaskFile(sessionId), path: "TASK.md", workspace: "" });
+    }
+    if (method === "GET" && child === "audit") {
+      return sendJson(res, 200, {
+        session_id: sessionId,
+        generated_at: now(),
+        results: [],
+        summary: { passed: 0, failed: 0, unsure: 0, total: 0 },
+        cached: true
+      });
+    }
+    if (method === "GET" && child === "progress") return sendJson(res, 200, { content: agentGuiTaskFile(sessionId), exists: true });
+    if (method === "POST" && child === "copy") {
+      try {
+        return sendJson(res, 201, await copyAgentGuiSessionToHome(sessionId));
+      } catch (error) {
+        return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to copy Public task into Home" });
+      }
+    }
+    if (method === "POST" && child === "resume") {
+      try {
+        return sendJson(res, 200, resumeAgentGuiSession(req, sessionId, await readJson(req)));
+      } catch (error) {
+        return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to connect OSA desk" });
+      }
+    }
+    if (method === "POST" && ["redirect", "interrupt", "arrive", "sleep", "wake", "autocontinue", "audit", "progress"].includes(child)) {
+      return sendJson(res, 200, { ok: true, enabled: false, max: 0, content: agentGuiTaskFile(sessionId), exists: true });
+    }
+    if (method === "PATCH" && child === "desk-config") {
+      const session = agentGuiSessionById(sessionId);
+      return session ? sendJson(res, 200, session) : notFound(res);
+    }
+  }
+
+  if (method === "GET" && path.endsWith("/audit/status")) {
+    return sendJson(res, 200, { current_hash: "", auditable: false, audited: true, summary: { passed: 0, failed: 0, unsure: 0, total: 0 } });
+  }
+
+  if (method === "POST" && path === "/api/sessions/new") {
+    try {
+      const body = await readJson(req);
+      return sendJson(res, 201, await startAgentGuiSession(req, body));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to start OSA desk" });
+    }
+  }
+
+  if (method === "GET" && path === "/api/gui-config") {
+    const agents = agentGuiAgents();
+    return sendJson(res, 200, {
+      agent_profiles_dir: "osa://agents",
+      desk_default_model: "OpenClaw local agent",
+      agents,
+      prototypes: agentGuiPrototypes(),
+      global: { base_url: "", model: "OpenClaw local agent" },
+      manager: { base_url: "", model: "OSA manager", uses_effective_agent_model: true },
+      rooms: [
+        { id: agentGuiHomeTeamId, name: "Home" },
+        { id: agentGuiPublicTeamId, name: "Public" }
+      ]
+    });
+  }
+
+  if (method === "POST" && path === "/api/warmup") return sendJson(res, 200, { ok: true });
+  if (method === "GET" && path === "/api/toolsets") {
+    return sendJson(res, 200, {
+      toolsets: [
+        { name: "read", label: "Read", lean: true },
+        { name: "write", label: "Write", lean: true },
+        { name: "vote", label: "Vote", lean: true },
+        { name: "review", label: "Review", lean: true },
+        { name: "artifact", label: "Artifacts", lean: false }
+      ],
+      presets: { chat: [], lean: ["read", "vote", "review"], full: ["read", "write", "vote", "review", "artifact"] },
+      default: "lean"
+    });
+  }
+  if (method === "GET" && path === "/api/docker/config") return sendJson(res, 200, { persist: false });
+  if (method === "POST" && path === "/api/docker/config") return sendJson(res, 200, { persist: false });
+  if (method === "POST" && path === "/api/docker/cleanup") return sendJson(res, 200, { removed: 0, kept: 0, skipped: true, reason: "OSA connector workers are managed outside AgentGUI Docker cleanup" });
+  if (method === "GET" && path === "/api/agents") return sendJson(res, 200, { agents: agentGuiAgents() });
+  if (method === "GET" && path === "/api/agents/prototypes") return sendJson(res, 200, { prototypes: agentGuiPrototypes() });
+
+  const agentChildMatch = path.match(/^\/api\/agents\/([^/]+)\/(capabilities|persona)$/);
+  if (method === "GET" && agentChildMatch) {
+    const id = decodeURIComponent(agentChildMatch[1]);
+    if (agentChildMatch[2] === "capabilities") return sendJson(res, 200, agentGuiCapability(id));
+    return sendJson(res, 200, {
+      id,
+      soul: "OSA decentralized network agent.",
+      memory: "State is maintained by the OpenSwarmAgents node.",
+      profile_path: `osa://agents/${id}`,
+      name: id,
+      tagline: "OpenSwarmAgents connector",
+      model: "OSA connector",
+      base_url: ""
+    });
+  }
+
+  if (method === "GET" && path === "/api/llm/models") {
+    return sendJson(res, 200, {
+      models: ["OpenClaw local agent", "Codex CLI", "OSA connector"],
+      current: "OpenClaw local agent",
+      base_url: ""
+    });
+  }
+  if (method === "GET" && path === "/api/llm/providers") return sendJson(res, 200, { providers: [], active: "" });
+  if (method === "GET" && path === "/api/models/reasoning") return sendJson(res, 200, { options: [] });
+  if (method === "GET" && path === "/api/manager/profile") return sendJson(res, 200, { profile: "osa-manager", model: "OSA manager", base_url: "" });
+  if (method === "POST" && path === "/api/manager/profile") return sendJson(res, 200, { profile: "osa-manager", model: "OSA manager" });
+  if (method === "GET" && path === "/api/search") {
+    const q = String(url.searchParams.get("q") || "").toLowerCase();
+    return sendJson(res, 200, agentGuiSessions().filter((session) => `${session.title} ${session.title_summary}`.toLowerCase().includes(q)));
+  }
+  if (method === "GET" && path === "/api/sessions/saved") return sendJson(res, 200, { dir: "", archives: [] });
+
+  const teamsMatch = path.match(/^\/api\/teams\/([^/]+)\/(files|sync|register)$/);
+  if (teamsMatch) {
+    if (method === "GET" && teamsMatch[2] === "files") return sendJson(res, 200, { files: [], root: "" });
+    return sendJson(res, 200, { ok: true, registered: 0, synced_desks: 0 });
+  }
+
+  if (method === "GET" && path === "/api/global/persona") {
+    return sendJson(res, 200, { id: "osa-default", profile_path: "osa://global", model: "OSA connector", base_url: "", soul: "OpenSwarmAgents", memory: "" });
+  }
+  if (method === "PUT" && path === "/api/global/persona") return sendJson(res, 200, { ok: true });
+  if (method === "GET" && path === "/api/hermes/status") return sendJson(res, 200, { available: true, kind: "osa-adapter" });
+  if (method === "POST" && path.startsWith("/api/workspace/")) return sendJson(res, 200, { ok: false });
+  if (method === "GET" && path.startsWith("/api/file/")) return sendJson(res, 404, { detail: "No OSA workspace file preview for this desk yet." });
+
+  return false;
+}
+
 async function handleApi(req, res, url) {
   const method = req.method || "GET";
   const path = url.pathname;
 
   try {
     const maintenanceChanged = runMaintenance();
+
+    const agentGuiHandled = await maybeHandleAgentGuiApi(req, res, url, method, path);
+    if (agentGuiHandled !== false) return agentGuiHandled;
 
     if (method === "GET" && path === "/api/health") {
       return sendJson(res, 200, {
@@ -3997,18 +4615,174 @@ async function serveStatic(req, res, url) {
   }
 }
 
+async function serveAgentGuiStatic(req, res, url) {
+  const relative = url.pathname === "/agent-gui" || url.pathname === "/agent-gui/"
+    ? "/index.html"
+    : url.pathname.replace(/^\/agent-gui/, "") || "/index.html";
+  const safePath = relative.replaceAll("..", "");
+  const filePath = join(agentGuiDistDir, safePath);
+  try {
+    const fileStat = await stat(filePath);
+    if (!fileStat.isFile()) return serveAgentGuiIndex(res);
+    const type = contentTypes[extname(filePath)] || "application/octet-stream";
+    res.writeHead(200, { "content-type": type, ...securityHeaders({ allowInlineStyles: true, allowWebSockets: true }) });
+    createReadStream(filePath).pipe(res);
+  } catch {
+    return serveAgentGuiIndex(res);
+  }
+}
+
+async function serveAgentGuiIndex(res) {
+  const filePath = join(agentGuiDistDir, "index.html");
+  try {
+    const fileStat = await stat(filePath);
+    if (!fileStat.isFile()) return notFound(res);
+    res.writeHead(200, { "content-type": contentTypes[".html"], ...securityHeaders({ allowInlineStyles: true, allowWebSockets: true }) });
+    createReadStream(filePath).pipe(res);
+  } catch {
+    sendJson(res, 503, {
+      error: "agent_gui_not_built",
+      message: "Run npm run build:agent-gui before opening /agent-gui/."
+    });
+  }
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
   if (url.pathname.startsWith("/api/")) {
     return handleApi(req, res, url);
   }
+  if (url.pathname === "/" && !url.search) {
+    return redirect(res, "/agent-gui/");
+  }
+  if (url.pathname === "/agent-gui" || url.pathname.startsWith("/agent-gui/")) {
+    return serveAgentGuiStatic(req, res, url);
+  }
+  if (url.pathname === "/full-logo.png") {
+    const assetUrl = new URL("/agent-gui/full-logo.png", `http://${req.headers.host || "127.0.0.1"}`);
+    return serveAgentGuiStatic(req, res, assetUrl);
+  }
   return serveStatic(req, res, url);
+});
+
+server.on("upgrade", (req, socket) => {
+  const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
+  if (!url.pathname.startsWith("/ws/")) {
+    socket.destroy();
+    return;
+  }
+  serveAgentGuiWebSocket(req, socket, url);
 });
 
 server.listen(port, host, () => {
   console.log(`OpenSwarmAgents node listening on http://${host}:${port}`);
   startFederationPeerSync();
 });
+
+function serveAgentGuiWebSocket(req, socket, url) {
+  const key = req.headers["sec-websocket-key"];
+  if (!key) {
+    socket.destroy();
+    return;
+  }
+  const accept = createHash("sha1")
+    .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+    .digest("base64");
+  socket.write([
+    "HTTP/1.1 101 Switching Protocols",
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    `Sec-WebSocket-Accept: ${accept}`,
+    "\r\n"
+  ].join("\r\n"));
+
+  const match = url.pathname.match(/^\/ws\/(activity|terminal|console|tail)\/([^/]+)$/);
+  if (!match) {
+    writeWebSocketClose(socket);
+    return;
+  }
+  const kind = match[1];
+  const sessionId = decodeURIComponent(match[2]);
+  let timer = null;
+
+  const send = (payload) => {
+    try {
+      writeWebSocketText(socket, typeof payload === "string" ? payload : JSON.stringify(payload));
+    } catch {
+      clearInterval(timer);
+      socket.destroy();
+    }
+  };
+
+  if (kind === "activity") {
+    send(agentGuiActivity(sessionId));
+    send({ subagents: agentGuiSubagents(sessionId) });
+    const live = agentGuiLiveEvent(sessionId);
+    if (live) send({ live });
+    timer = setInterval(() => {
+      send(agentGuiActivity(sessionId));
+      const nextLive = agentGuiLiveEvent(sessionId);
+      if (nextLive) send({ live: nextLive });
+    }, 5000);
+  } else if (kind === "terminal" || kind === "console") {
+    const session = agentGuiSessionById(sessionId);
+    send(session ? `${session.title}\n${session.title_summary || ""}\n` : "");
+  } else if (kind === "tail") {
+    send("");
+  }
+
+  socket.on("close", () => clearInterval(timer));
+  socket.on("error", () => clearInterval(timer));
+  socket.on("data", (chunk) => {
+    if ((chunk[0] & 0x0f) === 0x8) {
+      clearInterval(timer);
+      socket.end();
+    }
+  });
+}
+
+function agentGuiLiveEvent(sessionId) {
+  const session = agentGuiSessionById(sessionId);
+  if (!session) return null;
+  if (session.is_running) {
+    return {
+      type: "status",
+      event: "working",
+      msg: session.team_id === agentGuiHomeTeamId ? "Your agent is working in Home" : "Network agent is working in Public"
+    };
+  }
+  return { type: "status", event: "idle", msg: session.title_summary || "Waiting for network activity" };
+}
+
+function writeWebSocketText(socket, text) {
+  const payload = Buffer.from(String(text), "utf8");
+  let header;
+  if (payload.length < 126) {
+    header = Buffer.from([0x81, payload.length]);
+  } else if (payload.length <= 0xffff) {
+    header = Buffer.alloc(4);
+    header[0] = 0x81;
+    header[1] = 126;
+    header.writeUInt16BE(payload.length, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x81;
+    header[1] = 127;
+    const high = Math.floor(payload.length / 2 ** 32);
+    const low = payload.length >>> 0;
+    header.writeUInt32BE(high, 2);
+    header.writeUInt32BE(low, 6);
+  }
+  socket.write(Buffer.concat([header, payload]));
+}
+
+function writeWebSocketClose(socket) {
+  try {
+    socket.write(Buffer.from([0x88, 0x00]));
+  } finally {
+    socket.end();
+  }
+}
 
 function stopManagedConnectorsForShutdown() {
   for (const connectorId of managedConnectorProcesses.keys()) {

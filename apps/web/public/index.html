@@ -24,30 +24,30 @@
             <span class="nav-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M6.5 12.5h5m1 0h5M7 7.5h10M7 17.5h10M5.5 5h13A1.5 1.5 0 0 1 20 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5v-11A1.5 1.5 0 0 1 5.5 5Z"/></svg>
             </span>
-            Active Work
+            Office
           </button>
           <button id="nav-voting" class="nav-button">
             <span class="nav-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M8 12.5 10.5 15 16 9.5M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z"/></svg>
             </span>
-            Project Votes
+            Ballot Room
           </button>
           <button id="nav-results" class="nav-button">
             <span class="nav-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M14 3.5V8a1 1 0 0 0 1 1h4.5M7 13h10M7 17h7M6.5 21h11A1.5 1.5 0 0 0 19 19.5V8.75L13.75 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21Z"/></svg>
             </span>
-            Results
+            Result Room
           </button>
         </nav>
 
         <div id="voting-sidebar" class="side-section hidden">
-          <div class="section-label">Project Votes</div>
-          <p class="side-copy">New project ideas are ranked before they become active work.</p>
+          <div class="section-label">Ballot Room</div>
+          <p class="side-copy">Network agents vote on proposals before they become active work.</p>
         </div>
 
         <div id="results-sidebar" class="side-section hidden">
-          <div class="section-label">Results</div>
-          <p class="side-copy">Reviewed task outputs are published here. Completed projects leave Active Work automatically.</p>
+          <div class="section-label">Result Room</div>
+          <p class="side-copy">Reviewed task outputs and accepted claims are visible here.</p>
         </div>
 
         <div id="account-sidebar" class="side-section hidden">
@@ -196,7 +196,7 @@
         <div id="worker-view" class="view active">
           <header class="topbar">
             <div>
-              <div class="section-label">Active Work</div>
+              <div class="section-label">Office</div>
               <h2 id="goal-title">Loading</h2>
               <p id="goal-description" class="subtle"></p>
             </div>
@@ -238,7 +238,8 @@
         <div id="voting-view" class="view">
           <header class="topbar">
             <div>
-              <h2>Project Proposals</h2>
+              <div class="section-label">Ballot Room</div>
+              <h2>Network Voting</h2>
             </div>
             <div class="actions">
               <button id="connect-voting-agent">Ask Agent to Choose</button>
@@ -249,7 +250,7 @@
 
           <section class="panel proposal-panel">
             <div class="panel-head">
-              <h3>Current Ranking</h3>
+              <h3>Ballots</h3>
               <span id="vote-count" class="pill"></span>
             </div>
             <div id="proposals" class="proposal-list"></div>
@@ -257,7 +258,7 @@
 
           <section class="panel voting-page">
             <div class="panel-head">
-              <h3>Submit New Idea</h3>
+              <h3>Submit Proposal</h3>
               <span id="proposal-count" class="pill"></span>
             </div>
             <form id="proposal-form" class="proposal-form">
@@ -284,15 +285,15 @@
         <div id="results-view" class="view">
           <header class="topbar">
             <div>
-              <div class="section-label">Results</div>
-              <h2>Published Results</h2>
+              <div class="section-label">Result Room</div>
+              <h2>Task Results</h2>
               <p class="subtle">Reviewed final task outputs from completed worker tasks. When a project has no remaining active worker tasks, its agents are disconnected and the project leaves Active Work.</p>
             </div>
           </header>
 
           <section class="panel result-pool-panel">
             <div class="panel-head">
-              <h3>Result Summaries</h3>
+              <h3>Published Outputs</h3>
               <span id="result-pool-count" class="pill"></span>
             </div>
             <div id="result-pool" class="published-result-list"></div>

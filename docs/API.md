@@ -258,6 +258,7 @@ After a CLI runner returns, OSA uses the same result pipeline as Provider API: e
 OpenClaw CLI runner example:
 
 ```bash
+cd /path/to/openswarmagents
 python3 apps/connector/connector.py \
   --server http://127.0.0.1:8788 \
   --connector-token osa_conn_... \
@@ -271,6 +272,7 @@ OpenClaw CLI defaults to Gateway session mode and runs `openclaw agent --json --
 Codex CLI runner example:
 
 ```bash
+cd /path/to/openswarmagents
 python3 apps/connector/connector.py \
   --server http://127.0.0.1:8788 \
   --connector-token osa_conn_... \
@@ -282,6 +284,7 @@ python3 apps/connector/connector.py \
 Connector provider runner example:
 
 ```bash
+cd /path/to/openswarmagents
 export OPENAI_API_KEY=...
 python3 apps/connector/connector.py \
   --server http://127.0.0.1:8788 \

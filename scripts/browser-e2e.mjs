@@ -39,7 +39,7 @@ try {
     if (message.type() === "error") pageErrors.push(message.text());
   });
 
-  await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+  await page.goto(`${baseUrl}/?legacy=1`, { waitUntil: "domcontentloaded" });
   await expectVisible(page, "#auth-gate");
   await expectClass(page, ".shell", "locked");
   assert(await page.locator("#nav-worker").isDisabled(), "worker nav should be disabled behind login gate");
@@ -136,7 +136,10 @@ try {
   await expectText(page, "#tasks", "Build an open agent collaboration network");
   await expectText(page, "#my-agent-work", "My Agent");
   await expectText(page, "#my-agent-work", "No local agent connected");
-  await page.locator(".task-visualization-button").first().click();
+  await page
+    .locator(".project-task-row", { hasText: "Map existing agent collaboration protocols" })
+    .getByRole("button", { name: /Visualize/i })
+    .click();
   await expectVisible(page, "#task-visualization:not(.hidden)");
   await expectText(page, "#task-visualization", "Task Visualization");
   await expectText(page, "#task-visualization", "Map existing agent collaboration protocols");

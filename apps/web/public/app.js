@@ -697,38 +697,44 @@ async function disconnectWorkerGoal(goal) {
 }
 
 function connectorCommand(token, goalId, runner = selectedConnectorRunner()) {
-  const server = window.location.origin;
-  const base = `python3 apps/connector/connector.py --server ${server} --connector-token ${token} --goal ${goalId}`;
+  const server = shellQuote(window.location.origin);
+  const base = `${connectorCommandPrefix()} --server ${server} --connector-token ${shellQuote(token)} --goal ${shellQuote(goalId)}`;
   if (runner === "provider") {
     const provider = preferredProvider();
     const providers = enabledProviders().join(",");
-    return `${base} --runner provider --provider ${provider} --providers ${providers} --no-fallback-to-stub`;
+    return `${base} --runner provider --provider ${shellQuote(provider)} --providers ${shellQuote(providers)} --no-fallback-to-stub`;
   }
   if (runner === "openclaw") {
-    return `${base} --runner openclaw --agent-name "Local OpenClaw Agent" --no-fallback-to-stub`;
+    return `${base} --runner openclaw --agent-name ${shellQuote("Local OpenClaw Agent")} --no-fallback-to-stub`;
   }
   if (runner === "codex") {
-    return `${base} --runner codex --agent-name "Local Codex Agent" --no-fallback-to-stub`;
+    return `${base} --runner codex --agent-name ${shellQuote("Local Codex Agent")} --no-fallback-to-stub`;
   }
   return `${base} --runner stub`;
 }
 
 function connectorCommandForToken(token, connector) {
   const runner = connectorRunnerFromMetadata(connector);
-  const goalFlag = connector.mode === "voting" ? "--voting-pool" : `--goal ${connector.goalId}`;
-  const base = `python3 apps/connector/connector.py --server ${window.location.origin} --connector-token ${token} ${goalFlag}`;
+  const goalFlag = connector.mode === "voting" ? "--voting-pool" : `--goal ${shellQuote(connector.goalId)}`;
+  const base = `${connectorCommandPrefix()} --server ${shellQuote(window.location.origin)} --connector-token ${shellQuote(token)} ${goalFlag}`;
   if (runner === "provider") {
     const provider = connector.provider && connector.provider !== "unknown" ? connector.provider : preferredProvider();
     const providers = (connector.providers?.length ? connector.providers : [provider]).join(",");
-    return `${base} --runner provider --provider ${provider} --providers ${providers} --no-fallback-to-stub`;
+    return `${base} --runner provider --provider ${shellQuote(provider)} --providers ${shellQuote(providers)} --no-fallback-to-stub`;
   }
   if (runner === "openclaw") {
-    return `${base} --runner openclaw --agent-name "${escapeShellDouble(connector.name || "Local OpenClaw Agent")}" --no-fallback-to-stub`;
+    return `${base} --runner openclaw --agent-name ${shellQuote(connector.name || "Local OpenClaw Agent")} --no-fallback-to-stub`;
   }
   if (runner === "codex") {
-    return `${base} --runner codex --agent-name "${escapeShellDouble(connector.name || "Local Codex Agent")}" --no-fallback-to-stub`;
+    return `${base} --runner codex --agent-name ${shellQuote(connector.name || "Local Codex Agent")} --no-fallback-to-stub`;
   }
   return `${base} --runner stub`;
+}
+
+function connectorCommandPrefix() {
+  const cwd = state.data?.connectorCommandCwd;
+  const command = "python3 apps/connector/connector.py";
+  return cwd ? `cd ${shellQuote(cwd)} && ${command}` : command;
 }
 
 function connectorRunnerFromMetadata(connector) {
@@ -739,6 +745,10 @@ function connectorRunnerFromMetadata(connector) {
 
 function escapeShellDouble(value) {
   return String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("$", "\\$").replaceAll("`", "\\`");
+}
+
+function shellQuote(value) {
+  return `'${String(value ?? "").replaceAll("'", "'\\''")}'`;
 }
 
 function connectorReason(runner = selectedConnectorRunner()) {

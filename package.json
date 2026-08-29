@@ -12,6 +12,7 @@
     "check:browser": "node scripts/browser-e2e.mjs",
     "check:rc": "npm run check && node scripts/rc-smoke.mjs && npm run check:browser && npm run check:connector && node scripts/consensus-sim.mjs && node scripts/federation-sim.mjs",
     "check:postgres": "node scripts/postgres-smoke.mjs",
+    "build:agent-gui": "npm --prefix vendor/agent-gui/frontend install && npm --prefix vendor/agent-gui/frontend run build -- --base=/agent-gui/",
     "audit:prod": "npm audit --omit=dev",
     "compose:config": "docker compose config --quiet && docker compose -f docker-compose.prod.yml --env-file .env.production.example config --quiet",
     "check:release": "npm run check:rc && npm run check:postgres && npm run audit:prod && npm run compose:config",
