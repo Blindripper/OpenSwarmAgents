@@ -51,6 +51,10 @@ const managedConnectorProcesses = new Map();
 const managedConnectorLogLimit = 12 * 1024;
 const agentGuiHomeTeamId = "home-room";
 const agentGuiPublicTeamId = "public-room";
+const agentGuiPublicRoomsTeamId = "public-rooms-room";
+const agentGuiPublicProjectsTeamId = "public-projects-room";
+const osaDonationFeeWallet = "0x0D92d175943336E3Ad099e55FBe4248dC6fA947b";
+const osaDonationFeePercent = 5;
 const legacySeedGoalIds = new Set(["goal-agent-collab", "goal-water", "goal-energy-storage"]);
 const legacySeedTaskIds = new Set([
   "task-architecture-map",
@@ -134,6 +138,10 @@ async function loadStore() {
       users: [],
       sessions: [],
       agentProfiles: [],
+      walletSessions: [],
+      agentDonations: [],
+      publicRooms: [],
+      publicProjects: [],
       connectorTokens: [],
       uploadedArtifacts: [],
       proposalVotes: [],
@@ -160,6 +168,10 @@ function normalizeStore(input) {
     users: input.users || [],
     sessions: input.sessions || [],
     agentProfiles: normalizeAgentProfiles(input.agentProfiles || []),
+    walletSessions: normalizeWalletSessions(input.walletSessions || []),
+    agentDonations: normalizeAgentDonations(input.agentDonations || []),
+    publicRooms: normalizePublicCollections(input.publicRooms || [], "room"),
+    publicProjects: normalizePublicCollections(input.publicProjects || [], "project"),
     connectorTokens: normalizeConnectorTokens(input.connectorTokens || []),
     uploadedArtifacts: input.uploadedArtifacts || [],
     trustLedger: normalizeTrustLedger(input.trustLedger || []),
@@ -200,6 +212,104 @@ function normalizeAgentProfiles(profiles) {
       memory: String(profile.memory || "").slice(0, 20_000)
     }))
     .filter((profile) => profile.id);
+}
+
+function normalizeWalletAddress(address) {
+  const value = String(address || "").trim();
+  if (!/^0x[a-fA-F0-9]{40}$/.test(value)) {
+    const error = new Error("A valid EVM wallet address is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return value.toLowerCase();
+}
+
+function normalizeWalletSessions(sessions) {
+  return sessions
+    .filter((session) => session?.address)
+    .map((session) => {
+      try {
+        return {
+          id: String(session.id || `wallet-${randomUUID()}`).slice(0, 100),
+          address: normalizeWalletAddress(session.address),
+          chainId: session.chainId ? String(session.chainId).slice(0, 40) : null,
+          signature: session.signature ? String(session.signature).slice(0, 500) : null,
+          createdAt: session.createdAt || now(),
+          lastSeenAt: session.lastSeenAt || session.createdAt || now()
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function normalizeDonationAmount(amount) {
+  const value = Number(amount);
+  if (!Number.isFinite(value) || value <= 0 || value > 1_000_000) {
+    const error = new Error("Donation amount must be greater than zero.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+function normalizeAgentDonations(donations) {
+  return donations
+    .filter((donation) => (donation?.taskId || donation?.targetId) && donation?.walletAddress)
+    .map((donation) => {
+      try {
+        const targetType = ["agent", "room", "project"].includes(donation.targetType) ? donation.targetType : "agent";
+        const targetId = String(donation.targetId || donation.taskId).slice(0, 140);
+        const amount = normalizeDonationAmount(donation.amount);
+        const feeAmount = Math.round(amount * osaDonationFeePercent * 10_000) / 1_000_000;
+        return {
+          id: String(donation.id || `donation-${randomUUID()}`).slice(0, 100),
+          taskId: targetType === "agent" ? targetId : (donation.taskId ? String(donation.taskId).slice(0, 120) : null),
+          targetType,
+          targetId,
+          sessionId: donation.sessionId ? String(donation.sessionId).slice(0, 140) : `public-${targetId}`,
+          walletAddress: normalizeWalletAddress(donation.walletAddress),
+          chainId: donation.chainId ? String(donation.chainId).slice(0, 40) : null,
+          amount,
+          currency: "USDC",
+          feePercent: osaDonationFeePercent,
+          feeWallet: donation.feeWallet ? normalizeWalletAddress(donation.feeWallet) : osaDonationFeeWallet.toLowerCase(),
+          feeAmount: donation.feeAmount ? normalizeDonationAmount(donation.feeAmount) : feeAmount,
+          creatorAmount: donation.creatorAmount ? normalizeDonationAmount(donation.creatorAmount) : Math.max(0, Math.round((amount - feeAmount) * 1_000_000) / 1_000_000),
+          status: donation.status === "confirmed" ? "confirmed" : "pledged",
+          txHash: donation.txHash ? String(donation.txHash).slice(0, 100) : null,
+          createdAt: donation.createdAt || now()
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function normalizePublicCollections(items, type) {
+  return items
+    .filter((item) => item?.id)
+    .map((item) => ({
+      id: String(item.id).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 100),
+      type,
+      sourceTeamId: item.sourceTeamId ? String(item.sourceTeamId).slice(0, 100) : null,
+      name: String(item.name || (type === "room" ? "Public Room" : "Public Project")).slice(0, 120),
+      summary: String(item.summary || "").slice(0, 1000),
+      taskIds: normalizeList(item.taskIds || item.task_ids, []).map((id) => String(id).slice(0, 120)),
+      rooms: Array.isArray(item.rooms) ? item.rooms.map((room) => ({
+        id: String(room.id || agentGuiHomeTeamId).slice(0, 100),
+        name: String(room.name || "Home").slice(0, 80),
+        taskIds: normalizeList(room.taskIds || room.task_ids, []).map((id) => String(id).slice(0, 120))
+      })) : [],
+      sharedAt: item.sharedAt || item.shared_at || now(),
+      updatedAt: item.updatedAt || item.updated_at || item.sharedAt || item.shared_at || now(),
+      copyCount: Math.max(0, Number(item.copyCount || item.copy_count || 0)),
+      lastCopiedAt: item.lastCopiedAt || item.last_copied_at || null,
+      ownerWalletAddress: item.ownerWalletAddress ? normalizeWalletAddress(item.ownerWalletAddress) : null
+    }))
+    .filter((item) => item.id && item.taskIds.length > 0);
 }
 
 function removeLegacySeedExamples(target) {
@@ -407,6 +517,10 @@ async function loadPostgresStore() {
     users: [],
     sessions: [],
     agentProfiles: [],
+    walletSessions: [],
+    agentDonations: [],
+    publicRooms: [],
+    publicProjects: [],
     connectorTokens: [],
     proposalVotes: [],
     uploadedArtifacts: [],
@@ -2678,12 +2792,138 @@ function agentGuiSessions() {
       taskSessions.push(agentGuiTaskSession(task, "public"));
     }
   }
-  return taskSessions
+  return [...taskSessions, ...agentGuiPublicCollectionSessions()]
     .sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));
 }
 
 function agentGuiSessionById(id) {
   return agentGuiSessions().find((session) => session.id === id) || null;
+}
+
+function agentGuiDonationStats(targetType, targetId) {
+  const matching = store.agentDonations.filter((donation) =>
+    donation.targetType === targetType && donation.targetId === targetId
+  );
+  const donationTotal = matching.reduce((sum, donation) => sum + Number(donation.amount || 0), 0);
+  const feeTotal = matching.reduce((sum, donation) => sum + Number(donation.feeAmount || 0), 0);
+  return {
+    donation_count: matching.length,
+    donation_total_usdc: Math.round(donationTotal * 1_000_000) / 1_000_000,
+    osa_fee_total_usdc: Math.round(feeTotal * 1_000_000) / 1_000_000
+  };
+}
+
+function agentGuiDonationStatsForTaskId(taskId) {
+  return agentGuiDonationStats("agent", taskId);
+}
+
+function agentGuiRankedPublicAgents(limit = 100) {
+  return store.tasks
+    .filter((task) => task.sharedPublic && !["deleted", "rejected"].includes(task.status) && !task.agentGuiDeletedAt)
+    .map((task) => {
+      const goal = store.goals.find((item) => item.id === task.goalId);
+      const agent = task.assignedAgentId ? findAgent(task.assignedAgentId) : null;
+      const donationStats = agentGuiDonationStatsForTaskId(task.id);
+      return {
+        id: `public-${task.id}`,
+        task_id: task.id,
+        title: task.title,
+        summary: task.description,
+        agent: agent?.name || task.agentGuiAgent || "OSA Agent",
+        model: agent?.models?.join(", ") || task.agentGuiModel || "OpenClaw local agent",
+        goal: goal?.title || "Home",
+        copy_count: Math.max(0, Number(task.copyCount || 0)),
+        shared_at: task.sharedPublicAt || task.createdAt,
+        last_copied_at: task.lastCopiedAt || null,
+        owner_wallet_address: task.ownerWalletAddress || null,
+        ...donationStats
+      };
+    })
+    .sort((a, b) => b.copy_count - a.copy_count || String(b.shared_at).localeCompare(String(a.shared_at)))
+    .slice(0, Math.max(1, Math.min(100, limit)))
+    .map((entry, index) => ({ ...entry, rank: index + 1 }));
+}
+
+function agentGuiPublicRankForTaskId(taskId) {
+  return agentGuiRankedPublicAgents(100).find((entry) => entry.task_id === taskId)?.rank || null;
+}
+
+function publicCollectionSummary(item) {
+  const taskCount = item.taskIds.length;
+  const noun = taskCount === 1 ? "agent" : "agents";
+  return item.summary || `${item.name} with ${taskCount} ${noun}.`;
+}
+
+function agentGuiRankedPublicCollections(type, limit = 100) {
+  const items = type === "room" ? store.publicRooms : store.publicProjects;
+  return items
+    .map((item) => {
+      const donationStats = agentGuiDonationStats(type, item.id);
+      return {
+        id: `${type === "room" ? "public-room" : "public-project"}-${item.id}`,
+        target_type: type,
+        target_id: item.id,
+        task_id: item.taskIds[0] || "",
+        title: item.name,
+        summary: publicCollectionSummary(item),
+        agent: type === "room" ? "OSA Room" : "OSA Project",
+        model: `${item.taskIds.length} public ${item.taskIds.length === 1 ? "agent" : "agents"}`,
+        goal: type === "room" ? "Public Rooms" : "Public Projects",
+        copy_count: Math.max(0, Number(item.copyCount || 0)),
+        item_count: item.taskIds.length,
+        shared_at: item.sharedAt,
+        last_copied_at: item.lastCopiedAt || null,
+        owner_wallet_address: item.ownerWalletAddress || null,
+        ...donationStats
+      };
+    })
+    .sort((a, b) => b.copy_count - a.copy_count || String(b.shared_at).localeCompare(String(a.shared_at)))
+    .slice(0, Math.max(1, Math.min(100, limit)))
+    .map((entry, index) => ({ ...entry, rank: index + 1 }));
+}
+
+function agentGuiPublicCollectionSession(item, type) {
+  const donationStats = agentGuiDonationStats(type, item.id);
+  return {
+    id: `${type === "room" ? "public-room" : "public-project"}-${item.id}`,
+    started_at: item.sharedAt,
+    ended_at: item.updatedAt || item.sharedAt,
+    source: type === "room" ? "osa-public-room" : "osa-public-project",
+    model: type === "room" ? "OSA Room" : "OSA Project",
+    parent_session_id: null,
+    title: item.name,
+    message_count: item.taskIds.length,
+    token_estimate: publicCollectionSummary(item).length,
+    is_running: false,
+    first_activity_at: item.sharedAt,
+    last_activity_at: item.updatedAt || item.sharedAt,
+    title_summary: type === "room" ? "Public Room" : "Public Project",
+    auto_continue: false,
+    task_solved: true,
+    workspace_path: null,
+    is_sleeping: false,
+    agent: type === "room" ? "public-room" : "public-project",
+    agent_model: `${item.taskIds.length} ${item.taskIds.length === 1 ? "agent" : "agents"}`,
+    agent_base_url: "",
+    desk_tools: type === "room" ? ["room", "copy", "donate"] : ["project", "copy", "donate"],
+    team_id: type === "room" ? agentGuiPublicRoomsTeamId : agentGuiPublicProjectsTeamId,
+    team_name: type === "room" ? "Public Rooms" : "Public Projects",
+    shared_public: true,
+    shared_public_at: item.sharedAt,
+    public_kind: type,
+    copy_count: Math.max(0, Number(item.copyCount || 0)),
+    last_copied_at: item.lastCopiedAt || null,
+    ...donationStats,
+    connector_status: null,
+    connector_exit_code: null,
+    connector_error: null
+  };
+}
+
+function agentGuiPublicCollectionSessions() {
+  const roomSessions = store.publicRooms.map((item) => agentGuiPublicCollectionSession(item, "room"));
+  const projectSessions = store.publicProjects.map((item) => agentGuiPublicCollectionSession(item, "project"));
+  return [...roomSessions, ...projectSessions];
 }
 
 function agentGuiTaskSession(task, roomOverride = null) {
@@ -2698,9 +2938,12 @@ function agentGuiTaskSession(task, roomOverride = null) {
   const taskSolved = task.status === "done" || result?.status === "accepted";
   const connectorExit = task.agentGuiConnectorId ? agentGuiConnectorExitForTask(task) : null;
   const taskFailed = task.status === "failed" || connectorExit?.isError;
+  const publicRank = task.sharedPublic ? agentGuiPublicRankForTaskId(task.id) : null;
+  const donationStats = agentGuiDonationStatsForTaskId(task.id);
+  const visibleStartedAt = room === "public" ? (task.sharedPublicAt || task.createdAt) : task.createdAt;
   return {
     id: `${room}-${task.id}`,
-    started_at: task.createdAt,
+    started_at: visibleStartedAt,
     ended_at: taskFailed ? (connectorExit?.createdAt || lastAt) : ["done", "in_consensus"].includes(task.status) ? lastAt : null,
     source: room === "home" ? "osa-home" : "osa-public",
     model: task.agentGuiModel || agent?.models?.[0] || agent?.provider || "OSA connector",
@@ -2709,7 +2952,7 @@ function agentGuiTaskSession(task, roomOverride = null) {
     message_count: agent ? 3 : 1,
     token_estimate: task.description.length + (result?.content || "").length,
     is_running: !taskSolved && !taskFailed && (task.status === "leased" || ["starting", "running"].includes(managed?.status)),
-    first_activity_at: task.createdAt,
+    first_activity_at: visibleStartedAt,
     last_activity_at: lastAt,
     title_summary: room === "home" ? "Home" : goal?.title || "Public OSA task",
     auto_continue: false,
@@ -2724,8 +2967,10 @@ function agentGuiTaskSession(task, roomOverride = null) {
     team_name: room === "home" ? task.agentGuiTeamName || null : "Public",
     shared_public: Boolean(task.sharedPublic),
     shared_public_at: task.sharedPublicAt || null,
+    public_rank: publicRank,
     copy_count: Math.max(0, Number(task.copyCount || 0)),
     last_copied_at: task.lastCopiedAt || null,
+    ...donationStats,
     connector_status: taskFailed ? "failed" : (managed?.status || connectorExit?.status || null),
     connector_exit_code: connectorExit?.exitCode ?? managed?.exitCode ?? null,
     connector_error: task.agentGuiConnectorError || (connectorExit?.isError ? connectorExit.message : null)
@@ -2759,7 +3004,7 @@ function agentGuiTaskRoom(task) {
 
 function normalizeAgentGuiPrivateTeamId(teamId) {
   const value = String(teamId || "").trim();
-  if (!value || value === agentGuiHomeTeamId || value === agentGuiPublicTeamId) return agentGuiHomeTeamId;
+  if (!value || [agentGuiHomeTeamId, agentGuiPublicTeamId, agentGuiPublicRoomsTeamId, agentGuiPublicProjectsTeamId].includes(value)) return agentGuiHomeTeamId;
   const clean = value
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "-")
@@ -2777,27 +3022,7 @@ function agentGuiSessionRoom(sessionId, task = null) {
 }
 
 function agentGuiTopAgents(limit = 100) {
-  return store.tasks
-    .filter((task) => task.sharedPublic && !["deleted", "rejected"].includes(task.status))
-    .map((task) => {
-      const goal = store.goals.find((item) => item.id === task.goalId);
-      const agent = task.assignedAgentId ? findAgent(task.assignedAgentId) : null;
-      return {
-        id: `public-${task.id}`,
-        task_id: task.id,
-        title: task.title,
-        summary: task.description,
-        agent: agent?.name || task.agentGuiAgent || "OSA Agent",
-        model: agent?.models?.join(", ") || task.agentGuiModel || "OpenClaw local agent",
-        goal: goal?.title || "Home",
-        copy_count: Math.max(0, Number(task.copyCount || 0)),
-        shared_at: task.sharedPublicAt || task.createdAt,
-        last_copied_at: task.lastCopiedAt || null
-      };
-    })
-    .sort((a, b) => b.copy_count - a.copy_count || String(b.shared_at).localeCompare(String(a.shared_at)))
-    .slice(0, Math.max(1, Math.min(100, limit)))
-    .map((entry, index) => ({ ...entry, rank: index + 1 }));
+  return agentGuiRankedPublicAgents(limit);
 }
 
 function agentGuiAgents() {
@@ -2882,6 +3107,7 @@ function agentGuiActivity(sessionId) {
 }
 
 function agentGuiTaskIdFromSessionId(sessionId) {
+  if (sessionId.startsWith("public-room-") || sessionId.startsWith("public-project-")) return "";
   for (const prefix of ["home-", "public-", "office-"]) {
     if (sessionId.startsWith(prefix)) return sessionId.slice(prefix.length);
   }
@@ -3116,24 +3342,8 @@ function resumeAgentGuiSession(req, sessionId, body = {}) {
   };
 }
 
-async function copyAgentGuiSessionToHome(sessionId) {
-  const taskId = agentGuiTaskIdFromSessionId(sessionId);
-  const sourceTask = store.tasks.find((item) => item.id === taskId);
-  if (!sourceTask) {
-    const error = new Error("Public task not found.");
-    error.statusCode = 404;
-    throw error;
-  }
-  if (agentGuiSessionRoom(sessionId, sourceTask) !== "public") {
-    const error = new Error("Only Public tasks can be copied into Home.");
-    error.statusCode = 409;
-    throw error;
-  }
-
-  sourceTask.copyCount = Math.max(0, Number(sourceTask.copyCount || 0)) + 1;
-  sourceTask.lastCopiedAt = now();
+function copySourceTaskToPrivateRoom(sourceTask, roomId, roomName, copiedAt) {
   const sourceGoal = store.goals.find((item) => item.id === sourceTask.goalId);
-  const copiedAt = now();
   const goal = {
     id: `goal-agentgui-copy-${slugify(sourceTask.title)}-${randomUUID().slice(0, 8)}`,
     title: sourceTask.title,
@@ -3162,15 +3372,100 @@ async function copyAgentGuiSessionToHome(sessionId) {
     copiedFromGoalId: sourceGoal?.id || null,
     copiedFromAgentId: sourceTask.assignedAgentId || null,
     agentGuiRoom: "home",
-    agentGuiAgent: "openclaw-codex",
-    agentGuiModel: "OpenClaw local agent"
+    agentGuiTeamId: roomId,
+    agentGuiTeamName: roomName || null,
+    agentGuiAgent: sourceTask.agentGuiAgent || "openclaw-codex",
+    agentGuiModel: sourceTask.agentGuiModel || "OpenClaw local agent"
   };
   store.goals.unshift(goal);
   store.tasks.unshift(task);
+  return task;
+}
+
+async function copyPublicCollectionToHome(sessionId, type) {
+  const prefix = type === "room" ? "public-room-" : "public-project-";
+  const collectionId = sessionId.startsWith(prefix) ? sessionId.slice(prefix.length) : "";
+  const collection = (type === "room" ? store.publicRooms : store.publicProjects).find((item) => item.id === collectionId);
+  if (!collection) {
+    const error = new Error(`Public ${type} not found.`);
+    error.statusCode = 404;
+    throw error;
+  }
+  const sourceTasks = collection.taskIds
+    .map((taskId) => store.tasks.find((task) => task.id === taskId))
+    .filter(Boolean);
+  if (!sourceTasks.length) {
+    const error = new Error(`Public ${type} has no available agents to copy.`);
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const copiedAt = now();
+  const copiedTasks = [];
+  if (type === "room") {
+    const roomId = normalizeAgentGuiPrivateTeamId(`room-copy-${slugify(collection.name)}-${randomUUID().slice(0, 6)}`);
+    const roomName = `Copy of ${collection.name}`.slice(0, 80);
+    for (const sourceTask of sourceTasks) copiedTasks.push(copySourceTaskToPrivateRoom(sourceTask, roomId, roomName, copiedAt));
+  } else {
+    const roomMap = new Map();
+    const sourceRooms = collection.rooms.length ? collection.rooms : [{ id: agentGuiHomeTeamId, name: "Home", taskIds: collection.taskIds }];
+    for (const room of sourceRooms) {
+      roomMap.set(normalizeAgentGuiPrivateTeamId(room.id), {
+        id: normalizeAgentGuiPrivateTeamId(`room-project-${slugify(room.name || "room")}-${randomUUID().slice(0, 6)}`),
+        name: `Project: ${room.name || "Room"}`.slice(0, 80)
+      });
+    }
+    for (const sourceTask of sourceTasks) {
+      const targetRoom = roomMap.get(normalizeAgentGuiPrivateTeamId(sourceTask.agentGuiTeamId)) || [...roomMap.values()][0];
+      copiedTasks.push(copySourceTaskToPrivateRoom(sourceTask, targetRoom.id, targetRoom.name, copiedAt));
+    }
+  }
+
+  collection.copyCount = Math.max(0, Number(collection.copyCount || 0)) + 1;
+  collection.lastCopiedAt = copiedAt;
+  collection.updatedAt = copiedAt;
+  event(type === "room" ? "agentgui_public_room_copied" : "agentgui_public_project_copied", `Copied Public ${type} into Home`, {
+    publicId: collection.id,
+    copiedTaskIds: copiedTasks.map((task) => task.id),
+    copyCount: collection.copyCount
+  });
+  await saveStore();
+  const sessions = copiedTasks.map((task) => agentGuiTaskSession(task, "home"));
+  return {
+    ok: true,
+    session_id: sessions[0].id,
+    session_ids: sessions.map((session) => session.id),
+    workspace_path: null,
+    response: `Copied Public ${type} into your private workspace.`,
+    session: sessions[0],
+    agent: sessions[0].agent
+  };
+}
+
+async function copyAgentGuiSessionToHome(sessionId) {
+  if (sessionId.startsWith("public-room-")) return copyPublicCollectionToHome(sessionId, "room");
+  if (sessionId.startsWith("public-project-")) return copyPublicCollectionToHome(sessionId, "project");
+  const taskId = agentGuiTaskIdFromSessionId(sessionId);
+  const sourceTask = store.tasks.find((item) => item.id === taskId);
+  if (!sourceTask) {
+    const error = new Error("Public task not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+  if (agentGuiSessionRoom(sessionId, sourceTask) !== "public") {
+    const error = new Error("Only Public tasks can be copied into Home.");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  sourceTask.copyCount = Math.max(0, Number(sourceTask.copyCount || 0)) + 1;
+  sourceTask.lastCopiedAt = now();
+  const copiedAt = now();
+  const task = copySourceTaskToPrivateRoom(sourceTask, agentGuiHomeTeamId, "Home", copiedAt);
   event("agentgui_public_copied", `Copied Public task into Home`, {
     sourceTaskId: sourceTask.id,
     taskId: task.id,
-    goalId: goal.id,
+    goalId: task.goalId,
     sourceCopyCount: sourceTask.copyCount
   });
   await saveStore();
@@ -3218,6 +3513,245 @@ async function setAgentGuiSessionPublicShare(sessionId, shared) {
     copy_count: Math.max(0, Number(task.copyCount || 0)),
     session: agentGuiTaskSession(task, "home"),
     public_session: task.sharedPublic ? agentGuiTaskSession(task, "public") : null
+  };
+}
+
+function agentGuiTasksForPrivateTeam(teamId) {
+  const normalizedTeamId = normalizeAgentGuiPrivateTeamId(teamId);
+  return store.tasks.filter((task) =>
+    !["deleted", "rejected"].includes(task.status)
+    && !task.agentGuiDeletedAt
+    && agentGuiTaskRoom(task) === "home"
+    && normalizeAgentGuiPrivateTeamId(task.agentGuiTeamId) === normalizedTeamId
+  );
+}
+
+function agentGuiAllPrivateProjectTasks() {
+  return store.tasks.filter((task) =>
+    !["deleted", "rejected"].includes(task.status)
+    && !task.agentGuiDeletedAt
+    && agentGuiTaskRoom(task) === "home"
+  );
+}
+
+async function shareAgentGuiRoom(body = {}) {
+  const teamId = normalizeAgentGuiPrivateTeamId(body.team_id || body.teamId || agentGuiHomeTeamId);
+  const shared = body.shared !== false;
+  const existingIndex = store.publicRooms.findIndex((item) => item.sourceTeamId === teamId);
+  if (!shared) {
+    if (existingIndex >= 0) store.publicRooms.splice(existingIndex, 1);
+    await saveStore();
+    return { ok: true, shared_public: false };
+  }
+  const tasks = agentGuiTasksForPrivateTeam(teamId);
+  if (!tasks.length) {
+    const error = new Error("Add at least one agent to this room before sharing it.");
+    error.statusCode = 409;
+    throw error;
+  }
+  const sharedAt = now();
+  const name = String(body.team_name || body.name || (teamId === agentGuiHomeTeamId ? "Home" : "Room")).trim().slice(0, 120) || "Room";
+  const summary = `${name} room with ${tasks.length} ${tasks.length === 1 ? "agent" : "agents"}.`;
+  const next = {
+    id: existingIndex >= 0 ? store.publicRooms[existingIndex].id : `room-${slugify(name)}-${randomUUID().slice(0, 8)}`,
+    type: "room",
+    sourceTeamId: teamId,
+    name,
+    summary,
+    taskIds: tasks.map((task) => task.id),
+    rooms: [{ id: teamId, name, taskIds: tasks.map((task) => task.id) }],
+    sharedAt: existingIndex >= 0 ? store.publicRooms[existingIndex].sharedAt : sharedAt,
+    updatedAt: sharedAt,
+    copyCount: existingIndex >= 0 ? Math.max(0, Number(store.publicRooms[existingIndex].copyCount || 0)) : 0,
+    lastCopiedAt: existingIndex >= 0 ? store.publicRooms[existingIndex].lastCopiedAt || null : null,
+    ownerWalletAddress: null
+  };
+  if (existingIndex >= 0) store.publicRooms[existingIndex] = next;
+  else store.publicRooms.unshift(next);
+  event("agentgui_room_shared", "Room shared to Public Rooms", {
+    publicRoomId: next.id,
+    sourceTeamId: teamId,
+    taskIds: next.taskIds
+  });
+  await saveStore();
+  return { ok: true, shared_public: true, room: agentGuiPublicCollectionSession(next, "room") };
+}
+
+async function shareAgentGuiProject(body = {}) {
+  const tasks = agentGuiAllPrivateProjectTasks();
+  if (!tasks.length) {
+    const error = new Error("Add at least one private agent before sharing a project.");
+    error.statusCode = 409;
+    throw error;
+  }
+  const name = String(body.name || "OSA Project").trim().slice(0, 120) || "OSA Project";
+  const roomNames = new Map();
+  for (const room of Array.isArray(body.rooms) ? body.rooms : []) {
+    if (room?.id) roomNames.set(normalizeAgentGuiPrivateTeamId(room.id), String(room.name || "Room").slice(0, 80));
+  }
+  const grouped = new Map();
+  for (const task of tasks) {
+    const roomId = normalizeAgentGuiPrivateTeamId(task.agentGuiTeamId);
+    if (!grouped.has(roomId)) grouped.set(roomId, { id: roomId, name: roomNames.get(roomId) || task.agentGuiTeamName || (roomId === agentGuiHomeTeamId ? "Home" : "Room"), taskIds: [] });
+    grouped.get(roomId).taskIds.push(task.id);
+  }
+  const existingIndex = store.publicProjects.findIndex((item) => item.id === "project-local");
+  const sharedAt = now();
+  const next = {
+    id: "project-local",
+    type: "project",
+    sourceTeamId: null,
+    name,
+    summary: `${name} project with ${grouped.size} ${grouped.size === 1 ? "room" : "rooms"} and ${tasks.length} ${tasks.length === 1 ? "agent" : "agents"}.`,
+    taskIds: tasks.map((task) => task.id),
+    rooms: [...grouped.values()],
+    sharedAt: existingIndex >= 0 ? store.publicProjects[existingIndex].sharedAt : sharedAt,
+    updatedAt: sharedAt,
+    copyCount: existingIndex >= 0 ? Math.max(0, Number(store.publicProjects[existingIndex].copyCount || 0)) : 0,
+    lastCopiedAt: existingIndex >= 0 ? store.publicProjects[existingIndex].lastCopiedAt || null : null,
+    ownerWalletAddress: null
+  };
+  if (existingIndex >= 0) store.publicProjects[existingIndex] = next;
+  else store.publicProjects.unshift(next);
+  event("agentgui_project_shared", "Project shared to Public Projects", {
+    publicProjectId: next.id,
+    taskIds: next.taskIds,
+    rooms: next.rooms.map((room) => room.id)
+  });
+  await saveStore();
+  return { ok: true, shared_public: true, project: agentGuiPublicCollectionSession(next, "project") };
+}
+
+async function connectAgentGuiWallet(body = {}) {
+  const address = normalizeWalletAddress(body.address);
+  const chainId = body.chain_id || body.chainId ? String(body.chain_id || body.chainId).slice(0, 40) : null;
+  const signature = body.signature ? String(body.signature).slice(0, 500) : null;
+  const seenAt = now();
+  let wallet = store.walletSessions.find((item) => item.address === address);
+  if (wallet) {
+    wallet.chainId = chainId || wallet.chainId || null;
+    wallet.signature = signature || wallet.signature || null;
+    wallet.lastSeenAt = seenAt;
+  } else {
+    wallet = {
+      id: `wallet-${randomUUID()}`,
+      address,
+      chainId,
+      signature,
+      createdAt: seenAt,
+      lastSeenAt: seenAt
+    };
+    store.walletSessions.unshift(wallet);
+  }
+  event("agentgui_wallet_connected", "Wallet connected to OSA dashboard", {
+    walletAddress: address,
+    chainId
+  });
+  await saveStore();
+  return {
+    ok: true,
+    wallet: {
+      address: wallet.address,
+      chain_id: wallet.chainId,
+      connected_at: wallet.createdAt,
+      last_seen_at: wallet.lastSeenAt
+    }
+  };
+}
+
+function agentGuiDonationTargetFromBody(body = {}) {
+  const explicitType = body.target_type || body.targetType;
+  const explicitId = body.target_id || body.targetId;
+  if (explicitType && explicitId) {
+    const targetType = String(explicitType);
+    const targetId = String(explicitId).slice(0, 140);
+    if (targetType === "agent") {
+      const task = store.tasks.find((item) => item.id === targetId && item.sharedPublic);
+      if (task) return { targetType, targetId, sessionId: `public-${task.id}` };
+    }
+    if (targetType === "room" && store.publicRooms.some((item) => item.id === targetId)) {
+      return { targetType, targetId, sessionId: `public-room-${targetId}` };
+    }
+    if (targetType === "project" && store.publicProjects.some((item) => item.id === targetId)) {
+      return { targetType, targetId, sessionId: `public-project-${targetId}` };
+    }
+  }
+
+  const sessionId = String(body.session_id || body.sessionId || "").slice(0, 140);
+  if (sessionId.startsWith("public-room-")) {
+    const targetId = sessionId.slice("public-room-".length);
+    if (store.publicRooms.some((item) => item.id === targetId)) return { targetType: "room", targetId, sessionId };
+  }
+  if (sessionId.startsWith("public-project-")) {
+    const targetId = sessionId.slice("public-project-".length);
+    if (store.publicProjects.some((item) => item.id === targetId)) return { targetType: "project", targetId, sessionId };
+  }
+  const taskId = agentGuiTaskIdFromSessionId(sessionId);
+  const task = store.tasks.find((item) => item.id === taskId && item.sharedPublic);
+  if (task) return { targetType: "agent", targetId: task.id, sessionId: `public-${task.id}` };
+
+  const error = new Error("Public donation target not found.");
+  error.statusCode = 404;
+  throw error;
+}
+
+async function createAgentGuiDonation(body = {}) {
+  const target = agentGuiDonationTargetFromBody(body);
+  const walletAddress = normalizeWalletAddress(body.wallet_address || body.walletAddress);
+  const amount = normalizeDonationAmount(body.amount);
+  const feeAmount = Math.round(amount * osaDonationFeePercent * 10_000) / 1_000_000;
+  const chainId = body.chain_id || body.chainId ? String(body.chain_id || body.chainId).slice(0, 40) : null;
+  const createdAt = now();
+  const existingWallet = store.walletSessions.find((item) => item.address === walletAddress);
+  if (existingWallet) {
+    existingWallet.chainId = chainId || existingWallet.chainId || null;
+    existingWallet.lastSeenAt = createdAt;
+  } else {
+    store.walletSessions.unshift({
+      id: `wallet-${randomUUID()}`,
+      address: walletAddress,
+      chainId,
+      signature: null,
+      createdAt,
+      lastSeenAt: createdAt
+    });
+  }
+  const donation = {
+    id: `donation-${randomUUID()}`,
+    taskId: target.targetType === "agent" ? target.targetId : null,
+    targetType: target.targetType,
+    targetId: target.targetId,
+    sessionId: target.sessionId,
+    walletAddress,
+    chainId,
+    amount,
+    currency: "USDC",
+    feePercent: osaDonationFeePercent,
+    feeWallet: osaDonationFeeWallet.toLowerCase(),
+    feeAmount,
+    creatorAmount: Math.max(0, Math.round((amount - feeAmount) * 1_000_000) / 1_000_000),
+    status: "pledged",
+    txHash: body.tx_hash ? String(body.tx_hash).slice(0, 100) : null,
+    createdAt
+  };
+  store.agentDonations.unshift(donation);
+  event("agentgui_donation_pledged", "USDC donation pledged for Public catalog item", {
+    targetType: target.targetType,
+    targetId: target.targetId,
+    sessionId: donation.sessionId,
+    walletAddress,
+    amount,
+    currency: "USDC",
+    feeAmount,
+    feeWallet: donation.feeWallet
+  });
+  await saveStore();
+  return {
+    ok: true,
+    donation,
+    stats: agentGuiDonationStats(target.targetType, target.targetId),
+    fee: { percent: osaDonationFeePercent, wallet: osaDonationFeeWallet, amount: feeAmount },
+    agent: target.targetType === "agent" ? agentGuiTopAgents(100).find((item) => item.task_id === target.targetId) || null : null
   };
 }
 
@@ -3497,9 +4031,43 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       manager: { base_url: "", model: "OSA manager", uses_effective_agent_model: true },
       rooms: [
         { id: agentGuiHomeTeamId, name: "Home" },
-        { id: agentGuiPublicTeamId, name: "Public" }
+        { id: agentGuiPublicTeamId, name: "Public" },
+        { id: agentGuiPublicRoomsTeamId, name: "Public Rooms" },
+        { id: agentGuiPublicProjectsTeamId, name: "Public Projects" }
       ]
     });
+  }
+
+  if (method === "POST" && path === "/api/public/rooms/share") {
+    try {
+      return sendJson(res, 200, await shareAgentGuiRoom(await readJson(req)));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to share room" });
+    }
+  }
+
+  if (method === "POST" && path === "/api/public/projects/share") {
+    try {
+      return sendJson(res, 200, await shareAgentGuiProject(await readJson(req)));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to share project" });
+    }
+  }
+
+  if (method === "POST" && path === "/api/wallet/login") {
+    try {
+      return sendJson(res, 200, await connectAgentGuiWallet(await readJson(req)));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to connect wallet" });
+    }
+  }
+
+  if (method === "POST" && path === "/api/donations") {
+    try {
+      return sendJson(res, 201, await createAgentGuiDonation(await readJson(req)));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to record donation" });
+    }
   }
 
   if (method === "POST" && path === "/api/warmup") return sendJson(res, 200, { ok: true });
@@ -3604,6 +4172,14 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
   if (method === "GET" && path === "/api/top-agents") {
     const limit = Number(url.searchParams.get("limit") || 100);
     return sendJson(res, 200, { agents: agentGuiTopAgents(limit), generated_at: now() });
+  }
+  if (method === "GET" && path === "/api/top-rooms") {
+    const limit = Number(url.searchParams.get("limit") || 100);
+    return sendJson(res, 200, { agents: agentGuiRankedPublicCollections("room", limit), generated_at: now() });
+  }
+  if (method === "GET" && path === "/api/top-projects") {
+    const limit = Number(url.searchParams.get("limit") || 100);
+    return sendJson(res, 200, { agents: agentGuiRankedPublicCollections("project", limit), generated_at: now() });
   }
   if (method === "GET" && path === "/api/sessions/saved") return sendJson(res, 200, { dir: "", archives: [] });
 

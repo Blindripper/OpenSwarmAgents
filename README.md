@@ -5,17 +5,17 @@
 </p>
 
 <p align="center">
-  <strong>Your local AI agent office with a public idea market.</strong>
+  <strong>OSA is a local AI agent dashboard with a public copy market.</strong>
 </p>
 
 <p align="center">
-  Create agents in Home, decide what gets shared to Public, and watch the Top100 chart show which agents people actually copy.
+  Build agents privately, share the useful ones, copy what works, and let the Top100 charts show what people actually want.
 </p>
 
 <p align="center">
   <img alt="Node.js" src="https://img.shields.io/badge/Node.js-22%2B-339933" />
   <img alt="Local First" src="https://img.shields.io/badge/local--first-yes-0f766e" />
-  <img alt="User Owned" src="https://img.shields.io/badge/user--owned-agents-22d3ee" />
+  <img alt="Wallet Ready" src="https://img.shields.io/badge/wallet--ready-USDC-22d3ee" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
 </p>
 
@@ -23,42 +23,40 @@
   <img src="docs/assets/osa-dashboard-preview.png" alt="OpenSwarmAgents dashboard preview" width="920" />
 </p>
 
-## The Idea
+## What Is OSA?
 
-OpenSwarmAgents, short **OSA**, is a self-hosted dashboard for running and sharing AI agents.
+OpenSwarmAgents, short **OSA**, is an open dashboard for user-owned AI agents.
 
-Most agent platforms want to become the place where your prompts, keys, results, and workflows live. OSA takes the opposite angle:
+The idea is simple:
 
-- **Home** is your private agent workspace.
-- **Public** shows only agents that someone deliberately shared.
-- **Top100 AI Agents** ranks public agents by how often they were copied.
-- **Copy** brings a public agent idea into your Home so you can run your own version.
-- Your local node remains the control surface.
+- **Home** is private. Your agents, your rooms, your work.
+- **Public Agents** shows the latest agents people intentionally shared.
+- **Public Rooms** shows the latest shared rooms.
+- **Public Projects** shows the latest shared projects.
+- **Top100 AI Agents**, **Top100 Rooms**, and **Top100 Projects** rank public items by copy count.
+- **Copy** imports a public agent, room, or project into your own private workspace.
+- **Donate** lets people support the builder with USDC.
 
-So the vibe is simple: build useful agents, share the ones worth showing, let the copy count expose what people actually want.
+OSA is not trying to be a shiny prompt museum. It is closer to an agent bazaar: if something is useful, people copy it. If it keeps being useful, it climbs.
 
-## Current Dashboard
+## Screenshots
 
-| Home | Public |
+| Dashboard | Top100 AI Agents |
 | --- | --- |
-| ![OSA Home room](docs/assets/osa-home.png) | ![OSA Public room](docs/assets/osa-public.png) |
+| ![OSA dashboard](docs/assets/osa-dashboard-preview.png) | ![OSA Top100 AI Agents](docs/assets/osa-top100.png) |
 
-| Top100 AI Agents | First run |
+| Top100 Rooms | Top100 Projects |
 | --- | --- |
-| ![OSA Top100 AI Agents](docs/assets/osa-top100.png) | ![OSA first-run guidance](docs/assets/osa-onboarding.png) |
+| ![OSA Top100 Rooms](docs/assets/osa-top100-rooms.png) | ![OSA Top100 Projects](docs/assets/osa-top100-projects.png) |
 
-| Mobile |
-| --- |
-| ![OSA mobile view](docs/assets/osa-mobile.png) |
-
-## Install
+## Install Step By Step
 
 You need:
 
 - Git
 - Node.js 22 or newer
 - npm
-- Python 3 for local agent connectors
+- Python 3
 
 Install OSA:
 
@@ -66,24 +64,24 @@ Install OSA:
 curl -fsSL https://raw.githubusercontent.com/Blindripper/OpenSwarmAgents/main/scripts/install-node.sh | bash
 ```
 
-Start it:
+Start OSA:
 
 ```bash
 cd ~/.local/share/openswarmagents
 npm run dev
 ```
 
-Open:
+Open the dashboard:
 
 ```text
 http://127.0.0.1:8789
 ```
 
-The installer clones OSA, installs dependencies, builds the AgentGUI dashboard, and creates a local `.env` if needed.
+That is it. Home and Public start empty, because fake demo agents are annoying and nobody asked for a staged office party.
 
-## Fast Start
+## Fast Install
 
-Install and run in one command:
+Install and start in one command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Blindripper/OpenSwarmAgents/main/scripts/install-node.sh | bash -s -- --run
@@ -107,62 +105,116 @@ Open:
 http://127.0.0.1:8789
 ```
 
-## How To Use OSA
+If port `8789` is busy:
 
-1. Open the dashboard.
-2. Use **Home / Public** as the main workbench.
-3. Create an agent desk in **Home**.
-4. Run work locally from that desk.
-5. Keep the agent private, or switch it to **Public** on the desk card.
-6. Public visitors can copy it into their own Home.
-7. The **Top100 AI Agents** tab ranks public agents by copy count.
+```bash
+PORT=8790 npm run dev
+```
 
-Home and Public start empty. No demo tasks, no fake chart fillers, no preloaded "look how busy we are" theater.
+Then open:
 
-## Home
+```text
+http://127.0.0.1:8790
+```
 
-Home is where your agents live.
+## How To Use The Dashboard
 
-- Start new desks.
-- Pick or customize the agent profile.
-- Run local work.
-- Delete desks you no longer need.
-- Decide per agent whether it is private or shared to Public.
+1. Open **Home / Public**.
+2. Create a desk in **Home**.
+3. Choose an Agent Profile or keep the default OpenClaw agent.
+4. Give the agent a task.
+5. Keep it private, or switch the card from **Private** to **Public**.
+6. Create extra rooms with **+ Room** when Home gets too crowded.
+7. Share a whole room with **Share Room**.
+8. Share the current private workspace with **Share Project**.
+9. Open a Top100 tab to see what is being copied.
 
-Each Home agent card has a Public toggle. Off means private. On means it appears in Public as a copy-only listing.
+## Home, Rooms, And Projects
 
-## Public
+**Home** is your default private room. It is where new agents start.
 
-Public is the shared idea floor.
+Rooms are private work areas with their own desks. Use them for separate ideas, teams, experiments, or client work.
 
-- It starts empty.
-- It only shows agents that were explicitly shared.
-- Public agents cannot be edited or controlled by visitors.
-- The main action is **Copy**.
+A project is the current private workspace structure: Home plus your custom rooms and the agents inside them.
 
-Copying a public agent creates a new Home desk on your node. From there, it is yours to run, modify, improve, or keep private.
+You can share at three levels:
 
-## Top100 AI Agents
+- **Agent:** one useful agent task.
+- **Room:** a bundle of agents from one room.
+- **Project:** a larger bundle with multiple rooms and agents.
 
-The **Top100 AI Agents** tab is the chart board.
+Shared items become copy-only public listings. Other users can import them, but they do not control your original agents.
 
-- Rank 1 to 100.
-- Sorted by public copy count.
-- Shows agent title, model/source label, and copy total.
-- Copying from the chart also creates a Home desk.
+## Public Latest Views
 
-This is intentionally blunt. If an agent is useful, people copy it. If nobody copies it, it does not climb.
+The public dashboard has three latest rows:
+
+- **Public** shows latest public agents.
+- **Public Rooms** shows latest public rooms.
+- **Public Projects** shows latest public projects.
+
+Latest means newest shared item first. These rows are not the ranking board. They are the fresh feed.
+
+## Top100 Rankings
+
+OSA has three charts:
+
+- **Top100 AI Agents**
+- **Top100 Rooms**
+- **Top100 Projects**
+
+Each chart ranks public items by copy count. Rank `#1` means the item has been copied more often than the others in that category.
+
+Tie-breaker: newer public shares appear above older shares when copy counts are equal.
+
+## Copy Mechanics
+
+Copy does not take ownership of someone else's running agent. It creates your own private copy.
+
+- Copying an **agent** creates a new Home desk.
+- Copying a **room** creates a new private room with copies of its agents.
+- Copying a **project** creates private project rooms with copied agents.
+
+For rooms and projects, OSA shows a confirmation popup before importing. That popup is intentionally short: you should know when you are about to add a bundle of agents to your workspace.
+
+## Wallet Login And Donations
+
+Top100 entries have **Copy** and **Donate** buttons.
+
+Donate opens a USDC modal with:
+
+- `1 USDC`
+- `5 USDC`
+- custom amount
+
+Users connect an EVM wallet to identify themselves by pubkey. That wallet address is useful beyond donations: it can become the decentralized identity anchor for active agents, owners, reputation, copy history, and network presence.
+
+The current donation flow records a USDC donation intent in OSA. Production deployments should connect that intent to a real USDC transaction and verify the transaction hash before treating a donation as settled.
+
+OSA keeps **5%** of donations for development and operating costs. Think of it as the tiny infrastructure coffee tax. The fee wallet is:
+
+```text
+0x0D92d175943336E3Ad099e55FBe4248dC6fA947b
+```
+
+The remaining 95% belongs to the public item builder once real settlement is wired in.
+
+## Agent Profiles
+
+Agent Profiles are reusable worker presets.
+
+Use them when you want agents with different behavior, naming, or defaults. You can add and delete custom profiles from the dashboard. Built-in prototypes stay available as templates.
 
 ## Local Data
 
-OSA keeps runtime state local by default:
+OSA keeps runtime data local by default:
 
-- app state under `data/`
-- uploaded artifacts under `data/uploads`
-- local node identity under `data/node-identity.json`
-- browser workbench preferences in localStorage
+- app state in `data/`
+- uploads in `data/uploads`
+- node identity in `data/node-identity.json`
+- browser layout and UI preferences in localStorage
 
-Ignored runtime files stay out of Git:
+These files are intentionally not committed:
 
 - `.env`
 - `node_modules/`
@@ -173,7 +225,7 @@ Ignored runtime files stay out of Git:
 
 ## Docker
 
-For a local Compose setup:
+Local Compose:
 
 ```bash
 docker compose up
@@ -185,14 +237,14 @@ Open:
 http://127.0.0.1:8789
 ```
 
-For production-style local Compose:
+Production-style local Compose:
 
 ```bash
 cp .env.production.example .env.production
 chmod 600 .env.production
 ```
 
-Edit `.env.production` and replace:
+Edit `.env.production` and set a real password:
 
 ```text
 POSTGRES_PASSWORD=change-this-long-random-password
@@ -210,45 +262,36 @@ Check:
 curl http://127.0.0.1:8789/api/health
 ```
 
-Keep production nodes behind a reverse proxy, tunnel, VPN, or private network you control.
+Keep production nodes behind a reverse proxy, VPN, tunnel, or private network you control.
 
 ## Troubleshooting
 
-If the dashboard says the AgentGUI frontend is missing:
+If the AgentGUI frontend is missing:
 
 ```bash
 npm run build:agent-gui
 npm run dev
 ```
 
-If port `8789` is busy:
+If agents do not start, confirm Python 3 is installed and your local OpenClaw/Codex connector works from the same terminal.
+
+If the dashboard looks stale, rebuild the frontend:
 
 ```bash
-PORT=8790 npm run dev
+npm run build:agent-gui
 ```
-
-Then open:
-
-```text
-http://127.0.0.1:8790
-```
-
-If local agents do not start, confirm Python 3 is installed and that the local agent tool you want to use works from the same terminal.
 
 ## Developer Checks
 
 ```bash
-npm run build:agent-gui
 npm run check
+npm run build:agent-gui
 npm run check:browser
-npm --prefix vendor/agent-gui/frontend test
 ```
-
-The legacy release-candidate GitHub workflow is manual-only. It is kept as historical release machinery, not as the current commit gate.
 
 ## Project Map
 
-- `apps/server/src/server.mjs` - OSA server and AgentGUI adapter
+- `apps/server/src/server.mjs` - OSA server, API, public catalog, AgentGUI adapter
 - `apps/connector/connector.py` - local connector process
 - `vendor/agent-gui/frontend` - dashboard UI
 - `scripts/install-node.sh` - local installer
@@ -258,9 +301,3 @@ The legacy release-candidate GitHub workflow is manual-only. It is kept as histo
 ## License
 
 MIT
-
-## Support
-
-Running AI costs tokens. Unfortunately, OpenAI refuses to accept exposure.
-
-ETH: `0x0D92d175943336E3Ad099e55FBe4248dC6fA947b`

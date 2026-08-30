@@ -27,6 +27,9 @@ import "./styles/globals.css";
 const POLL_INTERVAL = 5000;
 const HOME_TEAM_ID = "home-room";
 const PUBLIC_TEAM_ID = "public-room";
+const PUBLIC_ROOMS_TEAM_ID = "public-rooms-room";
+const PUBLIC_PROJECTS_TEAM_ID = "public-projects-room";
+const PUBLIC_TEAM_IDS = new Set([PUBLIC_TEAM_ID, PUBLIC_ROOMS_TEAM_ID, PUBLIC_PROJECTS_TEAM_ID]);
 // Shown until the backend reports the selected model's real capability.
 const EMPTY_REASONING_OPTIONS: { value: ReasoningEffort; label: string }[] = [];
 
@@ -78,7 +81,7 @@ const legacyStorageKey = (name: string) => `${LEGACY_STORAGE_PREFIX}-${name}`;
 const WORKBENCH_LEGACY_KEY_V2 = legacyStorageKey("workbench-v2");
 const WORKBENCH_LEGACY_KEY_V1 = legacyStorageKey("workbench-v1");
 const ONBOARDING_DISMISSED_KEY = "osa-openclaw-onboarding-dismissed";
-type DashboardTab = "workbench" | "top100";
+type DashboardTab = "workbench" | "top-agents" | "top-rooms" | "top-projects";
 const STORAGE_KEYS = {
   codeTheme: { key: "osa-code-theme", legacy: [legacyStorageKey("code-theme")] },
   verbose: { key: "osa-verbose", legacy: [legacyStorageKey("verbose")] },
@@ -165,8 +168,16 @@ function makePublicTeam(desks: DeskItem[] = []): Team {
   return { id: PUBLIC_TEAM_ID, name: "Public", color: "purple", scene: "night", desks };
 }
 
+function makePublicRoomsTeam(desks: DeskItem[] = []): Team {
+  return { id: PUBLIC_ROOMS_TEAM_ID, name: "Public Rooms", color: "green", scene: "night", desks };
+}
+
+function makePublicProjectsTeam(desks: DeskItem[] = []): Team {
+  return { id: PUBLIC_PROJECTS_TEAM_ID, name: "Public Projects", color: "orange", scene: "night", desks };
+}
+
 function isPublicSession(session: Session): boolean {
-  return session.team_id === PUBLIC_TEAM_ID;
+  return PUBLIC_TEAM_IDS.has(session.team_id || "");
 }
 
 function isPrivateSession(session: Session): boolean {
@@ -175,7 +186,7 @@ function isPrivateSession(session: Session): boolean {
 
 function privateTeamId(session: Session): string {
   const id = session.team_id?.trim();
-  return id && id !== PUBLIC_TEAM_ID ? id : HOME_TEAM_ID;
+  return id && !PUBLIC_TEAM_IDS.has(id) ? id : HOME_TEAM_ID;
 }
 
 function makePrivateTeam(id: string, name?: string | null, desks: DeskItem[] = []): Team {
@@ -197,7 +208,7 @@ function mergeServerTeams(current: Team[], sessions: Session[]): Team[] {
   const placedPrivateIds = new Set<string>();
   const privateTeams: Team[] = [];
 
-  for (const sourceTeam of current.filter((team) => team.id !== PUBLIC_TEAM_ID)) {
+  for (const sourceTeam of current.filter((team) => !PUBLIC_TEAM_IDS.has(team.id))) {
     const teamId = sourceTeam.id || HOME_TEAM_ID;
     const desks = sourceTeam.desks
       .map((desk) => {
@@ -233,12 +244,19 @@ function mergeServerTeams(current: Team[], sessions: Session[]): Team[] {
     placedPrivateIds.add(session.id);
   }
 
-  const publicDesks = sessions.filter(isPublicSession);
+  const publicAgentDesks = sessions.filter((session) => session.team_id === PUBLIC_TEAM_ID);
+  const publicRoomDesks = sessions.filter((session) => session.team_id === PUBLIC_ROOMS_TEAM_ID);
+  const publicProjectDesks = sessions.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID);
   const orderedPrivate = [
     ...privateTeams.filter((team) => team.id === HOME_TEAM_ID),
     ...privateTeams.filter((team) => team.id !== HOME_TEAM_ID),
   ];
-  return [...orderedPrivate, makePublicTeam(publicDesks)];
+  return [
+    ...orderedPrivate,
+    makePublicTeam(publicAgentDesks),
+    makePublicRoomsTeam(publicRoomDesks),
+    makePublicProjectsTeam(publicProjectDesks),
+  ];
 }
 
 function serverTeamName(teamId: string, sessions: Session[]): string {
@@ -248,14 +266,18 @@ function serverTeamName(teamId: string, sessions: Session[]): string {
 }
 
 export default function App() {
-  const [teams, setTeams] = useState<Team[]>([makeHomeTeam(), makePublicTeam()]);
+  const [teams, setTeams] = useState<Team[]>([makeHomeTeam(), makePublicTeam(), makePublicRoomsTeam(), makePublicProjectsTeam()]);
   const [pendingTexts, setPendingTexts] = useState<Record<string, string>>({});
   const [justStartedId, setJustStartedId] = useState<string | null>(null);
   const [justStartedAnchor, setJustStartedAnchor] = useState<{ top: number; left: number } | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>("workbench");
   const [topAgents, setTopAgents] = useState<TopAgent[]>([]);
+  const [topRooms, setTopRooms] = useState<TopAgent[]>([]);
+  const [topProjects, setTopProjects] = useState<TopAgent[]>([]);
   const [topAgentsLoading, setTopAgentsLoading] = useState(false);
+  const [topRoomsLoading, setTopRoomsLoading] = useState(false);
+  const [topProjectsLoading, setTopProjectsLoading] = useState(false);
   const [preview, setPreview] = useState<FilePreviewData | null>(null);
   const panelZCounter = useRef(DESK_PANEL_Z_BASE);
   const [deskPanelZ, setDeskPanelZ] = useState<Record<string, number>>({});
@@ -477,6 +499,30 @@ export default function App() {
     }
   }, []);
 
+  const refreshTopRooms = useCallback(async () => {
+    setTopRoomsLoading(true);
+    try {
+      const r = await api.topRooms(100);
+      setTopRooms(r.agents ?? []);
+    } catch {
+      setTopRooms([]);
+    } finally {
+      setTopRoomsLoading(false);
+    }
+  }, []);
+
+  const refreshTopProjects = useCallback(async () => {
+    setTopProjectsLoading(true);
+    try {
+      const r = await api.topProjects(100);
+      setTopProjects(r.agents ?? []);
+    } catch {
+      setTopProjects([]);
+    } finally {
+      setTopProjectsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadSessions();
     api.openclaw.warmup().catch(() => {});
@@ -494,9 +540,17 @@ export default function App() {
     // Also re-pull the roster: profiles installed/changed on disk while the GUI
     // is open (e.g. install_profiles.sh) otherwise never appear until a reload.
     refreshTopAgents();
-    const poll = setInterval(() => { loadSessions(); refreshAgents(); refreshTopAgents(); }, POLL_INTERVAL);
+    refreshTopRooms();
+    refreshTopProjects();
+    const poll = setInterval(() => {
+      loadSessions();
+      refreshAgents();
+      refreshTopAgents();
+      refreshTopRooms();
+      refreshTopProjects();
+    }, POLL_INTERVAL);
     return () => clearInterval(poll);
-  }, [loadSessions, refreshAgents, refreshTopAgents]);
+  }, [loadSessions, refreshAgents, refreshTopAgents, refreshTopRooms, refreshTopProjects]);
 
   // Persist workbench to localStorage on every change
   useEffect(() => {
@@ -1015,18 +1069,18 @@ export default function App() {
   }
 
   function addDeskToTeam(teamId: string) {
-    if (teamId === PUBLIC_TEAM_ID) return;
+    if (PUBLIC_TEAM_IDS.has(teamId)) return;
     setTeams((prev) => prev.map((t) =>
       t.id === teamId ? { ...t, desks: [...t.desks, makePending()] } : t
     ));
   }
 
   function addRoom() {
-    const roomNumber = teams.filter((team) => team.id !== PUBLIC_TEAM_ID).length;
+    const roomNumber = teams.filter((team) => team.id !== HOME_TEAM_ID && !PUBLIC_TEAM_IDS.has(team.id)).length + 1;
     const id = `room-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     setTeams((prev) => {
       const next = [...prev];
-      const publicIndex = next.findIndex((team) => team.id === PUBLIC_TEAM_ID);
+      const publicIndex = next.findIndex((team) => PUBLIC_TEAM_IDS.has(team.id));
       const room = makePrivateTeam(id, `Room ${roomNumber}`, [makePending()]);
       if (publicIndex >= 0) next.splice(publicIndex, 0, room);
       else next.push(room);
@@ -1035,7 +1089,7 @@ export default function App() {
   }
 
   async function deleteRoom(teamId: string) {
-    if (teamId === HOME_TEAM_ID || teamId === PUBLIC_TEAM_ID) return;
+    if (teamId === HOME_TEAM_ID || PUBLIC_TEAM_IDS.has(teamId)) return;
     const team = teams.find((item) => item.id === teamId);
     if (!team) return;
     const realDesks = team.desks.filter((desk) => !("isPending" in desk)) as Session[];
@@ -1102,25 +1156,38 @@ export default function App() {
   }
 
   async function copyDeskToHome(sessionId: string) {
+    if (sessionId.startsWith("public-room-")) {
+      const ok = window.confirm("Copy this Public Room into your private workspace? OSA will create a new room with copies of its agents. The original Public Room stays untouched.");
+      if (!ok) return;
+    }
+    if (sessionId.startsWith("public-project-")) {
+      const ok = window.confirm("Copy this Public Project into your private workspace? OSA will create private project rooms with copied agents. The Public Project stays untouched.");
+      if (!ok) return;
+    }
     try {
       const copied = await api.sessions.copy(sessionId);
-      const sessionRaw = copied.session ?? await api.sessions.get(copied.session_id);
-      const session: Session = {
+      const sessionIds = copied.session_ids?.length ? copied.session_ids : [copied.session_id];
+      const loaded = await Promise.all(sessionIds.map(async (id) => (
+        id === copied.session?.id && copied.session ? copied.session : api.sessions.get(id)
+      )));
+      const loadedSessions: Session[] = loaded.map((sessionRaw) => ({
         ...sessionRaw,
         title: sessionRaw.title?.trim() || "Copied Public task",
-      };
-      const nextSessions = sessionsRef.current.some((s) => s.id === session.id)
-        ? sessionsRef.current.map((s) => (s.id === session.id ? session : s))
-        : [...sessionsRef.current, session];
+      }));
+      const byId = new Map(sessionsRef.current.map((session) => [session.id, session]));
+      for (const session of loadedSessions) byId.set(session.id, session);
+      const nextSessions = [...byId.values()];
       sessionsRef.current = nextSessions;
       setSessions(nextSessions);
-      setFocusedDeskId(session.id);
+      setFocusedDeskId(loadedSessions[0]?.id || copied.session_id);
       setActivePendingDeskId(null);
-      setJustStartedId(session.id);
+      setJustStartedId(loadedSessions[0]?.id || copied.session_id);
       setJustStartedAnchor(null);
       setTeams((prev) => mergeServerTeams(prev, nextSessions));
       setDashboardTab("workbench");
       void refreshTopAgents();
+      void refreshTopRooms();
+      void refreshTopProjects();
     } catch (e) {
       window.alert((e as Error).message || "Couldn't copy this Public agent into Home.");
     }
@@ -1137,6 +1204,53 @@ export default function App() {
       await refreshTopAgents();
     } catch (e) {
       window.alert((e as Error).message || "Couldn't update Public sharing.");
+    }
+  }
+
+  async function shareRoom(teamId: string) {
+    const team = teams.find((item) => item.id === teamId);
+    const hasSession = team?.desks.some((desk) => !("isPending" in desk));
+    if (!team || !hasSession) {
+      window.alert("Add at least one agent to this room before sharing it.");
+      return;
+    }
+    try {
+      await api.publicRooms.share({
+        team_id: team.id,
+        team_name: team.name || serverTeamName(team.id, sessionsRef.current),
+        shared: true,
+      });
+      const latest = await api.sessions.list(50);
+      sessionsRef.current = latest;
+      setSessions(latest);
+      setTeams((prev) => mergeServerTeams(prev, latest));
+      await refreshTopRooms();
+    } catch (e) {
+      window.alert((e as Error).message || "Couldn't share this room.");
+    }
+  }
+
+  async function shareProject() {
+    const privateTeams = teams.filter((team) => !PUBLIC_TEAM_IDS.has(team.id));
+    const privateSessions = privateTeams.flatMap((team) => team.desks).filter((desk) => !("isPending" in desk));
+    if (!privateSessions.length) {
+      window.alert("Add at least one private agent before sharing a project.");
+      return;
+    }
+    const ok = window.confirm("Share the current private workspace as a Public Project? OSA will publish the project structure and its agent tasks for copy-only reuse.");
+    if (!ok) return;
+    try {
+      await api.publicProjects.share({
+        name: "OSA Project",
+        rooms: privateTeams.map((team) => ({ id: team.id, name: team.name || serverTeamName(team.id, sessionsRef.current) })),
+      });
+      const latest = await api.sessions.list(50);
+      sessionsRef.current = latest;
+      setSessions(latest);
+      setTeams((prev) => mergeServerTeams(prev, latest));
+      await refreshTopProjects();
+    } catch (e) {
+      window.alert((e as Error).message || "Couldn't share this project.");
     }
   }
 
@@ -1247,7 +1361,7 @@ export default function App() {
     removeStoredItems(WORKBENCH_KEY_V2, [WORKBENCH_LEGACY_KEY_V2]);
     removeStoredItems(WORKBENCH_KEY_V1, [WORKBENCH_LEGACY_KEY_V1]);
     setPendingTexts({});
-    setTeams([makeHomeTeam(), makePublicTeam()]);
+    setTeams([makeHomeTeam(), makePublicTeam(), makePublicRoomsTeam(), makePublicProjectsTeam()]);
     try {
       const r = await api.docker.cleanup();
       if (r.skipped) {
@@ -1381,14 +1495,18 @@ export default function App() {
       }}>
         {([
           ["workbench", "Home / Public"],
-          ["top100", "Top100 AI Agents"],
+          ["top-agents", "Top100 AI Agents"],
+          ["top-rooms", "Top100 Rooms"],
+          ["top-projects", "Top100 Projects"],
         ] as const).map(([id, label]) => (
           <button
             key={id}
             type="button"
             onClick={() => {
               setDashboardTab(id);
-              if (id === "top100") void refreshTopAgents();
+              if (id === "top-agents") void refreshTopAgents();
+              if (id === "top-rooms") void refreshTopRooms();
+              if (id === "top-projects") void refreshTopProjects();
             }}
             style={{
               height: 30,
@@ -1423,13 +1541,60 @@ export default function App() {
         >
           + Room
         </button>
+        <button
+          type="button"
+          onClick={() => void shareProject()}
+          title="Share the current private workspace to Public Projects"
+          style={{
+            height: 30,
+            padding: "0 12px",
+            borderRadius: 6,
+            border: "1px solid #2a8c72",
+            background: "#10251f",
+            color: "#7ee0c2",
+            fontSize: 12,
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          Share Project
+        </button>
       </div>
-      {dashboardTab === "top100" ? (
+      {dashboardTab === "top-agents" ? (
         <TopAgentsPanel
           agents={topAgents}
+          title="Top100 AI Agents"
+          subtitle="Agents ranked by Public copies. Copy one into Home or donate USDC to its builder."
+          emptyText="Share a Home agent to Public to start the agent chart."
+          entityLabel="agent"
           loading={topAgentsLoading}
           onRefresh={refreshTopAgents}
           onCopy={copyDeskToHome}
+          onDonateRecorded={refreshTopAgents}
+        />
+      ) : dashboardTab === "top-rooms" ? (
+        <TopAgentsPanel
+          agents={topRooms}
+          title="Top100 Rooms"
+          subtitle="Rooms ranked by copies. Copy a room to get its agents in a fresh private room."
+          emptyText="Share a room to Public Rooms to start the room chart."
+          entityLabel="room"
+          loading={topRoomsLoading}
+          onRefresh={refreshTopRooms}
+          onCopy={copyDeskToHome}
+          onDonateRecorded={refreshTopRooms}
+        />
+      ) : dashboardTab === "top-projects" ? (
+        <TopAgentsPanel
+          agents={topProjects}
+          title="Top100 Projects"
+          subtitle="Projects ranked by copies. Copy a project to import its rooms and agents."
+          emptyText="Share a project to Public Projects to start the project chart."
+          entityLabel="project"
+          loading={topProjectsLoading}
+          onRefresh={refreshTopProjects}
+          onCopy={copyDeskToHome}
+          onDonateRecorded={refreshTopProjects}
         />
       ) : (
         <Office
@@ -1466,6 +1631,7 @@ export default function App() {
           onAddDesk={addDeskToTeam}
           onCopyDesk={copyDeskToHome}
           onPublicShareChange={setPublicShare}
+          onShareTeam={shareRoom}
           onDeleteTeam={deleteRoom}
           onTeamSceneChange={setTeamScene}
           onTeamRename={renameTeam}

@@ -76,6 +76,8 @@ try {
   await expectText(page, "body", "Home");
   await expectText(page, "body", "Public");
   await expectText(page, "body", "Top100 AI Agents");
+  await expectText(page, "body", "Top100 Rooms");
+  await expectText(page, "body", "Top100 Projects");
   assert(!(await page.locator("body").innerText()).includes("Open agent voting quality benchmark"), "legacy example tasks should not render");
   assert(await page.getByRole("button", { name: "Copy" }).count() === 0, "Public should not render example Copy buttons");
   assert(await page.locator('button[title="Delete this room"]').count() === 0, "Home/Public should not be removable");
@@ -119,15 +121,78 @@ try {
   top = await getJson("/api/top-agents?limit=100");
   assert(top.agents[0]?.rank === 1, "Top100 should rank copied Public agents");
   assert(top.agents[0]?.copy_count === 1, "Top100 should count copies");
+  assert(top.agents[0]?.donation_total_usdc === 0, "Top100 should expose donation totals");
+
+  const walletAddress = "0x0000000000000000000000000000000000000abc";
+  const wallet = await postJson("/api/wallet/login", { address: walletAddress, chain_id: "0x1" });
+  assert(wallet.wallet?.address === walletAddress, "wallet login should store the connected pubkey");
+  const donation = await postJson("/api/donations", {
+    session_id: publicSession.id,
+    amount: 5,
+    wallet_address: walletAddress,
+    chain_id: "0x1"
+  });
+  assert(donation.donation?.currency === "USDC", "donations should be denominated in USDC");
+  top = await getJson("/api/top-agents?limit=100");
+  assert(top.agents[0]?.donation_count === 1, "Top100 should count donations");
+  assert(top.agents[0]?.donation_total_usdc === 5, "Top100 should sum USDC donations");
+  assert(top.agents[0]?.osa_fee_total_usdc === 0.25, "Top100 should expose the OSA donation fee total");
+
+  const roomShare = await postJson("/api/public/rooms/share", {
+    team_id: "room-launch",
+    team_name: "Launch",
+    shared: true
+  });
+  assert(roomShare.room?.id?.startsWith("public-room-"), "rooms should be shareable to Public Rooms");
+  let topRooms = await getJson("/api/top-rooms?limit=100");
+  assert(topRooms.agents[0]?.rank === 1, "Top100 Rooms should rank shared rooms");
+  const roomCopy = await postJson(`/api/sessions/${encodeURIComponent(roomShare.room.id)}/copy`, {});
+  assert(roomCopy.session_ids?.length === 1, "copying a Public Room should copy its agents into a private room");
+  topRooms = await getJson("/api/top-rooms?limit=100");
+  assert(topRooms.agents[0]?.copy_count === 1, "Top100 Rooms should count room copies");
+
+  const projectShare = await postJson("/api/public/projects/share", {
+    name: "Browser E2E Project",
+    rooms: [
+      { id: "home-room", name: "Home" },
+      { id: "room-launch", name: "Launch" }
+    ]
+  });
+  assert(projectShare.project?.id?.startsWith("public-project-"), "projects should be shareable to Public Projects");
+  let topProjects = await getJson("/api/top-projects?limit=100");
+  assert(topProjects.agents[0]?.rank === 1, "Top100 Projects should rank shared projects");
+  const projectCopy = await postJson(`/api/sessions/${encodeURIComponent(projectShare.project.id)}/copy`, {});
+  assert(projectCopy.session_ids?.length >= 2, "copying a Public Project should copy multiple agents");
+  await postJson("/api/donations", {
+    session_id: projectShare.project.id,
+    amount: 1,
+    wallet_address: walletAddress,
+    chain_id: "0x1"
+  });
+  topProjects = await getJson("/api/top-projects?limit=100");
+  assert(topProjects.agents[0]?.donation_total_usdc === 1, "Top100 Projects should sum project donations");
 
   await page.reload({ waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Enter Home" }).click().catch(() => {});
   await expectText(page, "body", "Build a small market-research agent");
   await expectText(page, "body", "Public");
+  await expectText(page, "body", "Public Rooms");
+  await expectText(page, "body", "Public Projects");
+  await expectText(page, "body", "Latest public agents.");
+  await expectText(page, "body", "Latest public rooms.");
+  await expectText(page, "body", "Latest public projects.");
   await expectText(page, "body", "1 copies");
   await page.getByRole("button", { name: "Top100 AI Agents" }).click();
   await expectText(page, "body", "#1");
   await expectText(page, "body", "Build a small market-research agent");
+  await expectText(page, "body", "Donate");
+  await expectText(page, "body", "5 USDC");
+  await page.getByRole("button", { name: "Top100 Rooms" }).click();
+  await expectText(page, "body", "Top100 Rooms");
+  await expectText(page, "body", "Launch");
+  await page.getByRole("button", { name: "Top100 Projects" }).click();
+  await expectText(page, "body", "Top100 Projects");
+  await expectText(page, "body", "Browser E2E Project");
 
   shared = await postJson(`/api/sessions/${encodeURIComponent(created.session_id)}/share`, { shared: false });
   assert(shared.shared_public === false, "Home agent should be removable from Public");

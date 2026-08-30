@@ -1840,20 +1840,25 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
               );
             })()}
             {readOnly ? (
-              <button
-                onClick={(e) => { e.stopPropagation(); void handleCopy(); }}
-                disabled={!onCopy || copying}
-                title="Copy this Public agent into Home"
-                style={{
-                  marginTop: 8, padding: "3px 14px", borderRadius: 6, fontSize: 11,
-                  background: copying ? "var(--bg)" : "var(--accent2)",
-                  color: copying ? "var(--text-dim)" : "white",
-                  border: "1px solid var(--card-border)",
-                  cursor: !onCopy || copying ? "default" : "pointer",
-                }}
-              >
-                {copying ? "Copying..." : copyLabel}
-              </button>
+              <div style={{ display: "grid", justifyItems: "center", gap: 5, marginTop: 8 }}>
+                <div style={{ fontSize: 10, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>
+                  {Math.max(0, Number(session.copy_count || 0))} copies
+                </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); void handleCopy(); }}
+                  disabled={!onCopy || copying}
+                  title="Copy this Public agent into Home"
+                  style={{
+                    padding: "3px 14px", borderRadius: 6, fontSize: 11,
+                    background: copying ? "var(--bg)" : "var(--accent2)",
+                    color: copying ? "var(--text-dim)" : "white",
+                    border: "1px solid var(--card-border)",
+                    cursor: !onCopy || copying ? "default" : "pointer",
+                  }}
+                >
+                  {copying ? "Copying..." : copyLabel}
+                </button>
+              </div>
             ) : !isRunning ? (
               <button
                 onClick={(e) => { e.stopPropagation(); handleResume(); }}

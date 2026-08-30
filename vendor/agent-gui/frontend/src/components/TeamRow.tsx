@@ -526,6 +526,7 @@ export interface TeamRowProps {
   canAddDesk?: boolean;
   onCopyDesk?: (sessionId: string) => void;
   onPublicShareChange?: (sessionId: string, shared: boolean) => void;
+  onShareTeam?: () => void;
   onAddDesk: () => void;
   onSessionInterrupt?: (id: string) => void;
   onPendingMsgChange?: (id: string, msg: string) => void;
@@ -560,7 +561,7 @@ export function TeamRow({
   onAvatarClick,
   onAskManagerDone, onPreview, onDeskStart, onDeskClose,
   deskPanelZ, onDeskPanelActivate,
-  readOnly = false, canAddDesk = true, onCopyDesk, onPublicShareChange, onAddDesk, onSessionInterrupt, onPendingMsgChange, onPendingAssignmentPatch, onDeskAskManager, onAgentDragStart,
+  readOnly = false, canAddDesk = true, onCopyDesk, onPublicShareChange, onShareTeam, onAddDesk, onSessionInterrupt, onPendingMsgChange, onPendingAssignmentPatch, onDeskAskManager, onAgentDragStart,
   searchMatchIds,
   toolsets, reasoningValue, reasoningOptions,
   onDeskConfigProfileChange, onDeskConfigModelChange, onDeskConfigToolsChange, onDeskConfigReasoningChange,
@@ -1089,6 +1090,21 @@ export function TeamRow({
                   <TeamNameLabel label={teamLabel} onRename={onTeamRename} chrome={chrome} />
                 </div>
               </div>
+              {readOnly && (
+                <div style={{
+                  width: "100%",
+                  maxWidth: 190,
+                  color: "var(--text-dim)",
+                  fontSize: 10.5,
+                  lineHeight: 1.35,
+                }}>
+                  {team.id === "public-rooms-room"
+                    ? "Latest public rooms."
+                    : team.id === "public-projects-room"
+                      ? "Latest public projects."
+                      : "Latest public agents."}
+                </div>
+              )}
               <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
                 {!readOnly && onSceneChange && (
                   <select
@@ -1121,6 +1137,27 @@ export function TeamRow({
                       display: "flex", alignItems: "center", justifyContent: "center",
                     }}
                   >×</button>
+                )}
+                {!readOnly && onShareTeam && (
+                  <button
+                    type="button"
+                    onClick={onShareTeam}
+                    title="Share this room to Public Rooms"
+                    style={{
+                      height: 20,
+                      borderRadius: 4,
+                      border: `1px solid ${chrome.controlBorder}`,
+                      background: chrome.controlBg,
+                      color: chrome.controlColor,
+                      fontSize: 10.5,
+                      lineHeight: 1,
+                      cursor: "pointer",
+                      padding: "0 6px",
+                      fontWeight: 800,
+                    }}
+                  >
+                    Share Room
+                  </button>
                 )}
               </div>
               <div style={{

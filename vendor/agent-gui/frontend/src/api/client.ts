@@ -15,6 +15,13 @@ export interface OpenClawStatus {
   install_hint?: string;
 }
 
+export interface WalletSession {
+  address: string;
+  chain_id?: string | null;
+  connected_at?: string;
+  last_seen_at?: string;
+}
+
 async function errorDetail(r: Response): Promise<string> {
   try {
     const j = await r.json();
@@ -118,7 +125,7 @@ export const api = {
         ...(api_mode !== undefined ? { api_mode } : {}),
       }),
     copy: (id: string) =>
-      post<{ ok: boolean; session_id: string; workspace_path?: string | null; response: string; session?: Session; agent?: string | null }>(
+      post<{ ok: boolean; session_id: string; session_ids?: string[]; workspace_path?: string | null; response: string; session?: Session; agent?: string | null }>(
         `/sessions/${encodeURIComponent(id)}/copy`,
         {},
       ),
@@ -283,6 +290,32 @@ export const api = {
   },
   topAgents: (limit = 100) =>
     get<{ agents: TopAgent[]; generated_at: string }>(`/top-agents?limit=${limit}`),
+  topRooms: (limit = 100) =>
+    get<{ agents: TopAgent[]; generated_at: string }>(`/top-rooms?limit=${limit}`),
+  topProjects: (limit = 100) =>
+    get<{ agents: TopAgent[]; generated_at: string }>(`/top-projects?limit=${limit}`),
+  wallet: {
+    login: (body: { address: string; chain_id?: string | null; signature?: string | null }) =>
+      post<{ ok: boolean; wallet: WalletSession }>("/wallet/login", body),
+  },
+  donations: {
+    create: (body: { session_id?: string; target_type?: "agent" | "room" | "project"; target_id?: string; amount: number; wallet_address: string; chain_id?: string | null }) =>
+      post<{
+        ok: boolean;
+        donation: { id: string; amount: number; currency: "USDC"; status: "pledged"; createdAt: string; feeAmount?: number; creatorAmount?: number };
+        stats: { donation_count: number; donation_total_usdc: number; osa_fee_total_usdc?: number };
+        fee?: { percent: number; wallet: string; amount: number };
+        agent?: TopAgent | null;
+      }>("/donations", body),
+  },
+  publicRooms: {
+    share: (body: { team_id: string; team_name?: string; shared?: boolean }) =>
+      post<{ ok: boolean; shared_public: boolean; room?: Session }>("/public/rooms/share", body),
+  },
+  publicProjects: {
+    share: (body: { name?: string; rooms?: { id: string; name?: string }[] }) =>
+      post<{ ok: boolean; shared_public: boolean; project?: Session }>("/public/projects/share", body),
+  },
   search: (q: string) => get<Session[]>(`/search?q=${encodeURIComponent(q)}`),
   file: {
     preview: (path: string) =>

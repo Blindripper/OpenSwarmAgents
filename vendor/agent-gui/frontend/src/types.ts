@@ -34,8 +34,13 @@ export interface Session {
   /** OSA: whether this Home desk is visible in Public. */
   shared_public?: boolean;
   shared_public_at?: string | null;
+  public_rank?: number | null;
+  public_kind?: "agent" | "room" | "project";
   copy_count?: number;
   last_copied_at?: string | null;
+  donation_count?: number;
+  donation_total_usdc?: number;
+  osa_fee_total_usdc?: number;
   connector_status?: string | null;
   connector_exit_code?: number | null;
   connector_error?: string | null;
@@ -44,6 +49,8 @@ export interface Session {
 export interface TopAgent {
   id: string;
   task_id: string;
+  target_type?: "agent" | "room" | "project";
+  target_id?: string;
   rank: number;
   title: string;
   summary: string;
@@ -51,6 +58,11 @@ export interface TopAgent {
   model: string;
   goal: string;
   copy_count: number;
+  donation_count?: number;
+  donation_total_usdc?: number;
+  osa_fee_total_usdc?: number;
+  item_count?: number;
+  owner_wallet_address?: string | null;
   shared_at: string;
   last_copied_at?: string | null;
 }
