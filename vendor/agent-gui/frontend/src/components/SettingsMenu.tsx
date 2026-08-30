@@ -181,8 +181,8 @@ export function SettingsMenu({
                 />
               </div>
               <div style={{ fontSize: 9, color: "var(--text-dim)", opacity: 0.75, lineHeight: 1.35 }}>
-                Patrol: how often she walks the floor when a desk looks unfinished.
-                Grace: skip audit if activity was this recent.
+                Manager: optional QA helper. She checks idle desks, runs progress/audit checks, and leaves guidance when an agent looks stuck.
+                Patrol controls how often she checks; grace skips desks with very recent activity.
               </div>
             </div>
           )}

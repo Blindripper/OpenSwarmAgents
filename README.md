@@ -35,7 +35,7 @@ OpenSwarmAgents, short **OSA**, is a local dashboard for building and publishing
 
 - **Home** is your private workspace.
 - **+ Room** creates extra private rooms inside the same project.
-- **Share Project** publishes the complete project: Home, custom rooms, and all agents inside them.
+- **Share Project** publishes the complete project: Home, custom rooms, and all agents inside them. OSA asks separately before including the File Repo.
 - **Latest Projects** shows the newest shared projects entering the public network.
 - **Top100 Projects** ranks public projects by copy count.
 - **Copy** imports a public project into your own private workspace.
@@ -44,6 +44,13 @@ OpenSwarmAgents, short **OSA**, is a local dashboard for building and publishing
 - **Wallet login is mandatory** because wallet public keys anchor project ownership, reviews, donations, and future `$OSA` work rewards.
 
 OSA no longer splits the public marketplace into separate Agents, Rooms, and Projects. A project is the product unit. That keeps the network understandable: users copy a complete working setup, not a loose card with missing context.
+
+The dashboard starts with only two rooms:
+
+- **Home** for private work
+- **Latest Projects** for copy-only public projects
+
+An example project is included in Latest Projects and Top100 Projects so you can test Copy, Donate, and Review without creating fake Home work.
 
 ## Demo
 
@@ -126,9 +133,14 @@ PORT=8790 npm run dev
 4. Start the agent.
 5. Add private rooms with **+ Room** when the project needs structure.
 6. Click **Share Project** when the whole setup is worth publishing.
-7. Watch new entries appear in **Latest Projects**.
-8. Open **Top100 Projects** to see which public projects are being copied.
-9. Copy, donate, and review public projects from your wallet identity.
+7. Decide whether the project's File Repo should be shared too.
+8. Watch new entries appear in **Latest Projects**.
+9. Open **Top100 Projects** to see which public projects are being copied.
+10. Copy, donate, and review public projects from your wallet identity.
+
+The topbar shows the live network state, public project count, active working agents, copy count, **Earned Donations**, and the connected wallet's `$OSA` balance. Until the token is deployed and balance reads are configured, that balance is shown honestly as `0 OSA`.
+
+Use **Save/Load Project** to save the current local project layout in this browser and restore it later. Use **Reset** when you want a clean slate: it cancels/removes private agent work, clears private rooms and pending prompts, and keeps Latest Projects as the public network feed.
 
 ## Project Sharing
 
@@ -140,6 +152,7 @@ A project includes:
 - every custom private room
 - all agents inside those rooms
 - project metadata
+- optional File Repo metadata/files when you confirm that sharing is safe
 - copy and donation counters
 - review stats
 - wallet owner identity when available
@@ -181,6 +194,10 @@ Before import, OSA shows a confirmation popup. After confirmation, the copied pr
 
 This keeps the network safe and sane: copying means "give me my own version", not "remote-control someone else's agents."
 
+## Manager
+
+Each private room can show a small **Manager** station. The manager is an optional QA helper for local work: it checks idle desks, runs progress/audit checks, and leaves guidance when an agent looks stuck. It is not a public moderator and it does not manage other users' projects.
+
 ## Wallet Login
 
 Wallet login is mandatory.
@@ -193,6 +210,7 @@ OSA uses the connected EVM public key for:
 - project reviews
 - future `$OSA` work rewards
 - decentralized reputation and anti-spam signals
+- showing the current `$OSA` balance in the dashboard topbar
 
 The current dashboard login asks the wallet for an account address and chain id. It does not request a private key and does not send a transaction.
 
@@ -276,7 +294,7 @@ One wallet can update its own review for a project. This keeps feedback useful a
 
 Agent Profiles are reusable worker presets. They define names, behavior, model defaults, and tool defaults for agents you run in Home.
 
-You can create and delete custom profiles from the dashboard. Built-in OpenClaw/Codex profiles stay available as templates.
+You can create and delete custom profiles from the dashboard. Built-in OpenClaw/Codex profiles stay available as templates, and OSA includes example profiles such as **Market Scout**, **Product Builder**, and **Tokenomics Analyst** with their own Soul/Memory so users can understand what a useful agent personality looks like.
 
 ## Local Data
 

@@ -19,7 +19,7 @@ export function OpenClawOnboarding({ status, onRefresh, onClose }: Props) {
           <img src="/osa-logo.svg" alt="OSA" width={38} height={38} style={{ flexShrink: 0 }} />
           <div style={{ minWidth: 0 }}>
             <div style={titleStyle}>OSA</div>
-            <div style={subtitleStyle}>Agent Chain</div>
+            <div style={subtitleStyle}>Wallet Project Network</div>
           </div>
         </div>
 

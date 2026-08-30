@@ -22,6 +22,7 @@ try {
       OSA_LOCAL_PASSWORD_REQUIRED: "1",
       OSA_DEMO_ENDPOINTS: "0",
       OSA_RATE_LIMIT_MULTIPLIER: "0",
+      AGENTSWARM_PROPOSAL_VOTING_MS: "1",
       OSA_GITHUB_CLIENT_ID: "rc-smoke-github-client",
       OSA_GITHUB_CLIENT_SECRET: "rc-smoke-github-secret"
     },
@@ -38,13 +39,19 @@ try {
   assert(health.runtime.localPasswordRequired === true, "local password should be required in smoke");
   assert(health.runtime.node?.nodeId, "node identity should be public");
 
-  const shell = await fetch(`${baseUrl}/`);
+  const rootShell = await fetch(`${baseUrl}/`, { redirect: "manual" });
+  assert(rootShell.status === 302 && rootShell.headers.get("location") === "/agent-gui/", "root should redirect to AgentGUI");
+  const shell = await fetch(`${baseUrl}/agent-gui/`);
+  const shellText = await shell.text();
   const csp = shell.headers.get("content-security-policy") || "";
+  const scriptSrc = csp.split(";").map((part) => part.trim()).find((part) => part.startsWith("script-src")) || "";
   assert(shell.ok, "app shell should be served");
   assert(csp.includes("script-src 'self'"), "CSP should restrict scripts to same origin");
-  assert(!csp.includes("unsafe-inline"), "CSP should not allow inline scripts");
-  assert((await shell.text()).includes("/theme-init.js"), "app shell should load the external theme bootstrap");
-  const appJs = await (await fetch(`${baseUrl}/app.js`)).text();
+  assert(!scriptSrc.includes("unsafe-inline"), "CSP should not allow inline scripts");
+  assert(shellText.includes("<title>OSA</title>"), "AgentGUI app shell should be served");
+  const appScriptPath = shellText.match(/<script[^>]+src=\"([^\"]+)\"/)?.[1];
+  assert(appScriptPath, "AgentGUI app shell should load an external JS bundle");
+  const appJs = await (await fetch(`${baseUrl}${appScriptPath}`)).text();
   assert(!appJs.includes("agentswarmWorkerConnectorToken"), "browser app should not persist raw connector tokens");
 
   const lockedState = await getJson("/api/state");
@@ -160,10 +167,13 @@ try {
     },
     votingConnectorHeaders
   );
+  await delay(5);
   const connectorAuditState = await getJson("/api/state", headers);
   const usedVotingConnector = connectorAuditState.viewerConnectors.find((item) => item.id === votingConnector.connector.id);
   assert(usedVotingConnector?.useCount >= 1, "connector audit should count scoped token use");
   assert(usedVotingConnector?.lastUsedPath === "/api/voting/connect", "connector audit should record the last used API path");
+  const workerGoalId = connectorAuditState.goals.find((goal) => goal.sourceProposalId === proposal.proposal.id)?.id;
+  assert(workerGoalId, "smoke proposal should promote into a worker goal");
   const rotatedVotingConnector = await postJson(`/api/connectors/${votingConnector.connector.id}/rotate`, {}, headers);
   assert(rotatedVotingConnector.token.startsWith("osa_conn_"), "rotated connector should return a fresh raw token once");
   assert(rotatedVotingConnector.connector.rotatedFromId === votingConnector.connector.id, "rotated connector should link to previous token");
@@ -174,7 +184,7 @@ try {
     "/api/connectors/token",
     {
       mode: "worker",
-      goalId: "goal-agent-collab",
+      goalId: workerGoalId,
       name: "RC Worker Agent",
       capabilities: ["research", "review"],
       models: ["connector:stub"]
@@ -187,7 +197,7 @@ try {
     "/api/agents/register",
     {
       name: "RC Worker Agent",
-      goalId: "goal-agent-collab",
+      goalId: workerGoalId,
       capabilities: ["research", "review"],
       models: ["connector:stub"]
     },
@@ -197,14 +207,14 @@ try {
     "/api/tasks/claim",
     {
       agentId: worker.agent.id,
-      goalId: "goal-water"
+      goalId: "goal-does-not-belong-to-this-agent"
     },
     connectorHeaders
   );
-  assert(claimed.task?.goalId === "goal-agent-collab", "task claim should stay scoped to the agent goal");
+  assert(claimed.task?.goalId === workerGoalId, "task claim should stay scoped to the agent goal");
   await expectStatus("/api/artifacts/upload", 403, {
     agentId: vote.agent.id,
-    goalId: "goal-agent-collab",
+    goalId: workerGoalId,
     taskId: claimed.task.id,
     name: "spoofed.md",
     kind: "code",
@@ -215,7 +225,7 @@ try {
     "/api/artifacts/upload",
     {
       agentId: worker.agent.id,
-      goalId: "goal-agent-collab",
+      goalId: workerGoalId,
       taskId: claimed.task.id,
       name: "scoped-worker.md",
       kind: "code",
@@ -225,7 +235,7 @@ try {
     connectorHeaders
   );
   assert(scopedArtifact.artifact.agentId === worker.agent.id, "connector artifact should be attributed to its agent");
-  assert(scopedArtifact.artifact.goalId === "goal-agent-collab", "connector artifact should stay in its scoped goal");
+  assert(scopedArtifact.artifact.goalId === workerGoalId, "connector artifact should stay in its scoped goal");
 
   await expectStatus(`/api/tasks/${claimed.task.id}/result`, 400, {
     agentId: worker.agent.id,

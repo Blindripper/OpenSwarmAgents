@@ -402,6 +402,8 @@ export default function App() {
   const [networkLive, setNetworkLive] = useState(false);
   const [networkNotice, setNetworkNotice] = useState<string | null>(null);
   const [walletConnected, setWalletConnected] = useState(readWalletConnected);
+  const [walletAddress, setWalletAddress] = useState<string | null>(() => readWalletSession()?.address || null);
+  const [osaBalanceLabel, setOsaBalanceLabel] = useState("0 OSA");
   const [walletConnectError, setWalletConnectError] = useState<string | null>(null);
   const [walletConnectPending, setWalletConnectPending] = useState(false);
   const [preview, setPreview] = useState<FilePreviewData | null>(null);
@@ -626,11 +628,28 @@ export default function App() {
     }
   }, []);
 
+  const refreshWalletBalance = useCallback(async () => {
+    const wallet = readWalletSession();
+    setWalletAddress(wallet?.address || null);
+    if (!wallet?.address) {
+      setOsaBalanceLabel("0 OSA");
+      return;
+    }
+    try {
+      const balance = await api.wallet.balance(wallet.address);
+      setOsaBalanceLabel(balance.formatted || `${Number(balance.balance_osa || 0).toLocaleString()} OSA`);
+    } catch {
+      setOsaBalanceLabel("0 OSA");
+    }
+  }, []);
+
   const refreshNetworkViews = useCallback(() => {
     void loadSessions();
     void refreshTopProjects();
-    setWalletConnected(readWalletConnected());
-  }, [loadSessions, refreshTopProjects]);
+    const connected = readWalletConnected();
+    setWalletConnected(connected);
+    void refreshWalletBalance();
+  }, [loadSessions, refreshTopProjects, refreshWalletBalance]);
 
   useEffect(() => {
     loadSessions();
@@ -649,14 +668,16 @@ export default function App() {
     // Also re-pull the roster: profiles installed/changed on disk while the GUI
     // is open (e.g. install_profiles.sh) otherwise never appear until a reload.
     refreshTopProjects();
+    refreshWalletBalance();
     const poll = setInterval(() => {
       loadSessions();
       refreshAgents();
       refreshTopProjects();
       setWalletConnected(readWalletConnected());
+      refreshWalletBalance();
     }, POLL_INTERVAL);
     return () => clearInterval(poll);
-  }, [loadSessions, refreshAgents, refreshTopProjects]);
+  }, [loadSessions, refreshAgents, refreshTopProjects, refreshWalletBalance]);
 
   useEffect(() => {
     const source = api.networkStream((event) => {
@@ -1334,10 +1355,14 @@ export default function App() {
       "OSA Project",
     );
     if (projectName === null) return;
+    const shareFileRepo = window.confirm(
+      "Share this project's File Repo too?\n\nOK shares project metadata plus the files that belong to the room File Repos. Only choose OK if those files are safe to make public.\n\nCancel shares the rooms and agents without the File Repo.",
+    );
     try {
       await api.publicProjects.share({
         name: projectName.trim() || "OSA Project",
         owner_wallet_address: wallet.address,
+        share_file_repo: shareFileRepo,
         rooms: privateTeams.map((team) => ({ id: team.id, name: team.name || serverTeamName(team.id, sessionsRef.current) })),
       });
       const latest = await api.sessions.list(50);
@@ -1444,28 +1469,50 @@ export default function App() {
   }, [teams]);
 
   async function handleReset() {
-    const running = teams
-      .flatMap((t) => t.desks)
-      .filter((d) => !("isPending" in d) && (d as Session).is_running === true);
-    if (running.length > 0) {
-      window.alert(
-        `${running.length} task(s) still running — stop them before resetting the workbench.`,
-      );
-      return;
-    }
-    if (!window.confirm("Clear all desks and remove unused agent containers?")) return;
+    const privateSessionIds = Array.from(new Set([
+      ...sessionsRef.current.filter(isPrivateSession).map((session) => session.id),
+      ...teams
+        .filter((team) => !PUBLIC_TEAM_IDS.has(team.id))
+        .flatMap((team) => team.desks)
+        .filter((desk) => !("isPending" in desk))
+        .map((desk) => (desk as Session).id),
+    ]));
+    const runningCount = sessionsRef.current.filter((session) =>
+      privateSessionIds.includes(session.id) && session.is_running === true,
+    ).length;
+    const warning = runningCount > 0
+      ? `\n\nThis will cancel ${runningCount} running agent ${runningCount === 1 ? "task" : "tasks"} before wiping the dashboard.`
+      : "";
+    if (!window.confirm(`Reset OSA and start fresh?${warning}\n\nThis removes private desks, rooms, pending prompts, desk settings, and local workbench state. Latest Projects stays as the public network feed.`)) return;
     removeStoredItems(WORKBENCH_KEY_V2, [WORKBENCH_LEGACY_KEY_V2]);
     removeStoredItems(WORKBENCH_KEY_V1, [WORKBENCH_LEGACY_KEY_V1]);
     setPendingTexts({});
+    setTaskContents({});
+    setTaskImages({});
+    setPendingAssignments({});
+    setDeskBarConfigs({});
+    setAskManagerByTeamId({});
+    setWorkspacePaths({});
+    setActivePendingDeskId(null);
+    setFocusedDeskId(null);
+    setJustStartedId(null);
+    setJustStartedAnchor(null);
+    if (privateSessionIds.length > 0) {
+      await Promise.allSettled(privateSessionIds.map((id) => api.sessions.delete(id)));
+      const publicOnly = sessionsRef.current.filter((session) => !privateSessionIds.includes(session.id));
+      sessionsRef.current = publicOnly;
+      setSessions(publicOnly);
+    }
     setTeams([makeHomeTeam(), makePublicProjectsTeam()]);
     try {
       const r = await api.docker.cleanup();
       if (r.skipped) {
-        window.alert(`Kept ${r.kept} container(s): ${r.reason}.`);
+        console.info(`Skipped agent container cleanup: ${r.reason}.`);
       } else if (r.removed > 0) {
         console.info(`Removed ${r.removed} unused agent container(s).`);
       }
     } catch {}
+    void loadSessions();
   }
 
   const allDesks = teams.flatMap((t) => t.desks);
@@ -1476,6 +1523,7 @@ export default function App() {
     publicProjects: sessions.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID).length,
     copies: topProjects.reduce((sum, item) => sum + Number(item.copy_count || 0), 0),
     donationsUsdc: topProjects.reduce((sum, item) => sum + Number(item.donation_total_usdc || 0), 0),
+    osaBalanceLabel,
     onlineAgents: activeCount,
     walletConnected,
     live: networkLive,
@@ -1497,13 +1545,23 @@ export default function App() {
       } catch { /* chain id is helpful but not required */ }
       const result = await api.wallet.login({ address, chain_id: chainId });
       localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(result.wallet));
+      setWalletAddress(result.wallet.address);
       setWalletConnected(true);
+      await refreshWalletBalance();
     } catch (error) {
       setWalletConnectError((error as Error).message || "Could not connect wallet.");
       setWalletConnected(false);
     } finally {
       setWalletConnectPending(false);
     }
+  }
+
+  function disconnectDashboardWallet() {
+    localStorage.removeItem(WALLET_STORAGE_KEY);
+    setWalletAddress(null);
+    setOsaBalanceLabel("0 OSA");
+    setWalletConnected(false);
+    setWalletConnectError(null);
   }
 
   if (backendError) {
@@ -1574,8 +1632,9 @@ export default function App() {
         searchStats={searchStats}
         onReset={handleReset}
         onLoadSnapshot={handleLoadSnapshot}
-        onLoadDesk={handleLoadDesk}
-        onLoadSavedDesk={handleLoadSavedDesk}
+        onWalletConnect={() => void connectDashboardWallet()}
+        onWalletDisconnect={disconnectDashboardWallet}
+        walletAddress={walletAddress}
         codeTheme={codeTheme}
         onCodeThemeChange={(id) => {
           setCodeTheme(id);

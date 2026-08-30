@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { SettingsMenu } from "./SettingsMenu";
 import { SnapshotMenu } from "./SnapshotMenu";
-import { LoadDeskMenu } from "./LoadDeskMenu";
 import { AgentRosterMenu } from "./AgentRosterMenu";
 import { DeskContextBar } from "./DeskContextBar";
 import { ReasoningEffortControl } from "./ReasoningEffortControl";
@@ -19,6 +18,7 @@ interface Props {
     publicProjects: number;
     copies: number;
     donationsUsdc: number;
+    osaBalanceLabel: string;
     onlineAgents: number;
     walletConnected: boolean;
     live: boolean;
@@ -61,8 +61,9 @@ interface Props {
   onManagerIdleGraceChange: (sec: number) => void;
   onReset: () => void;
   onLoadSnapshot: () => void;
-  onLoadDesk?: (file: File) => void;
-  onLoadSavedDesk?: (filename: string) => void;
+  onWalletConnect: () => void;
+  onWalletDisconnect: () => void;
+  walletAddress?: string | null;
   codeTheme: import("./FilePreview").CodeThemeId;
   onCodeThemeChange: (id: import("./FilePreview").CodeThemeId) => void;
   dockerPersist: boolean;
@@ -109,7 +110,7 @@ export function Header({
   onSearch, searchStats,
   onBellSoundChange, onSceneChange, onShowManagerChange,
   onManagerPatrolIntervalChange, onManagerIdleGraceChange,
-  onReset, onLoadSnapshot, onLoadDesk, onLoadSavedDesk, codeTheme, onCodeThemeChange,
+  onReset, onLoadSnapshot, onWalletConnect, onWalletDisconnect, walletAddress, codeTheme, onCodeThemeChange,
   dockerPersist, onDockerPersistChange, verbose, onVerboseChange,
 }: Props) {
   const [logoOk, setLogoOk] = useState(true);
@@ -122,10 +123,14 @@ export function Header({
     publicProjects: 0,
     copies: 0,
     donationsUsdc: 0,
+    osaBalanceLabel: "0 OSA",
     onlineAgents: activeCount,
     walletConnected: false,
     live: false,
   };
+  const walletButtonLabel = stats.walletConnected
+    ? `Disconnect ${walletAddress ? shortAddress(walletAddress) : "Wallet"}`
+    : "Connect Wallet";
 
   return (
     <div style={{
@@ -148,14 +153,14 @@ export function Header({
               onError={() => setLogoOk(false)} />
             <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.05 }}>
               <span style={{ fontSize: 16, fontWeight: 800, color: "var(--text)", letterSpacing: 0 }}>OSA</span>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent2)", letterSpacing: 0 }}>Agent Chain</span>
+              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent2)", letterSpacing: 0 }}>Project Network</span>
             </div>
           </div>
         : <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <span style={{ fontSize: 20, fontWeight: 900, color: "var(--accent2)" }}>O</span>
             <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.05 }}>
               <span style={{ fontSize: 15, fontWeight: 800 }}>OSA</span>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent2)", letterSpacing: 0 }}>Agent Chain</span>
+              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent2)", letterSpacing: 0 }}>Project Network</span>
             </div>
           </div>}
 
@@ -183,43 +188,21 @@ export function Header({
       <div style={{
         flex: 1,
         display: "grid",
-        gridTemplateColumns: "repeat(6, minmax(92px, 1fr))",
+        gridTemplateColumns: "repeat(5, minmax(112px, 1fr))",
         minWidth: 0,
         gap: 8,
       }}>
         <TopMetric label="PROJECTS" value={String(stats.publicProjects)} hint="Shared projects visible in Latest Projects and Top100 Projects" />
         <TopMetric label="WORKING" value={String(stats.onlineAgents)} hint="Agents currently doing reward-eligible work on this node" tone={stats.onlineAgents > 0 ? "green" : "muted"} />
         <TopMetric label="COPIES" value={String(stats.copies)} hint="Total public project copies in this network view" />
-        <TopMetric label="EARNED" value={`${stats.donationsUsdc.toFixed(stats.donationsUsdc % 1 ? 2 : 0)} USDC`} hint="Donation intents recorded by this OSA network view" tone={stats.donationsUsdc > 0 ? "green" : "muted"} />
-        <TopMetric label="$OSA" value="5B / 3Y" hint="Planned work-reward pool: 5 billion $OSA gradually over three years" />
-        <TopMetric label="WALLET" value={stats.walletConnected ? "Connected" : "Required"} hint="Wallet pubkey anchors rewards, donations, reviews, and project ownership" tone={stats.walletConnected ? "green" : "muted"} />
+        <TopMetric label="Earned Donations" value={`${stats.donationsUsdc.toFixed(stats.donationsUsdc % 1 ? 2 : 0)} USDC`} hint="Donation intents recorded by this OSA network view" tone={stats.donationsUsdc > 0 ? "green" : "muted"} />
+        <TopMetric label="$OSA" value={stats.osaBalanceLabel} hint="Current $OSA balance for the connected wallet. Shows 0 until token deployment and on-chain balance lookup are configured." />
       </div>
 
       <div style={{ width: 1, height: 28, background: "var(--card-border)", flexShrink: 0 }} />
 
       {/* Right actions */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-        <div
-          title="OpenSwarmAgents"
-          style={{
-            height: 28,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "0 9px",
-            border: "1px solid #2a3558",
-            borderRadius: 6,
-            background: "#121828",
-            color: "var(--accent2)",
-            fontSize: 12,
-            fontWeight: 800,
-            letterSpacing: 0,
-          }}
-        >
-          <img src="/osa-logo.svg" alt="" height={16} width={16} />
-          Agent Chain
-        </div>
-
         <AgentRosterMenu
           agents={rosterAgents}
           defaultModel={defaultModel}
@@ -249,11 +232,27 @@ export function Header({
           Reset
         </button>
 
-        {onLoadDesk && onLoadSavedDesk && (
-          <LoadDeskMenu onLoadDesk={onLoadDesk} onLoadSavedDesk={onLoadSavedDesk} />
-        )}
-
         <SnapshotMenu teams={teams} sessions={sessions} onLoadSnapshot={onLoadSnapshot} />
+
+        <button
+          type="button"
+          onClick={stats.walletConnected ? onWalletDisconnect : onWalletConnect}
+          title={stats.walletConnected ? "Disconnect this browser wallet session" : "Connect an EVM wallet"}
+          style={{
+            height: 28,
+            padding: "0 10px",
+            background: stats.walletConnected ? "#10251f" : "#121828",
+            border: `1px solid ${stats.walletConnected ? "#2a8c72" : "#2a3558"}`,
+            borderRadius: 6,
+            color: stats.walletConnected ? "#7ee0c2" : "var(--text-dim)",
+            fontSize: 10,
+            fontWeight: 800,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {walletButtonLabel}
+        </button>
 
         <SettingsMenu
           bellSound={bellSound}
@@ -278,4 +277,8 @@ export function Header({
       <style>{`@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }`}</style>
     </div>
   );
+}
+
+function shortAddress(address: string): string {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }

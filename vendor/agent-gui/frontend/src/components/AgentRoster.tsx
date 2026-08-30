@@ -493,7 +493,7 @@ export function AgentRoster({
         fontSize: 11,
         lineHeight: 1.45,
       }}>
-        Agent Profiles are reusable OpenClaw worker presets. Drag one onto a private desk, or edit/create profiles here to give a desk a different local runner personality.
+        Agent Profiles are reusable OpenClaw worker presets. Built-in examples include market, product, and tokenomics agents with their own Soul/Memory; drag one onto a private desk or create your own profile.
       </div>
       <section style={{ marginBottom: 18 }}>
         <EditableHeader

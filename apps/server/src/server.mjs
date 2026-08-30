@@ -118,11 +118,12 @@ async function loadStore() {
   try {
     const loaded = normalizeStore(JSON.parse(await readFile(storePath, "utf8")));
     const pruned = removeLegacySeedExamples(loaded);
+    const exampleSeeded = ensureAgentGuiExampleProject(loaded);
     if (!loaded.proposals.length) {
       const seed = JSON.parse(await readFile(seedPath, "utf8"));
       loaded.proposals = seed.proposals || [];
       await saveStore(loaded);
-    } else if (pruned) {
+    } else if (pruned || exampleSeeded) {
       await saveStore(loaded);
     }
     return loaded;
@@ -148,6 +149,7 @@ async function loadStore() {
       trustLedger: [],
       events: []
     });
+    ensureAgentGuiExampleProject(initial);
     await saveStore(initial);
     return initial;
   }
@@ -332,9 +334,143 @@ function normalizePublicCollections(items, type) {
       updatedAt: item.updatedAt || item.updated_at || item.sharedAt || item.shared_at || now(),
       copyCount: Math.max(0, Number(item.copyCount || item.copy_count || 0)),
       lastCopiedAt: item.lastCopiedAt || item.last_copied_at || null,
-      ownerWalletAddress: item.ownerWalletAddress ? normalizeWalletAddress(item.ownerWalletAddress) : null
+      ownerWalletAddress: item.ownerWalletAddress || item.owner_wallet_address ? normalizeWalletAddress(item.ownerWalletAddress || item.owner_wallet_address) : null,
+      shareFileRepo: Boolean(item.shareFileRepo || item.share_file_repo),
+      isExample: Boolean(item.isExample || item.is_example)
     }))
     .filter((item) => item.id && item.taskIds.length > 0);
+}
+
+function ensureAgentGuiExampleProject(target) {
+  const wallet = osaDonationFeeWallet.toLowerCase();
+  const stamped = "2026-08-30T00:00:00.000Z";
+  const goalId = "goal-osa-example-reward-engine";
+  const taskIds = ["task-osa-example-market-scout", "task-osa-example-token-planner"];
+  let changed = false;
+
+  if (!target.goals.some((goal) => goal.id === goalId)) {
+    target.goals.unshift({
+      id: goalId,
+      title: "Example: OSA Reward Engine",
+      description: "Demo project for testing public copy, donation, review, and Top100 mechanics.",
+      status: "active",
+      supporters: 0,
+      sourceProposalId: null,
+      source: "agent-gui-public-example",
+      createdAt: stamped
+    });
+    changed = true;
+  }
+
+  const taskSpecs = [
+    {
+      id: taskIds[0],
+      title: "Market Scout Agent",
+      description: "Scans public projects for useful patterns and summarizes why people might copy them.",
+      agent: "market-scout",
+      teamId: agentGuiHomeTeamId,
+      teamName: "Home"
+    },
+    {
+      id: taskIds[1],
+      title: "Tokenomics Planner Agent",
+      description: "Drafts simple $OSA reward logic and highlights anti-farming checks for work rewards.",
+      agent: "tokenomics-analyst",
+      teamId: "room-tokenomics",
+      teamName: "Tokenomics"
+    }
+  ];
+  for (const spec of taskSpecs) {
+    if (target.tasks.some((task) => task.id === spec.id)) continue;
+    target.tasks.unshift({
+      id: spec.id,
+      goalId,
+      title: spec.title,
+      description: spec.description,
+      status: "done",
+      assignedAgentId: null,
+      leaseUntil: null,
+      leaseId: null,
+      createdAt: stamped,
+      updatedAt: stamped,
+      ownerWalletAddress: wallet,
+      source: "agent-gui-public-example",
+      agentGuiRoom: "public",
+      agentGuiTeamId: spec.teamId,
+      agentGuiTeamName: spec.teamName,
+      agentGuiAgent: spec.agent,
+      agentGuiModel: "OpenClaw local agent",
+      taskSolved: true,
+      sharedPublic: false,
+      sharedPublicAt: null,
+      copyCount: 0,
+      lastCopiedAt: null
+    });
+    changed = true;
+  }
+
+  const projectId = "osa-example-reward-engine";
+  const existingProject = target.publicProjects.find((project) => project.id === projectId);
+  if (!existingProject) {
+    target.publicProjects.unshift({
+      id: projectId,
+      type: "project",
+      sourceTeamId: null,
+      name: "Example: OSA Reward Engine",
+      summary: "A sample wallet-owned agent project for testing Copy, Donate, Review, Latest Projects, and Top100 Projects.",
+      taskIds,
+      rooms: [
+        { id: agentGuiHomeTeamId, name: "Home", taskIds: [taskIds[0]] },
+        { id: "room-tokenomics", name: "Tokenomics", taskIds: [taskIds[1]] }
+      ],
+      sharedAt: stamped,
+      updatedAt: stamped,
+      copyCount: 3,
+      lastCopiedAt: null,
+      ownerWalletAddress: wallet,
+      shareFileRepo: false,
+      isExample: true
+    });
+    changed = true;
+  }
+
+  if (!target.agentDonations.some((donation) => donation.id === "donation-osa-example-reward-engine")) {
+    target.agentDonations.unshift({
+      id: "donation-osa-example-reward-engine",
+      taskId: null,
+      targetType: "project",
+      targetId: projectId,
+      sessionId: `public-project-${projectId}`,
+      walletAddress: wallet,
+      chainId: "0x1",
+      amount: 5,
+      currency: "USDC",
+      feePercent: osaDonationFeePercent,
+      feeWallet: wallet,
+      feeAmount: 0.25,
+      creatorAmount: 4.75,
+      status: "pledged",
+      txHash: null,
+      createdAt: stamped
+    });
+    changed = true;
+  }
+
+  if (!target.publicProjectReviews.some((review) => review.id === "project-review-osa-example-reward-engine")) {
+    target.publicProjectReviews.unshift({
+      id: "project-review-osa-example-reward-engine",
+      projectId,
+      walletAddress: wallet,
+      rating: 5,
+      title: "Useful demo project",
+      comment: "Shows the marketplace flow without putting fake work into Home.",
+      createdAt: stamped,
+      updatedAt: stamped
+    });
+    changed = true;
+  }
+
+  return changed;
 }
 
 function removeLegacySeedExamples(target) {
@@ -522,11 +658,12 @@ async function loadPostgresStore() {
   if (result.rows[0]?.payload) {
     const loaded = normalizeStore(result.rows[0].payload);
     const pruned = removeLegacySeedExamples(loaded);
+    const exampleSeeded = ensureAgentGuiExampleProject(loaded);
     if (!loaded.proposals.length) {
       const seed = JSON.parse(await readFile(seedPath, "utf8"));
       loaded.proposals = seed.proposals || [];
       await savePostgresStore(loaded);
-    } else if (pruned) {
+    } else if (pruned || exampleSeeded) {
       await savePostgresStore(loaded);
     }
     return loaded;
@@ -553,6 +690,7 @@ async function loadPostgresStore() {
     trustLedger: [],
     events: []
   });
+  ensureAgentGuiExampleProject(initial);
   await savePostgresStore(initial);
   return initial;
 }
@@ -3028,7 +3166,8 @@ function agentGuiPublicRankForTaskId(taskId) {
 function publicCollectionSummary(item) {
   const taskCount = item.taskIds.length;
   const noun = taskCount === 1 ? "agent" : "agents";
-  return item.summary || `${item.name} with ${taskCount} ${noun}.`;
+  const summary = item.summary || `${item.name} with ${taskCount} ${noun}.`;
+  return item.shareFileRepo ? `${summary} File Repo included.` : summary;
 }
 
 function agentGuiRankedPublicCollections(type, limit = 100) {
@@ -3086,12 +3225,15 @@ function agentGuiPublicCollectionSession(item, type) {
     agent: isProject ? "public-project" : "public-room",
     agent_model: `${item.taskIds.length} ${item.taskIds.length === 1 ? "agent" : "agents"}`,
     agent_base_url: "",
-    desk_tools: isProject ? ["project", "copy", "donate"] : ["room", "copy", "donate"],
+    desk_tools: isProject
+      ? ["project", "copy", "donate", ...(item.shareFileRepo ? ["file-repo"] : [])]
+      : ["room", "copy", "donate"],
     team_id: agentGuiPublicProjectsTeamId,
     team_name: "Latest Projects",
     shared_public: true,
     shared_public_at: item.sharedAt,
     public_kind: type,
+    shared_file_repo: Boolean(item.shareFileRepo),
     copy_count: Math.max(0, Number(item.copyCount || 0)),
     last_copied_at: item.lastCopiedAt || null,
     ...donationStats,
@@ -3210,11 +3352,99 @@ function agentGuiAgents() {
   return [...agentGuiPrototypes(), ...store.agentProfiles.map(publicAgentGuiProfile)];
 }
 
-function agentGuiPrototypes() {
+function agentGuiPrototypeDefinitions() {
   return [
-    { id: "openclaw-codex", name: "OpenClaw Agent", tagline: "Use this local OpenClaw agent for a Home desk", color: "#22d3ee", available: true, model: "OpenClaw local agent", base_url: "", profile_path: "osa://prototype/openclaw-codex", is_prototype: true, clone_from: null },
-    { id: "codex-cli", name: "Codex CLI", tagline: "Run a Home desk through the local Codex CLI", color: "#60a5fa", available: true, model: "Codex CLI", base_url: "", profile_path: "osa://prototype/codex-cli", is_prototype: true, clone_from: null }
+    {
+      id: "openclaw-codex",
+      name: "OpenClaw Agent",
+      tagline: "General-purpose local OpenClaw worker for Home desks",
+      color: "#22d3ee",
+      available: true,
+      model: "OpenClaw local agent",
+      base_url: "",
+      profile_path: "osa://prototype/openclaw-codex",
+      is_prototype: true,
+      clone_from: null,
+      runner: "openclaw",
+      soul: "You are an OpenClaw-powered OSA worker. Work carefully, keep the user's project private until shared, and produce useful artifacts that can become part of a public project.",
+      memory: "Remember that OSA rewards useful wallet-owned agent work. Prioritize clear outputs, reproducible steps, and project state that survives copying."
+    },
+    {
+      id: "codex-cli",
+      name: "Codex CLI",
+      tagline: "Runs a Home desk through the local Codex CLI",
+      color: "#60a5fa",
+      available: true,
+      model: "Codex CLI",
+      base_url: "",
+      profile_path: "osa://prototype/codex-cli",
+      is_prototype: true,
+      clone_from: null,
+      runner: "codex",
+      soul: "You are a code-first OSA builder. Inspect the repo, make minimal safe edits, run checks, and explain the result plainly.",
+      memory: "Default to shipping working code with tests. Wallet identity matters for rewards, but smart-contract safety matters more than speed."
+    },
+    {
+      id: "market-scout",
+      name: "Market Scout",
+      tagline: "Finds project angles, users, competitors, and copy-worthy value",
+      color: "#7ee0c2",
+      available: true,
+      model: "OpenClaw local agent",
+      base_url: "",
+      profile_path: "osa://prototype/market-scout",
+      is_prototype: true,
+      clone_from: "openclaw-codex",
+      runner: "openclaw",
+      soul: "You are a market-oriented OSA agent. Look for real user pain, simple positioning, pricing signals, and what would make a project worth copying.",
+      memory: "Good outputs are concrete: audience, problem, offer, evidence, risks, and the next experiment. Avoid hype without leverage."
+    },
+    {
+      id: "product-builder",
+      name: "Product Builder",
+      tagline: "Turns an idea into tasks, UI details, docs, and testable behavior",
+      color: "#facc15",
+      available: true,
+      model: "OpenClaw local agent",
+      base_url: "",
+      profile_path: "osa://prototype/product-builder",
+      is_prototype: true,
+      clone_from: "openclaw-codex",
+      runner: "openclaw",
+      soul: "You are a product-focused OSA agent. Make features understandable, testable, and pleasant to use. Think like a builder and designer at the same time.",
+      memory: "Favor complete flows over isolated widgets: empty states, confirmations, safety copy, and the shortest route to a working demo."
+    },
+    {
+      id: "tokenomics-analyst",
+      name: "Tokenomics Analyst",
+      tagline: "Designs $OSA reward logic, anti-farming checks, and risk notes",
+      color: "#c084fc",
+      available: true,
+      model: "OpenClaw local agent",
+      base_url: "",
+      profile_path: "osa://prototype/tokenomics-analyst",
+      is_prototype: true,
+      clone_from: "openclaw-codex",
+      runner: "openclaw",
+      soul: "You are a tokenomics and protocol-safety OSA agent. Incentivize useful agent work without pretending a token has value before the market proves it.",
+      memory: "Every reward rule needs an anti-abuse rule. Keep disclosures clear: $OSA is experimental, unlisted, and may remain worthless."
+    }
   ];
+}
+
+function agentGuiPrototypes() {
+  return agentGuiPrototypeDefinitions().map((profile) => ({
+    id: profile.id,
+    name: profile.name,
+    tagline: profile.tagline,
+    color: profile.color,
+    available: profile.available,
+    model: profile.model,
+    base_url: profile.base_url,
+    profile_path: profile.profile_path,
+    is_prototype: profile.is_prototype,
+    clone_from: profile.clone_from
+  }));
 }
 
 function publicAgentGuiProfile(profile) {
@@ -3251,8 +3481,8 @@ function createAgentGuiProfile(body = {}) {
   }
   const cloneFrom = String(body.clone_from || "openclaw-codex");
   const source = store.agentProfiles.find((profile) => profile.id === cloneFrom);
-  const prototype = agentGuiPrototypes().find((profile) => profile.id === cloneFrom);
-  const runner = cloneFrom === "codex-cli" || source?.runner === "codex" ? "codex" : "openclaw";
+  const prototype = agentGuiPrototypeDefinitions().find((profile) => profile.id === cloneFrom);
+  const runner = prototype?.runner === "codex" || source?.runner === "codex" ? "codex" : "openclaw";
   const profile = normalizeAgentProfiles([{
     id,
     name: body.name || `${id.replaceAll("-", " ")} Agent`,
@@ -3711,6 +3941,7 @@ async function shareAgentGuiProject(body = {}) {
   const ownerWalletAddress = body.owner_wallet_address || body.ownerWalletAddress
     ? normalizeWalletAddress(body.owner_wallet_address || body.ownerWalletAddress)
     : null;
+  const shareFileRepo = Boolean(body.share_file_repo || body.shareFileRepo);
   const tasks = agentGuiAllPrivateProjectTasks();
   if (!tasks.length) {
     const error = new Error("Add at least one private agent before sharing a project.");
@@ -3735,14 +3966,15 @@ async function shareAgentGuiProject(body = {}) {
     type: "project",
     sourceTeamId: null,
     name,
-    summary: `${name} project with ${grouped.size} ${grouped.size === 1 ? "room" : "rooms"} and ${tasks.length} ${tasks.length === 1 ? "agent" : "agents"}.`,
+    summary: `${name} project with ${grouped.size} ${grouped.size === 1 ? "room" : "rooms"} and ${tasks.length} ${tasks.length === 1 ? "agent" : "agents"}${shareFileRepo ? ", including the File Repo" : ""}.`,
     taskIds: tasks.map((task) => task.id),
     rooms: [...grouped.values()],
     sharedAt: existingIndex >= 0 ? store.publicProjects[existingIndex].sharedAt : sharedAt,
     updatedAt: sharedAt,
     copyCount: existingIndex >= 0 ? Math.max(0, Number(store.publicProjects[existingIndex].copyCount || 0)) : 0,
     lastCopiedAt: existingIndex >= 0 ? store.publicProjects[existingIndex].lastCopiedAt || null : null,
-    ownerWalletAddress: ownerWalletAddress || store.publicProjects[existingIndex]?.ownerWalletAddress || tasks.find((task) => task.ownerWalletAddress)?.ownerWalletAddress || null
+    ownerWalletAddress: ownerWalletAddress || store.publicProjects[existingIndex]?.ownerWalletAddress || tasks.find((task) => task.ownerWalletAddress)?.ownerWalletAddress || null,
+    shareFileRepo
   };
   if (existingIndex >= 0) store.publicProjects[existingIndex] = next;
   else store.publicProjects.unshift(next);
@@ -3750,7 +3982,8 @@ async function shareAgentGuiProject(body = {}) {
     publicProjectId: next.id,
     taskIds: next.taskIds,
     rooms: next.rooms.map((room) => room.id),
-    ownerWalletAddress: next.ownerWalletAddress
+    ownerWalletAddress: next.ownerWalletAddress,
+    shareFileRepo: next.shareFileRepo
   });
   await saveStore();
   return { ok: true, shared_public: true, project: agentGuiPublicCollectionSession(next, "project") };
@@ -3790,6 +4023,19 @@ async function connectAgentGuiWallet(body = {}) {
       connected_at: wallet.createdAt,
       last_seen_at: wallet.lastSeenAt
     }
+  };
+}
+
+function agentGuiOsaWalletBalance(address) {
+  const normalized = normalizeWalletAddress(address);
+  return {
+    address: normalized,
+    balance_osa: 0,
+    formatted: "0 OSA",
+    source: "not_deployed",
+    token_contract: process.env.OSA_TOKEN_ADDRESS || null,
+    rewards_contract: process.env.OSA_REWARDS_DISTRIBUTOR_ADDRESS || null,
+    note: "$OSA is not deployed/configured for on-chain balance reads on this node yet."
   };
 }
 
@@ -4045,7 +4291,8 @@ function agentGuiGoalForStart(body, title, content) {
 }
 
 function agentGuiRunnerForAgent(agentId) {
-  if (agentId === "codex-cli") return "codex";
+  const prototype = agentGuiPrototypeDefinitions().find((item) => item.id === agentId);
+  if (prototype?.runner === "codex") return "codex";
   const profile = store.agentProfiles.find((item) => item.id === agentId);
   if (profile?.runner === "codex") return "codex";
   return "openclaw";
@@ -4269,6 +4516,14 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     }
   }
 
+  if (method === "GET" && path === "/api/wallet/balance") {
+    try {
+      return sendJson(res, 200, agentGuiOsaWalletBalance(url.searchParams.get("address") || ""));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to read OSA balance" });
+    }
+  }
+
   if (method === "POST" && path === "/api/donations") {
     try {
       return sendJson(res, 201, await createAgentGuiDonation(await readJson(req)));
@@ -4333,6 +4588,21 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
         model: profile.model,
         base_url: profile.base_url,
         clone_from: profile.clone_from
+      });
+    }
+    const prototype = agentGuiPrototypeDefinitions().find((item) => item.id === id);
+    if (prototype) {
+      return sendJson(res, 200, {
+        id: prototype.id,
+        soul: prototype.soul,
+        memory: prototype.memory,
+        profile_path: prototype.profile_path,
+        name: prototype.name,
+        tagline: prototype.tagline,
+        model: prototype.model,
+        base_url: prototype.base_url,
+        clone_from: prototype.clone_from,
+        is_prototype: true
       });
     }
     return sendJson(res, 200, {

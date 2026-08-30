@@ -1043,7 +1043,7 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
   // Save EVERYTHING about this desk to a .tar.gz: its sandbox (private state.db =
   // session history + model calls), workspace snapshot, run/profile history, and
   // markers. Streamed straight to disk via the archive URL (load it back with the
-  // header's "Load desk").
+  // project restore flow).
   function handleExportDesk() {
     if (exporting) return;
     setExporting(true);

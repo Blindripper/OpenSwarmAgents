@@ -43,11 +43,16 @@ try {
   await waitForHealth(logs);
 
   let sessions = await getJson("/api/sessions");
-  assert(Array.isArray(sessions) && sessions.length === 0, "fresh dashboard should have no Home/Latest example tasks");
+  assert(Array.isArray(sessions) && sessions.length === 1 && sessions[0]?.team_id === "public-projects-room", "fresh dashboard should expose only the public example project");
   let top = await getJson("/api/top-projects?limit=100");
-  assert(Array.isArray(top.agents) && top.agents.length === 0, "fresh Top100 should start empty");
+  assert(Array.isArray(top.agents) && top.agents.some((agent) => agent.target_id === "osa-example-reward-engine"), "fresh Top100 should include the example project");
+  const balance = await getJson("/api/wallet/balance?address=0x0000000000000000000000000000000000000abc");
+  assert(balance.formatted === "0 OSA" && balance.source === "not_deployed", "wallet balance should honestly report undeployed $OSA state");
   let config = await getJson("/api/gui-config");
-  assert(config.agents.map((agent) => agent.id).join(",") === "openclaw-codex,codex-cli", "Agent Profiles should start with OpenClaw/Codex templates only");
+  const agentIds = config.agents.map((agent) => agent.id);
+  for (const id of ["openclaw-codex", "codex-cli", "market-scout", "product-builder", "tokenomics-analyst"]) {
+    assert(agentIds.includes(id), `Agent Profiles should include ${id}`);
+  }
   const customProfile = await postJson("/api/agents", {
     id: "profit-scout",
     clone_from: "openclaw-codex",
@@ -100,8 +105,14 @@ try {
   assert(!bodyText.includes("Top100 AI Agents"), "agent charts should not render");
   assert(!bodyText.includes("Top100 Rooms"), "room charts should not render");
   assert(!bodyText.includes("Public Rooms"), "legacy Public Rooms should not render");
+  assert(!bodyText.includes("Agent Chain"), "old Agent Chain label should not render");
+  assert(bodyText.includes("Earned Donations"), "topbar should label donation totals clearly");
+  assert(bodyText.includes("0 OSA"), "topbar should show connected wallet $OSA balance");
+  assert(bodyText.includes("Save/Load Project"), "project save/load control should replace Load Desk/Snapshots");
+  assert(!bodyText.includes("Snapshots"), "topbar should not expose the old snapshots wording");
+  assert(!bodyText.includes("Load desk"), "topbar should not expose the old Load desk wording");
   assert(!(await page.locator("body").innerText()).includes("Open agent voting quality benchmark"), "legacy example tasks should not render");
-  assert(await page.getByRole("button", { name: "Copy" }).count() === 0, "Public should not render example Copy buttons");
+  assert(await page.getByRole("button", { name: "Copy" }).count() > 0, "Public example project should expose Copy for testing");
   assert(await page.locator('button[title="Delete this room"]').count() === 0, "Home/Latest Projects should not be removable");
   await page.getByRole("button", { name: "+ Room" }).click();
   await expectText(page, "body", "Room 1");
@@ -145,6 +156,7 @@ try {
 
   const projectShare = await postJson("/api/public/projects/share", {
     name: "Browser E2E Project",
+    share_file_repo: true,
     rooms: [
       { id: "home-room", name: "Home" },
       { id: "room-launch", name: "Launch" }
@@ -152,12 +164,15 @@ try {
   });
   assert(projectShare.project?.id?.startsWith("public-project-"), "projects should be shareable");
   let topProjects = await getJson("/api/top-projects?limit=100");
-  assert(topProjects.agents[0]?.rank === 1, "Top100 Projects should rank shared projects");
+  const sharedProject = topProjects.agents.find((agent) => agent.target_id === "project-local");
+  assert(sharedProject?.rank >= 1, "Top100 Projects should rank shared projects");
+  assert(sharedProject?.summary?.includes("File Repo"), "shared projects should remember whether the File Repo was included");
   const projectCopy = await postJson(`/api/sessions/${encodeURIComponent(projectShare.project.id)}/copy`, {});
   assert(projectCopy.session_ids?.length >= 2, "copying a Public Project should copy multiple agents");
   topProjects = await getJson("/api/top-projects?limit=100");
-  assert(topProjects.agents[0]?.copy_count === 1, "Top100 Projects should count project copies");
-  assert(topProjects.agents[0]?.donation_total_usdc === 0, "Top100 Projects should expose donation totals");
+  const copiedSharedProject = topProjects.agents.find((agent) => agent.target_id === "project-local");
+  assert(copiedSharedProject?.copy_count === 1, "Top100 Projects should count project copies");
+  assert(copiedSharedProject?.donation_total_usdc === 0, "Top100 Projects should expose donation totals");
   await postJson("/api/donations", {
     session_id: projectShare.project.id,
     target_type: "project",
@@ -176,9 +191,10 @@ try {
   assert(review.stats?.review_count === 1, "Public Project reviews should be counted");
   assert(review.stats?.rating_avg === 5, "Public Project reviews should average ratings");
   topProjects = await getJson("/api/top-projects?limit=100");
-  assert(topProjects.agents[0]?.donation_total_usdc === 1, "Top100 Projects should sum project donations");
-  assert(topProjects.agents[0]?.review_count === 1, "Top100 Projects should expose review counts");
-  assert(topProjects.agents[0]?.rating_avg === 5, "Top100 Projects should expose average ratings");
+  const donatedSharedProject = topProjects.agents.find((agent) => agent.target_id === "project-local");
+  assert(donatedSharedProject?.donation_total_usdc === 1, "Top100 Projects should sum project donations");
+  assert(donatedSharedProject?.review_count === 1, "Top100 Projects should expose review counts");
+  assert(donatedSharedProject?.rating_avg === 5, "Top100 Projects should expose average ratings");
 
   await page.reload({ waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Enter Home" }).click().catch(() => {});
@@ -193,6 +209,15 @@ try {
   await expectText(page, "body", "1 USDC earned");
   await expectText(page, "body", "5.0 stars");
   await expectText(page, "body", "Review");
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Reset" }).click();
+  const afterResetSessions = await waitForJson(
+    "/api/sessions",
+    (items) => Array.isArray(items) && items.length >= 1 && items.every((session) => session.team_id === "public-projects-room") ? items : null,
+    "reset to wipe private sessions while keeping Latest Projects"
+  );
+  assert(afterResetSessions.length >= 1, "Latest Projects should remain after reset");
 
   assert(pageErrors.length === 0, `browser console/page errors: ${pageErrors.join("\n")}`);
   console.log(`Browser E2E passed on ${baseUrl}`);

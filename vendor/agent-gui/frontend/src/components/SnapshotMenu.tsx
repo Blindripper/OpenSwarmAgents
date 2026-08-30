@@ -123,7 +123,7 @@ export function SnapshotMenu({ teams, sessions, onLoadSnapshot }: Props) {
     <div ref={ref} style={{ position: "relative" }}>
       <button
         onClick={() => setOpen((o) => !o)}
-        title="Snapshots — save or restore workbench layout"
+        title="Save or load the current OSA project"
         style={{
           height: 32, padding: "0 10px",
           background: open ? "var(--accent2)" : "rgba(255,255,255,0.06)",
@@ -133,7 +133,7 @@ export function SnapshotMenu({ teams, sessions, onLoadSnapshot }: Props) {
           cursor: "pointer",
         }}
       >
-        <span style={{ fontSize: 13 }}>💾</span> Snapshots
+        <span style={{ fontSize: 13 }}>💾</span> Save/Load Project
       </button>
 
       {open && (
@@ -147,14 +147,14 @@ export function SnapshotMenu({ teams, sessions, onLoadSnapshot }: Props) {
             fontSize: 10, fontWeight: 600, color: "var(--text-dim)",
             textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8,
           }}>
-            Save current workbench
+            Save current project
           </div>
           <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
             <input
               value={nameInput}
               onChange={(e) => setNameInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
-              placeholder="Snapshot name…"
+              placeholder="Project save name..."
               style={{
                 flex: 1,
                 background: "rgba(255,255,255,0.06)",
@@ -197,14 +197,14 @@ export function SnapshotMenu({ teams, sessions, onLoadSnapshot }: Props) {
             onBlur={(e) => (e.target.style.borderColor = "var(--card-border)")}
           />
 
-          {/* ── Snapshot list ── */}
+          {/* ── Saved project list ── */}
           {snapshots.length > 0 ? (
             <>
               <div style={{
                 fontSize: 10, fontWeight: 600, color: "var(--text-dim)",
                 textTransform: "uppercase", letterSpacing: "0.05em", margin: "14px 0 8px",
               }}>
-                Saved snapshots
+                Saved projects
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {snapshots.map((s) => {
@@ -325,7 +325,7 @@ export function SnapshotMenu({ teams, sessions, onLoadSnapshot }: Props) {
             </>
           ) : (
             <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 10, opacity: 0.7 }}>
-              No snapshots yet.
+              No saved projects yet.
             </div>
           )}
         </div>

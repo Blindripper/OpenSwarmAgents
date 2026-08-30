@@ -22,6 +22,16 @@ export interface WalletSession {
   last_seen_at?: string;
 }
 
+export interface WalletBalance {
+  address: string;
+  balance_osa: number;
+  formatted: string;
+  source: string;
+  token_contract?: string | null;
+  rewards_contract?: string | null;
+  note?: string;
+}
+
 export interface NetworkEvent {
   id: string;
   type: string;
@@ -311,6 +321,8 @@ export const api = {
   wallet: {
     login: (body: { address: string; chain_id?: string | null; signature?: string | null }) =>
       post<{ ok: boolean; wallet: WalletSession }>("/wallet/login", body),
+    balance: (address: string) =>
+      get<WalletBalance>(`/wallet/balance?address=${encodeURIComponent(address)}`),
   },
   donations: {
     create: (body: { session_id?: string; target_type?: "project"; target_id?: string; amount: number; wallet_address: string; chain_id?: string | null }) =>
@@ -323,7 +335,7 @@ export const api = {
       }>("/donations", body),
   },
   publicProjects: {
-    share: (body: { name?: string; owner_wallet_address?: string; rooms?: { id: string; name?: string }[] }) =>
+    share: (body: { name?: string; owner_wallet_address?: string; share_file_repo?: boolean; rooms?: { id: string; name?: string }[] }) =>
       post<{ ok: boolean; shared_public: boolean; project?: Session }>("/public/projects/share", body),
     reviews: (projectId: string) =>
       get<{
