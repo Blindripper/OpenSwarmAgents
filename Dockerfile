@@ -17,6 +17,6 @@ COPY README.md LICENSE ./
 
 USER node
 
-EXPOSE 8788
+EXPOSE 8789
 
 CMD ["npm", "start"]

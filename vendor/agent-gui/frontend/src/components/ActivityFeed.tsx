@@ -35,12 +35,12 @@ function formatTime(ts: string): string {
   }
 }
 
-// An event's time is "approximate" when it's Hermes's coarse batch-flush time
+// An event's time is approximate when the backend only has coarse flush time
 // rather than a real recorded emit-time (time_exact === false). We mark those
 // with a leading "~" and a tooltip so the UI never presents a clustered/unknown
 // time as if it were exact. (undefined = optimistic local event → treat as exact.)
 const APPROX_TITLE =
-  "Approximate time — Hermes flushed this whole turn's events to its DB at once, " +
+  "Approximate time — OSA received this whole turn's events as one backend flush, " +
   "so the exact per-event time wasn't captured.";
 
 function timeText(ev: ActivityEvent): string {
@@ -404,7 +404,7 @@ const TYPE_CATCHUP_BACKLOG = 180;
  * text; the returned prefix catches up to it. On reset/divergence (a new turn or
  * a tool flush clears `streamText`) we snap — never animate backwards or drop
  * characters. A slow local model already trickles in under the floor rate, so
- * this is effectively a no-op for Hermes and only smooths Claude.
+ * this is effectively a no-op for steady streams and only smooths bursty ones.
  */
 function useTypewriter(target: string): string {
   const targetRef = useRef(target);

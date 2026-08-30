@@ -9,7 +9,7 @@ export interface OverviewTurn {
   /** Agent-event categories in the order they occurred within the turn. The
    *  overview lays these out across the turn's active window so each time bucket
    *  reflects the events that fall in it (per-event timestamps are unreliable —
-   *  Hermes batch-flushes — but event order is). */
+   *  backend batch-flushes — but event order is). */
   seq: Exclude<Cat, "idle">[];
   /** Real wall-clock time (sec) for each `seq` event (parallel array). Resolved
    *  from exact recorded emit-times where available and linearly interpolated
@@ -145,7 +145,7 @@ export function buildOverviewTurns(
   const hasUser = merged.some((e) => e.event_type === "user_message");
   const deskStartSec = tsSec(startTime ?? "");
   const eventMin = Number.isFinite(bounds.min) ? bounds.min : NaN;
-  // Desk started_at is the floor when Hermes batch-flush timestamps are all identical.
+  // Desk started_at is the floor when backend flush timestamps are all identical.
   const spanStart = Number.isFinite(eventMin) && Number.isFinite(deskStartSec)
     ? Math.min(eventMin, deskStartSec)
     : Number.isFinite(eventMin)
@@ -236,7 +236,7 @@ export function buildOverviewTurns(
     last.end = Math.max(last.end, end, last.start + MIN_TURN_SEC);
   }
 
-  // Hermes batch-flushes often give every message the same timestamp — close gaps.
+  // Backend batch-flushes often give every message the same timestamp; close gaps.
   for (let i = 0; i < out.length - 1; i++) {
     if (out[i].end <= out[i].start) {
       out[i].end = Math.max(out[i].start + MIN_TURN_SEC, out[i + 1].start);

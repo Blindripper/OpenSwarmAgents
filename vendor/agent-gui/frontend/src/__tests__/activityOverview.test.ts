@@ -20,7 +20,7 @@ function ev(
 }
 
 describe("buildOverviewTurns", () => {
-  it("charts a single turn when Hermes batch-flushes identical timestamps", () => {
+  it("charts a single turn when the backend batch-flushes identical timestamps", () => {
     const ts = "2026-06-01T12:00:00.000Z";
     const turns = buildOverviewTurns(
       [

@@ -107,7 +107,7 @@ export function GlobalDefaultPersonaEditor({ onClose, onSaved }: Props) {
   return (
     <>
       <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 12 }}>
-        Default agent uses <code style={{ opacity: 0.85 }}>~/.hermes/config.yaml</code> and applies to desks
+        Default agent uses <code style={{ opacity: 0.85 }}>~/.openclaw/config.yaml</code> and applies to desks
         unless a named profile is selected.
       </div>
 
@@ -117,7 +117,7 @@ export function GlobalDefaultPersonaEditor({ onClose, onSaved }: Props) {
           providerId={providerId}
           model={profileModel}
           loading={providersLoading}
-          hint="Saved to ~/.hermes/config.yaml — used when no profile is assigned."
+          hint="Saved to ~/.openclaw/config.yaml — used when no profile is assigned."
           onChange={({ providerId: pid, model, baseUrl: url }) => {
             setProviderId(pid);
             setProfileModel(model);
@@ -133,7 +133,7 @@ export function GlobalDefaultPersonaEditor({ onClose, onSaved }: Props) {
           onChange={setProfileModel}
           models={availableModels}
           loading={modelsLoading}
-          hint="Saved to ~/.hermes/config.yaml — used when no profile is assigned."
+          hint="Saved to ~/.openclaw/config.yaml — used when no profile is assigned."
         />
       )}
 

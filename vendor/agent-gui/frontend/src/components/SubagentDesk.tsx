@@ -79,7 +79,7 @@ const ROUND_GAP_SECONDS = 4;     // gap that marks a new wave of delegation
 const SAME_WAVE_SECONDS = 1.5;   // within this, spawns count as one parallel wave
 
 /**
- * Cluster subagents (sorted by start time) into delegation rounds. Hermes emits
+ * Cluster subagents (sorted by start time) into delegation rounds. The backend emits
  * no round marker, so we infer a "wave" of spawns from start-time clustering:
  * subagents that start within ~SAME_WAVE_SECONDS of the previous one belong to
  * the same round (whether they came from one batch `delegate_task` call or from

@@ -9,7 +9,7 @@
 - Run `git diff --check`.
 - Run `npm run check:release`.
 - Run a tracked-file privacy scan for secrets, private IPs, local machine paths, connector tokens, API keys, node identity files, uploads, and `.env` contents.
-- Verify the GitHub CI workflow passes on the exact commit that will be tagged.
+- Verify the manual/local release checks pass on the exact commit that will be tagged.
 - Do not tag or publish from a dirty worktree.
 - After all checks pass, create and push the annotated tag from the verified commit:
 
@@ -33,8 +33,8 @@ This checklist is informational; do not run the tag commands during readiness re
 - Run `npm run check:rc`.
 - Confirm `npm run check:rc` includes the headless browser E2E gate for login, navigation, theme, Voting Pool, Worker Pool, Result Pool, and realtime dashboard refresh.
 - Run `npm run check:postgres` against either a temporary Docker Postgres container or an explicit throwaway `DATABASE_URL`.
-- Run `npm run check:release` locally before tagging; it mirrors the syntax, RC smoke, browser E2E, Postgres persistence, dependency audit, and Compose validation gates used by CI.
-- Verify the GitHub CI workflow passes for the release commit.
+- Run `npm run check:release` locally before tagging; it covers syntax, RC smoke, browser E2E, Postgres persistence, dependency audit, and Compose validation.
+- If you manually dispatch the legacy GitHub CI workflow, verify it passes for the release commit.
 - Update the release notes in `docs/releases/` for the tag being prepared.
 - Confirm the included consensus simulation covers promotion, multiple user nodes, revision, unanimous acceptance, result publication, and project completion.
 - Keep `OSA_RATE_LIMIT_MULTIPLIER=1` for public RC traffic.
@@ -89,10 +89,10 @@ Then start:
 
 ```bash
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
-curl http://127.0.0.1:8788/api/health
+curl http://127.0.0.1:8789/api/health
 ```
 
-The production compose file binds OSA to `127.0.0.1:8788`. For a private local node, use it locally or expose it only through a tunnel you control. For a hosted node, put Nginx, Caddy, or another HTTPS reverse proxy in front of it. See `docs/nginx.example.conf`.
+The production compose file binds OSA to `127.0.0.1:8789`. For a private local node, use it locally or expose it only through a tunnel you control. For a hosted node, put Nginx, Caddy, or another HTTPS reverse proxy in front of it. See `docs/nginx.example.conf`.
 
 ## Still Open Before Wider Release
 
@@ -117,16 +117,16 @@ npm run audit:prod
 npm run compose:config
 docker compose config --quiet
 docker compose up
-curl http://127.0.0.1:8788/api/state
-curl http://127.0.0.1:8788/api/health
-curl http://127.0.0.1:8788/api/trust-ledger
+curl http://127.0.0.1:8789/api/state
+curl http://127.0.0.1:8789/api/health
+curl http://127.0.0.1:8789/api/trust-ledger
 ```
 
 In production local mode, verify local node login requires a password:
 
 ```bash
 NODE_ENV=production OSA_SKIP_ENV_VALIDATION=1 OSA_AUTH_MODE=local OSA_LOCAL_PASSWORD_REQUIRED=1 node apps/server/src/server.mjs
-curl -X POST http://127.0.0.1:8788/api/auth/login \
+curl -X POST http://127.0.0.1:8789/api/auth/login \
   -H 'content-type: application/json' \
   --data '{"email":"test@example.com","name":"Test"}'
 ```

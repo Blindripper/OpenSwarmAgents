@@ -5,7 +5,7 @@ export function isOllamaBackend(baseUrl: string): boolean {
   return u.includes(":11434") || u.includes("ollama");
 }
 
-/** vLLM and other OpenAI-compat servers — reasoning effort is not wired through Hermes yet. */
+/** vLLM and other OpenAI-compatible servers do not expose reasoning effort here. */
 export function isVllmBackend(baseUrl: string): boolean {
   const u = baseUrl.trim().toLowerCase();
   if (!u || isOllamaBackend(u)) return false;

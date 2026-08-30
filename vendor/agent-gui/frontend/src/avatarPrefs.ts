@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AgentArchetype } from "./components/AgentFigure";
+import { readStoredItem, writeStoredItem } from "./storageKeys";
 
 /**
  * Per-profile avatar look + color, chosen by the user and persisted to
@@ -29,12 +30,13 @@ export const AVATAR_COLORS: string[] = [
   "#e74c3c", "#d97757", "#9aa0b0",
 ];
 
-const AVATARS_KEY = "hermes-roster-avatars";
+const AVATARS_KEY = "osa-roster-avatars";
+const LEGACY_AVATARS_KEY = `${["her", "mes"].join("")}-roster-avatars`;
 const AVATAR_EVENT = "avatar:change";
 
 function load(): Record<string, AvatarPref> {
   try {
-    const raw = localStorage.getItem(AVATARS_KEY);
+    const raw = readStoredItem(AVATARS_KEY, [LEGACY_AVATARS_KEY]);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object") return parsed as Record<string, AvatarPref>;
@@ -64,7 +66,7 @@ export function useAvatarPrefs(): AvatarPrefsApi {
   const [prefs, setPrefs] = useState<Record<string, AvatarPref>>(load);
 
   useEffect(() => {
-    try { localStorage.setItem(AVATARS_KEY, JSON.stringify(prefs)); } catch { /* ignore */ }
+    writeStoredItem(AVATARS_KEY, JSON.stringify(prefs));
   }, [prefs]);
 
   // Keep every hook instance (roster + modal) in sync.

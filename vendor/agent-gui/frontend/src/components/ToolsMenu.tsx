@@ -106,7 +106,7 @@ export function ToolsMenu({ toolsets, profiles, selectedId, onSelect, onSaveProf
               Pick the toolsets a new desk should load. Fewer tools → faster first response.
             </div>
 
-            {/* Toolset checklist. Hermes filters by toolset, not individual tool, so
+            {/* Toolset checklist. OSA filters by toolset, not individual tool, so
                 each row is a group; the count + tooltip show what it contains. */}
             <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 8 }}>
               {toolsets.reduce((n, t) => n + (t.tools?.length ?? 1), 0)} tools across {toolsets.length} toolsets — toggle whole toolsets:

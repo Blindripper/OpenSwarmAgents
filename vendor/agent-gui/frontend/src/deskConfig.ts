@@ -53,7 +53,7 @@ export function resolveDeskProfileVisual(opts: {
   };
 }
 
-export interface GlobalHermesConfig {
+export interface GlobalOpenClawConfig {
   base_url: string;
   model: string;
 }
@@ -102,7 +102,7 @@ export function findDeskItem(teams: { desks: DeskItem[] }[], deskId: string | nu
 }
 
 export function defaultDeskBarConfig(
-  global: GlobalHermesConfig,
+  global: GlobalOpenClawConfig,
   toolPresets: { chat: string[]; lean: string[]; full: string[] },
   toolDefault: string,
 ): DeskBarConfig {
@@ -131,7 +131,7 @@ function presetFromEnabled(
 export function resolveDeskBarConfig(
   deskId: string,
   deskBarConfigs: Record<string, DeskBarConfig>,
-  global: GlobalHermesConfig,
+  global: GlobalOpenClawConfig,
   toolPresets: { chat: string[]; lean: string[]; full: string[] },
   toolDefault: string,
 ): DeskBarConfig {
@@ -144,7 +144,7 @@ export function buildDeskConfigView(
   agents: AgentProfile[],
   pendingAssignments: Record<string, PendingAssignment>,
   deskBarConfigs: Record<string, DeskBarConfig>,
-  global: GlobalHermesConfig,
+  global: GlobalOpenClawConfig,
   toolPresets: { chat: string[]; lean: string[]; full: string[] },
   toolDefault: string,
 ): DeskConfigView | null {
@@ -226,7 +226,7 @@ export function pendingStartParams(
   deskId: string,
   pendingAssignments: Record<string, PendingAssignment>,
   deskBarConfigs: Record<string, DeskBarConfig>,
-  global: GlobalHermesConfig,
+  global: GlobalOpenClawConfig,
   toolPresets: { chat: string[]; lean: string[]; full: string[] },
   toolDefault: string,
   toolDefaultLeanSkip: boolean,

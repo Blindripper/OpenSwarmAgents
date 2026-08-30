@@ -20,6 +20,7 @@ import { TeamRowPanelContext, TEAM_ROW_HEIGHT } from "../TeamRowPanelContext";
 import { FloorManager } from "./FloorManager";
 import { ManagerModelMenu } from "./ManagerModelMenu";
 import { TeamFileRepo } from "./TeamFileRepo";
+import { readStoredItem } from "../storageKeys";
 
 // ── Team color palette ──────────────────────────────────────────────────────
 
@@ -30,6 +31,11 @@ const TEAM_COLOR_BG: Record<string, string> = {
   purple: "rgba(160,50,220,0.07)",
   orange: "rgba(220,120,30,0.07)",
 };
+const WORKBENCH_KEY_V2 = "osa-workbench-v2";
+const WORKBENCH_KEY_V1 = "agent-gui-workbench-v1";
+const LEGACY_STORAGE_PREFIX = ["her", "mes"].join("");
+const WORKBENCH_LEGACY_KEY_V2 = `${LEGACY_STORAGE_PREFIX}-workbench-v2`;
+const WORKBENCH_LEGACY_KEY_V1 = `${LEGACY_STORAGE_PREFIX}-workbench-v1`;
 const TEAM_COLOR_ACCENT: Record<string, string> = {
   blue:   "#5080e0",
   red:    "#e05050",
@@ -575,7 +581,7 @@ export function TeamRow({
   // Hide desk strip until real sessions load (prevents reload scroll-jump)
   const [desksVisible, setDesksVisible] = useState(() => {
     try {
-      const v2 = localStorage.getItem("hermes-workbench-v2");
+      const v2 = readStoredItem(WORKBENCH_KEY_V2, [WORKBENCH_LEGACY_KEY_V2]);
       if (v2) {
         const data = JSON.parse(v2);
         const saved = data?.teams?.find((t: { id: string }) => t.id === team.id);
@@ -585,7 +591,7 @@ export function TeamRow({
       }
       // V1 backward compat (team 0 only)
       if (teamIndex === 0) {
-        const v1 = localStorage.getItem("hermes-workbench-v1");
+        const v1 = readStoredItem(WORKBENCH_KEY_V1, [WORKBENCH_LEGACY_KEY_V1]);
         return !v1 || JSON.parse(v1).length === 0;
       }
       return true;

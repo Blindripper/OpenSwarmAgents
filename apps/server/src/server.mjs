@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { createReadStream, readFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join, extname, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -24,7 +24,7 @@ const uploadDir = process.env.OSA_UPLOAD_DIR || join(dataDir, "uploads");
 const identityPath = process.env.OSA_IDENTITY_PATH || join(dataDir, "node-identity.json");
 const seedPath = join(rootDir, "data/seed.json");
 const storePath = join(dataDir, "agentswarm.json");
-const port = Number(process.env.PORT || 8788);
+const port = Number(process.env.PORT || 8789);
 const host = process.env.HOST || "127.0.0.1";
 const leaseMs = Number(process.env.AGENTSWARM_LEASE_MS || 10 * 60 * 1000);
 const proposalVotingMs = Number(process.env.AGENTSWARM_PROPOSAL_VOTING_MS || 72 * 60 * 60 * 1000);
@@ -2588,7 +2588,7 @@ function taskCollaborationContext(task) {
 
 function agentGuiSessions() {
   const taskSessions = store.tasks
-    .filter((task) => !["done", "rejected"].includes(task.status))
+    .filter((task) => !["done", "rejected", "deleted"].includes(task.status) && !task.agentGuiDeletedAt)
     .map(agentGuiTaskSession);
   return taskSessions
     .sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));
@@ -2953,6 +2953,52 @@ async function copyAgentGuiSessionToHome(sessionId) {
   };
 }
 
+async function deleteAgentGuiSession(sessionId) {
+  const taskId = agentGuiTaskIdFromSessionId(sessionId);
+  const task = store.tasks.find((item) => item.id === taskId);
+  if (!task) {
+    const error = new Error("OSA desk not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+  if (agentGuiTaskRoom(task) === "public") {
+    const error = new Error("Public tasks are copy-only. Copy them into Home before changing them.");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const deletedAt = now();
+  const connector = task.agentGuiConnectorId
+    ? store.connectorTokens.find((item) => item.id === task.agentGuiConnectorId)
+    : null;
+  if (connector?.status === "active") {
+    revokeConnectorToken(connector, "agentgui_desk_deleted");
+  } else if (task.agentGuiConnectorId) {
+    stopManagedConnector(task.agentGuiConnectorId);
+  }
+
+  task.status = "deleted";
+  task.agentGuiDeletedAt = deletedAt;
+  task.updatedAt = deletedAt;
+  task.assignedAgentId = null;
+  task.leaseUntil = null;
+  task.leaseId = null;
+  event("agentgui_session_deleted", "OSA Home desk deleted", {
+    taskId: task.id,
+    goalId: task.goalId,
+    connectorId: task.agentGuiConnectorId || null
+  });
+  await saveStore();
+  return {
+    ok: true,
+    deleted: true,
+    sandbox: false,
+    workspace: false,
+    transcripts: true,
+    container: Boolean(connector)
+  };
+}
+
 function startAgentGuiTaskConnector(req, task, agentId) {
   const existing = task.agentGuiConnectorId ? store.connectorTokens.find((item) => item.id === task.agentGuiConnectorId) : null;
   const existingManaged = existing ? managedConnectorStatus(existing.id) : null;
@@ -3017,12 +3063,57 @@ function agentGuiConnectorAuth(taskId) {
   return { user, session: null };
 }
 
+function agentGuiFrontendLinked() {
+  try {
+    const html = readFileSync(join(agentGuiDistDir, "index.html"), "utf8");
+    return html.includes("/assets/") || html.includes("OSA");
+  } catch {
+    return false;
+  }
+}
+
+function openClawSetupStatus() {
+  const command = process.env.OSA_OPENCLAW_COMMAND || "openclaw";
+  const result = spawnSync(command, ["--version"], {
+    cwd: rootDir,
+    encoding: "utf8",
+    timeout: 2000
+  });
+  const available = !result.error && result.status === 0;
+  const version = available
+    ? String(result.stdout || result.stderr || "").trim().split(/\r?\n/)[0] || command
+    : null;
+  const linked = agentGuiFrontendLinked();
+  return {
+    available,
+    command,
+    version,
+    agent_gui_linked: linked,
+    setup_complete: linked && available,
+    profile: "Codex / OpenClaw",
+    rooms: { home: agentGuiHomeTeamId, public: agentGuiPublicTeamId },
+    message: linked && available
+      ? "OpenClaw is connected to the OSA AgentGUI adapter."
+      : "OpenClaw needs to be installed or available on this host before local agents can run from Home.",
+    install_hint: available
+      ? undefined
+      : "Install OpenClaw on this host or set OSA_OPENCLAW_COMMAND to the OpenClaw executable, then refresh this check."
+  };
+}
+
 async function maybeHandleAgentGuiApi(req, res, url, method, path) {
   if (method === "GET" && path === "/api/sessions") {
     return sendJson(res, 200, agentGuiSessions());
   }
 
   const sessionMatch = path.match(/^\/api\/sessions\/([^/]+)$/);
+  if (method === "DELETE" && sessionMatch) {
+    try {
+      return sendJson(res, 200, await deleteAgentGuiSession(decodeURIComponent(sessionMatch[1])));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to delete OSA desk" });
+    }
+  }
   if (method === "GET" && sessionMatch) {
     const session = agentGuiSessionById(decodeURIComponent(sessionMatch[1]));
     return session ? sendJson(res, 200, session) : notFound(res);
@@ -3179,7 +3270,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     return sendJson(res, 200, { id: "osa-default", profile_path: "osa://global", model: "OSA connector", base_url: "", soul: "OpenSwarmAgents", memory: "" });
   }
   if (method === "PUT" && path === "/api/global/persona") return sendJson(res, 200, { ok: true });
-  if (method === "GET" && path === "/api/hermes/status") return sendJson(res, 200, { available: true, kind: "osa-adapter" });
+  if (method === "GET" && path === "/api/openclaw/status") return sendJson(res, 200, openClawSetupStatus());
   if (method === "POST" && path.startsWith("/api/workspace/")) return sendJson(res, 200, { ok: false });
   if (method === "GET" && path.startsWith("/api/file/")) return sendJson(res, 404, { detail: "No OSA workspace file preview for this desk yet." });
 

@@ -428,7 +428,7 @@ async function loadWorkspaceFiles(sessionId: string): Promise<FileNode[]> {
   }
 }
 
-// Map a worker/Hermes log line to a short, honest phase label for the live status,
+// Map a connector log line to a short, honest phase label for the live status,
 // so the user sees what's actually happening (not a vague "thinking…") even when
 // the model streams no reasoning tokens. Returns null for lines with no clear phase.
 function phaseFromLog(msg: string): string | null {
@@ -649,7 +649,7 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
   // Collapsed by default so a long task stays compact; click a round to expand.
   const [expandedRounds, setExpandedRounds] = useState<Set<number>>(() => new Set());
   // User messages sent from this panel (follow-ups / barge-ins). Kept client-side
-  // so they stay visible in the feed even before Hermes persists them to the DB.
+  // so they stay visible in the feed even before the backend persists them.
   const [sentMsgs, setSentMsgs] = useState<{ text: string; ts: string }[]>([]);
   // Partial agent replies cut off by a barge-in — kept client-side so the
   // incomplete response stays visible (the interrupted turn never reaches the DB).
@@ -893,7 +893,7 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
   // eagerly once the desk is open — not only when the Overview tab is selected —
   // so `overviewReady` is true before the user switches in. Otherwise the chart
   // falls back to session-scoped `activity` (only the folder session id's
-  // messages), which after a resume drops prior runs Hermes stored under a
+  // messages), which after a resume drops prior runs the backend stored under a
   // different internal session id and looks like "only the latest call".
   // Do not refetch on every WS activity tick — that would briefly null the
   // desk-wide events mid-turn.

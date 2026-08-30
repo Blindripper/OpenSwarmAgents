@@ -9,7 +9,7 @@ import {
 /**
  * Time-resolved overview of a (potentially very long) activity trace.
  *
- * IMPORTANT data caveat: Hermes batch-flushes a whole turn's messages to the DB
+ * IMPORTANT data caveat: some backends batch-flush a whole turn's messages
  * at one instant, so per-event timestamps are NOT reliable for sub-turn timing.
  * What IS reliable is (a) event *order* and (b) *user-message* timestamps (each
  * starts a turn). So we segment the trace into turns by user-message boundaries,
@@ -417,7 +417,7 @@ export function ActivityOverview({
             )}
           </span>
         ) : (
-          <span>Per-turn estimate (Hermes batches event times). Hover a bar for its range, task, and breakdown.</span>
+          <span>Per-turn estimate. Hover a bar for its range, task, and breakdown.</span>
         )}
       </div>
     </div>

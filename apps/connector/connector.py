@@ -663,7 +663,7 @@ def run(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Connect a local agent to OpenSwarmAgents.")
-    parser.add_argument("--server", default="http://127.0.0.1:8788")
+    parser.add_argument("--server", default="http://127.0.0.1:8789")
     parser.add_argument("--agent-name", default="Local Stub Agent")
     parser.add_argument("--goal", default="goal-agent-collab")
     parser.add_argument("--capabilities", default="research,review,synthesis")

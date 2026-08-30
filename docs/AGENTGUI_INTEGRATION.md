@@ -10,7 +10,7 @@ Upstream:
 
 ## Why Not An Iframe
 
-AgentGUI is not a standalone widget. It is a full Vite/React frontend backed by a Python server, Hermes desk workers, SQLite session state, WebSocket activity streams, file browsing, terminal views, and manager/audit endpoints.
+AgentGUI is not a standalone widget. It is a full Vite/React frontend. OSA now replaces the upstream worker/server assumptions with an OpenClaw-aligned adapter, OSA session state, WebSocket activity streams, and Home/Public room semantics.
 
 OSA already has its own Node server, auth/session model, connector tokens, federation/trust ledger, local tasks, public network tasks, reviews, and published artifacts. Embedding the hosted AgentGUI page would only show a demo and would not observe OSA agents.
 
@@ -60,7 +60,9 @@ The OSA dashboard now uses the real AgentGUI frontend with exactly two OSA rooms
 - `Home`: create and run your own local agents.
 - `Public`: watch active OSA network tasks in the Night City layout and copy interesting agents/tasks into Home.
 
-The upstream Hermes start flow is adapted to OSA: `POST /api/sessions/new` creates a Home task, mints a scoped connector token, and starts a managed local connector. `POST /api/sessions/:id/copy` clones a Public task into Home without steering the remote Public agent. The default AgentGUI profile is `Codex / OpenClaw`; `Codex CLI` is available as a second local connector profile.
+The upstream start flow is adapted to OSA: `POST /api/sessions/new` creates a Home task, mints a scoped connector token, and starts a managed local OpenClaw connector. `POST /api/sessions/:id/copy` clones a Public task into Home without steering the remote Public agent. The default AgentGUI profile is `Codex / OpenClaw`; `Codex CLI` is available as a second local connector profile.
+
+`GET /api/openclaw/status` drives the first-run setup dialog. It reports whether the vendored frontend is built/linked, which OpenClaw command will be used, and whether Home/Public are ready for local work. `DELETE /api/sessions/:id` is implemented for Home desks and marks the backing OSA task as deleted so polling cannot resurrect removed subagents. Public desks remain copy-only.
 
 Branding is patched in the frontend build so the browser title, favicon, app header, and right-side badge use OSA and the OSA logo instead of Agent GUI.
 

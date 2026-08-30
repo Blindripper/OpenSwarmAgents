@@ -21,13 +21,13 @@ export interface Session {
   task_solved?: boolean;
   workspace_path?: string | null;
   is_sleeping?: boolean;
-  /** Hermes agent profile id (coder, jedi, …) when desk uses a profile. */
+  /** OSA/OpenClaw agent profile id when a desk uses a profile. */
   agent?: string | null;
   agent_model?: string | null;
   agent_base_url?: string | null;
-  /** Enabled UI toolset names from `.hermes_tools` marker. */
+  /** Enabled UI toolset names for this desk. */
   desk_tools?: string[];
-  /** Team this desk belongs to (from its server-side `.hermes_team_id` marker).
+  /** Team this desk belongs to.
    *  Lets the office reconstruct teams created outside the browser (API/script). */
   team_id?: string | null;
 }
@@ -48,7 +48,7 @@ export interface ToolProfile {
   builtin?: boolean;
 }
 
-/** Hermes agent profile from ~/.hermes/profiles (or --profiles-dir). */
+/** OSA/OpenClaw agent profile available to the workbench. */
 export interface AgentProfile {
   id: string;
   name: string;
@@ -133,8 +133,8 @@ export interface ActivityEvent {
   tool_name: string;
   is_error: boolean;
   files_touched: string[];
-  // True when `timestamp` is a real recorded emit-time; false when it's Hermes's
-  // coarse batch-flush time (rendered as approximate). Absent on old payloads.
+  // True when `timestamp` is a real recorded emit-time; false when it is an
+  // approximate backend flush time. Absent on old payloads.
   time_exact?: boolean;
 }
 
@@ -255,7 +255,7 @@ export interface TodoData {
   summary: string;
 }
 
-/** Live event emitted by hermes_worker.py over the activity WebSocket. */
+/** Live event emitted by the local connector over the activity WebSocket. */
 export interface WorkerEvent {
   type: "token" | "tool_start" | "tool_done" | "thinking" | "status" | "log" | "done" | "error" | "interrupted" | "agent_arrived" | "subagent";
   text?: string;   // token / thinking / subagent(thinking,progress)

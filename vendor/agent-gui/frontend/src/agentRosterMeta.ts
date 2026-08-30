@@ -39,7 +39,7 @@ export function rosterCategoryForAgent(agent: {
   if (isApiCloudProfile(agent)) return "api";
   // Built-in Claude Agent SDK agent (ids "claude-sdk"/"claude-agent-sdk", legacy
   // "claude-code") → group with the cloud/API agents so it shows in a visible
-  // section instead of "Unsorted". A Hermes profile that talks to the Anthropic
+  // section instead of "Unsorted". A profile that talks to the Anthropic
   // API (e.g. the bare "claude" profile) is an API agent too.
   if (agent.id === "claude-sdk" || agent.id === "claude-agent-sdk" || agent.id === "claude-code") return "api";
   if (agent.id === "claude" || (agent.name ?? "").toLowerCase().includes("claude")) return "api";

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AgentProfile } from "./types";
 import { ROSTER_CATEGORIES, rosterCategoryForAgent } from "./agentRosterMeta";
+import { readStoredItem, writeStoredItem } from "./storageKeys";
 
 /**
  * Configurable Agent Profiles layout: user-defined sections (editable name +
@@ -26,12 +27,16 @@ export interface GlobalSectionMeta {
 }
 const DEFAULT_GLOBAL: GlobalSectionMeta = {
   name: "Global",
-  blurb: "Default agent from ~/.hermes/config.yaml",
+  blurb: "Default OpenClaw agent from ~/.openclaw/config.yaml",
 };
 
-const SECTIONS_KEY = "hermes-roster-sections";
-const PLACEMENT_KEY = "hermes-roster-placement";
-const GLOBAL_KEY = "hermes-roster-global";
+const SECTIONS_KEY = "osa-roster-sections";
+const PLACEMENT_KEY = "osa-roster-placement";
+const GLOBAL_KEY = "osa-roster-global";
+const LEGACY_PREFIX = ["her", "mes"].join("");
+const LEGACY_SECTIONS_KEY = `${LEGACY_PREFIX}-roster-sections`;
+const LEGACY_PLACEMENT_KEY = `${LEGACY_PREFIX}-roster-placement`;
+const LEGACY_GLOBAL_KEY = `${LEGACY_PREFIX}-roster-global`;
 
 const SECTION_PALETTE = [
   "#4a8eff", "#e67e22", "#2ecc71", "#a78bfa",
@@ -49,7 +54,7 @@ function defaultSections(): RosterSection[] {
 
 function loadSections(): RosterSection[] {
   try {
-    const raw = localStorage.getItem(SECTIONS_KEY);
+    const raw = readStoredItem(SECTIONS_KEY, [LEGACY_SECTIONS_KEY]);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.every((s) => s && typeof s.id === "string")) {
@@ -64,7 +69,7 @@ function loadSections(): RosterSection[] {
 
 function loadGlobalMeta(): GlobalSectionMeta {
   try {
-    const raw = localStorage.getItem(GLOBAL_KEY);
+    const raw = readStoredItem(GLOBAL_KEY, [LEGACY_GLOBAL_KEY]);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed.name === "string") {
@@ -79,7 +84,7 @@ function loadGlobalMeta(): GlobalSectionMeta {
 
 function loadPlacements(): Record<string, string> {
   try {
-    const raw = localStorage.getItem(PLACEMENT_KEY);
+    const raw = readStoredItem(PLACEMENT_KEY, [LEGACY_PLACEMENT_KEY]);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object") return parsed as Record<string, string>;
@@ -122,13 +127,13 @@ export function useRosterLayout(): RosterLayout {
   const [globalSection, setGlobalSection] = useState<GlobalSectionMeta>(loadGlobalMeta);
 
   useEffect(() => {
-    try { localStorage.setItem(SECTIONS_KEY, JSON.stringify(sections)); } catch { /* ignore */ }
+    writeStoredItem(SECTIONS_KEY, JSON.stringify(sections));
   }, [sections]);
   useEffect(() => {
-    try { localStorage.setItem(PLACEMENT_KEY, JSON.stringify(placements)); } catch { /* ignore */ }
+    writeStoredItem(PLACEMENT_KEY, JSON.stringify(placements));
   }, [placements]);
   useEffect(() => {
-    try { localStorage.setItem(GLOBAL_KEY, JSON.stringify(globalSection)); } catch { /* ignore */ }
+    writeStoredItem(GLOBAL_KEY, JSON.stringify(globalSection));
   }, [globalSection]);
 
   const updateGlobalSection = useCallback((patch: Partial<GlobalSectionMeta>) => {

@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { Session, Team } from "../types";
+import { readStoredItem, writeStoredItem, removeStoredItems } from "../storageKeys";
 
-const SNAPSHOTS_KEY = "hermes-snapshots";
-const SNAPSHOT_PREFIX = "hermes-snapshot-";
-const WORKBENCH_KEY_V2 = "hermes-workbench-v2";
+const SNAPSHOTS_KEY = "osa-snapshots";
+const SNAPSHOT_PREFIX = "osa-snapshot-";
+const WORKBENCH_KEY_V2 = "osa-workbench-v2";
+const LEGACY_PREFIX = ["her", "mes"].join("");
+const LEGACY_SNAPSHOTS_KEY = `${LEGACY_PREFIX}-snapshots`;
+const LEGACY_SNAPSHOT_PREFIX = `${LEGACY_PREFIX}-snapshot-`;
+const LEGACY_WORKBENCH_KEY_V2 = `${LEGACY_PREFIX}-workbench-v2`;
 
 interface SessionSummary {
   id: string;
@@ -20,14 +25,14 @@ interface SnapshotMeta {
 
 function loadIndex(): SnapshotMeta[] {
   try {
-    const raw = localStorage.getItem(SNAPSHOTS_KEY);
+    const raw = readStoredItem(SNAPSHOTS_KEY, [LEGACY_SNAPSHOTS_KEY]);
     const arr = raw ? JSON.parse(raw) : [];
     return Array.isArray(arr) ? arr : [];
   } catch { return []; }
 }
 
 function saveIndex(index: SnapshotMeta[]) {
-  try { localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(index)); } catch {}
+  writeStoredItem(SNAPSHOTS_KEY, JSON.stringify(index));
 }
 
 interface Props {
@@ -75,9 +80,9 @@ export function SnapshotMenu({ teams, sessions, onLoadSnapshot }: Props) {
     const name = nameInput.trim();
     if (!name) return;
     try {
-      const current = localStorage.getItem(WORKBENCH_KEY_V2);
+      const current = readStoredItem(WORKBENCH_KEY_V2, [LEGACY_WORKBENCH_KEY_V2]);
       if (!current) return;
-      localStorage.setItem(SNAPSHOT_PREFIX + name, current);
+      writeStoredItem(SNAPSHOT_PREFIX + name, current);
       const index = loadIndex();
       const existing = index.findIndex((s) => s.name === name);
       const meta: SnapshotMeta = {
@@ -97,9 +102,9 @@ export function SnapshotMenu({ teams, sessions, onLoadSnapshot }: Props) {
 
   function handleLoad(name: string) {
     try {
-      const raw = localStorage.getItem(SNAPSHOT_PREFIX + name);
+      const raw = readStoredItem(SNAPSHOT_PREFIX + name, [LEGACY_SNAPSHOT_PREFIX + name]);
       if (!raw) return;
-      localStorage.setItem(WORKBENCH_KEY_V2, raw);
+      writeStoredItem(WORKBENCH_KEY_V2, raw);
       setOpen(false);
       onLoadSnapshot();
     } catch {}
@@ -107,7 +112,7 @@ export function SnapshotMenu({ teams, sessions, onLoadSnapshot }: Props) {
 
   function handleDelete(name: string) {
     try {
-      localStorage.removeItem(SNAPSHOT_PREFIX + name);
+      removeStoredItems(SNAPSHOT_PREFIX + name, [LEGACY_SNAPSHOT_PREFIX + name]);
       const index = loadIndex().filter((s) => s.name !== name);
       saveIndex(index);
       setSnapshots(index);

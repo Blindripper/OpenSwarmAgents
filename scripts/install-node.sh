@@ -80,6 +80,7 @@ fi
 
 cd "$INSTALL_DIR"
 npm ci
+npm run build:agent-gui
 
 if [ ! -f .env ] && [ -f .env.example ]; then
   cp .env.example .env
@@ -98,7 +99,7 @@ Start your local node:
   npm run dev
 
 Open:
-  http://127.0.0.1:8788
+  http://127.0.0.1:8789
 
 EOF
 

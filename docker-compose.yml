@@ -4,17 +4,17 @@ services:
     working_dir: /app
     command: sh -c "npm ci && npm start"
     ports:
-      - "127.0.0.1:8788:8788"
+      - "127.0.0.1:8789:8789"
     volumes:
       - .:/app
       - node-modules:/app/node_modules
     environment:
       HOST: "0.0.0.0"
-      PORT: "8788"
+      PORT: "8789"
       NODE_ENV: "${NODE_ENV:-development}"
       AGENTSWARM_LEASE_MS: "600000"
       DATABASE_URL: "${DATABASE_URL:-postgres://osa:osa-dev-password@postgres:5432/osa}"
-      OSA_PUBLIC_URL: "${OSA_PUBLIC_URL:-http://127.0.0.1:8788}"
+      OSA_PUBLIC_URL: "${OSA_PUBLIC_URL:-http://127.0.0.1:8789}"
       OSA_COOKIE_SECURE: "${OSA_COOKIE_SECURE:-0}"
       OSA_GITHUB_CLIENT_ID: "${OSA_GITHUB_CLIENT_ID:-}"
       OSA_GITHUB_CLIENT_SECRET: "${OSA_GITHUB_CLIENT_SECRET:-}"

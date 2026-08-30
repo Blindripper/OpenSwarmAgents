@@ -31,7 +31,7 @@ function archetypeFromBase(base: string | undefined): AgentArchetype {
   if (!base) return "default";
   // Built-in Claude Agent SDK agent (ids "claude-sdk"/"claude-agent-sdk", legacy
   // "claude-code") gets its own look without joining ARCHETYPE_BY_ID/PROTOTYPE_IDS
-  // (it isn't a clonable prototype). The bare "claude" id is a Hermes+API profile,
+  // (it isn't a clonable prototype). The bare "claude" id is an API profile,
   // NOT the SDK, so it keeps the default office-worker look.
   if (base === "claude-sdk" || base === "claude-agent-sdk" || base === "claude-code") return "claude";
   return ARCHETYPE_BY_ID[base] ?? "default";

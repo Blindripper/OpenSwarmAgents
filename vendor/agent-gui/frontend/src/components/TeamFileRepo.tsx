@@ -2,7 +2,7 @@
  * TeamFileRepo — a per-team shared "File Repo" below the manager in each team column.
  *
  * Drop files or whole folders from the local machine onto it; the bytes are COPIED
- * into the team's server-side cache (~/.hermes/gui_team_repos/<team_id>/) and then
+ * into the team's server-side cache and then
  * synced into every desk's workspace under team_files/, so every agent on the team
  * can read them. The user's original files on disk are never referenced directly.
  */

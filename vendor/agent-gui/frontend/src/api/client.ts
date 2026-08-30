@@ -3,6 +3,18 @@ import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, Agen
 const BASE = "/api";
 const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
 
+export interface OpenClawStatus {
+  available: boolean;
+  command: string;
+  version: string | null;
+  agent_gui_linked: boolean;
+  setup_complete: boolean;
+  profile: string;
+  rooms: { home: string; public: string };
+  message: string;
+  install_hint?: string;
+}
+
 async function errorDetail(r: Response): Promise<string> {
   try {
     const j = await r.json();
@@ -269,8 +281,8 @@ export const api = {
     tree: (root: string) =>
       get<FileNode[]>(`/file/tree?root=${encodeURIComponent(root)}`),
   },
-  hermes: {
-    status: () => get<{ available: boolean; [k: string]: unknown }>("/hermes/status"),
+  openclaw: {
+    status: () => get<OpenClawStatus>("/openclaw/status"),
     warmup: () => post<{ ok: boolean }>("/warmup", {}),
   },
   llm: {

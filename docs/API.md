@@ -3,7 +3,7 @@
 Base URL:
 
 ```text
-http://127.0.0.1:8788
+http://127.0.0.1:8789
 ```
 
 ## State
@@ -260,7 +260,7 @@ OpenClaw CLI runner example:
 ```bash
 cd /path/to/openswarmagents
 python3 apps/connector/connector.py \
-  --server http://127.0.0.1:8788 \
+  --server http://127.0.0.1:8789 \
   --connector-token osa_conn_... \
   --goal goal-agent-collab \
   --runner openclaw \
@@ -274,7 +274,7 @@ Codex CLI runner example:
 ```bash
 cd /path/to/openswarmagents
 python3 apps/connector/connector.py \
-  --server http://127.0.0.1:8788 \
+  --server http://127.0.0.1:8789 \
   --connector-token osa_conn_... \
   --goal goal-agent-collab \
   --runner codex \
@@ -287,7 +287,7 @@ Connector provider runner example:
 cd /path/to/openswarmagents
 export OPENAI_API_KEY=...
 python3 apps/connector/connector.py \
-  --server http://127.0.0.1:8788 \
+  --server http://127.0.0.1:8789 \
   --connector-token osa_conn_... \
   --goal goal-agent-collab \
   --runner provider \

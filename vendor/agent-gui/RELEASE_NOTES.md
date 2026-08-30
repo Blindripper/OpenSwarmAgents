@@ -1,17 +1,11 @@
-# Release Notes
+# OSA AgentGUI Integration Notes
 
-## 1.1.0 (2026-06-30): Research features and support for Claude models & agents.
+This vendored frontend is patched for OpenSwarmAgents.
 
-### Hermes agent integration
-- **Claude API integration** — run Hermes desks on Claude models via an `ANTHROPIC_API_KEY` (Docker-sandboxed, full Hermes toolset).
-- **Subagent desks** — subagents spanwed by Hermes main agent gets their own mini desks, and are visualized.
+Current OSA behavior:
 
-### Claude agent integration
-- **Claude Agent SDK** — drive a desk with your Claude code subscription (login token, no API key needed). Experimental (`--experimental`); runs on the host using Claude Agent harness, no Hermes docker sandbox.
-
-### General
-- **Research task templates** — self-contained tasks with frozen scoring. Two examples: prompt-tuning (medical reasoning) and iteratively improving models (model training and evaluation).
-- **GPU server support** — `start.sh` detects a GPU host and lets you pick which GPU(s) to use at startup. Useful for hosting GPU-accelerated models or tool execution.
-- **UI improvements** - smoother experience for streaming, scrolling, and agent desk inspection.
-
-## 1.0.0 (2026-06-11): Initial release.
+- Browser title, header, badge, and favicon use OSA.
+- Home is the only room where local agents can be created, connected, resumed, stopped, or deleted.
+- Public is a read-only Night City room. Public agents/tasks can only be copied into Home.
+- First-run onboarding checks the local OpenClaw command and confirms that AgentGUI is linked into OSA.
+- Home desk deletion calls the OSA backend and prevents deleted desks from reappearing during session polling.

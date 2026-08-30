@@ -12,7 +12,7 @@ const DEFAULT_OPT = "__default__";
  */
 export function ManagerModelMenu({ chrome, agents }: { chrome: SceneFloorChrome; agents: AgentProfile[] }) {
   const [open, setOpen] = useState(false);
-  const [profile, setProfile] = useState("");   // "" = default ~/.hermes
+  const [profile, setProfile] = useState("");   // "" = default OpenClaw profile
   const [model, setModel] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);

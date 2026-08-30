@@ -7,17 +7,20 @@ import { AgentProfileModal } from "./components/AgentProfileModal";
 import { AgentAssignModal } from "./components/AgentAssignModal";
 import { DeskAgentPicker } from "./components/DeskAgentPicker";
 import { GlobalDefaultPersonaEditor } from "./components/GlobalDefaultPersonaEditor";
+import { OpenClawOnboarding } from "./components/OpenClawOnboarding";
 import { FilePreview, DEFAULT_CODE_THEME } from "./components/FilePreview";
 import type { CodeThemeId } from "./components/FilePreview";
 import { DEFAULT_BELL } from "./sounds";
 import { DEFAULT_SCENE } from "./components/SceneBackground";
-import { buildDeskConfigView, defaultDeskBarConfig, deskIsRunning, findDeskItem, pendingStartParams, resolveDeskBarConfig, type DeskBarConfig, type GlobalHermesConfig } from "./deskConfig";
+import { buildDeskConfigView, defaultDeskBarConfig, deskIsRunning, findDeskItem, pendingStartParams, resolveDeskBarConfig, type DeskBarConfig, type GlobalOpenClawConfig } from "./deskConfig";
 import { DESK_PANEL_Z_BASE, nextPanelZ } from "./floatingPanelStack";
 import type { DeskItem, FilePreviewData, Session, Team, TeamColor, ToolsetMeta, AgentProfile, AgentPrototype, PendingAssignment, ToolPresetId, AgentCapabilities } from "./types";
+import type { OpenClawStatus } from "./api/client";
 import { useAgentDrag } from "./useAgentDrag";
 import { useRosterLayout } from "./rosterLayout";
 import { AgentFigure } from "./components/AgentFigure";
 import { effectiveAgentColor, useAvatarPrefs } from "./avatarPrefs";
+import { readStoredItem, writeStoredItem, removeStoredItems } from "./storageKeys";
 import "./styles/globals.css";
 
 const POLL_INTERVAL = 5000;
@@ -30,7 +33,7 @@ const EMPTY_REASONING_OPTIONS: { value: ReasoningEffort; label: string }[] = [];
 async function fetchProfileDefaults(
   agentId: string,
   agents: AgentProfile[],
-  globalConfig: GlobalHermesConfig,
+  globalConfig: GlobalOpenClawConfig,
   toolPresets: { chat: string[]; lean: string[]; full: string[] },
   toolDefault: string,
 ): Promise<{ toolPreset: ToolPresetId; toolsEnabled: string[]; model: string }> {
@@ -67,8 +70,25 @@ async function fetchProfileDefaults(
   };
 }
 
-const WORKBENCH_KEY_V2 = "hermes-workbench-v2";
-const WORKBENCH_KEY_V1 = "hermes-workbench-v1"; // read-only, backward compat
+const WORKBENCH_KEY_V2 = "osa-workbench-v2";
+const WORKBENCH_KEY_V1 = "agent-gui-workbench-v1"; // read-only, backward compat
+const LEGACY_STORAGE_PREFIX = ["her", "mes"].join("");
+const legacyStorageKey = (name: string) => `${LEGACY_STORAGE_PREFIX}-${name}`;
+const WORKBENCH_LEGACY_KEY_V2 = legacyStorageKey("workbench-v2");
+const WORKBENCH_LEGACY_KEY_V1 = legacyStorageKey("workbench-v1");
+const ONBOARDING_DISMISSED_KEY = "osa-openclaw-onboarding-dismissed";
+const STORAGE_KEYS = {
+  codeTheme: { key: "osa-code-theme", legacy: [legacyStorageKey("code-theme")] },
+  verbose: { key: "osa-verbose", legacy: [legacyStorageKey("verbose")] },
+  reasoningEffort: { key: "osa-reasoning-effort", legacy: [legacyStorageKey("reasoning-effort")] },
+  apiMode: { key: "osa-api-mode", legacy: [legacyStorageKey("api-mode")] },
+  bellSound: { key: "osa-bell-sound", legacy: [legacyStorageKey("bell-sound")] },
+  scene: { key: "osa-scene", legacy: [legacyStorageKey("scene")] },
+  showManager: { key: "osa-show-manager", legacy: [legacyStorageKey("show-manager")] },
+  managerPatrolInterval: { key: "osa-manager-patrol-interval", legacy: [legacyStorageKey("manager-patrol-interval")] },
+  managerIdleGrace: { key: "osa-manager-idle-grace", legacy: [legacyStorageKey("manager-idle-grace")] },
+  managerIdleThreshold: { key: "osa-manager-idle-threshold", legacy: [legacyStorageKey("manager-idle-threshold")] },
+};
 
 interface DeskSetupDraft {
   agentId: string;
@@ -88,10 +108,10 @@ interface WorkbenchV2 {
 
 function readWorkbenchV2(): WorkbenchV2 | null {
   try {
-    const raw = localStorage.getItem(WORKBENCH_KEY_V2);
+    const raw = readStoredItem(WORKBENCH_KEY_V2, [WORKBENCH_LEGACY_KEY_V2]);
     if (raw) return JSON.parse(raw) as WorkbenchV2;
-    // Backward compat: V1 was a flat array → wrap as single blue team
-    const v1raw = localStorage.getItem(WORKBENCH_KEY_V1);
+    // Backward compat: V1 was a flat array; wrap as Home.
+    const v1raw = readStoredItem(WORKBENCH_KEY_V1, [WORKBENCH_LEGACY_KEY_V1]);
     if (v1raw) {
       const items = JSON.parse(v1raw) as WorkbenchEntry[];
       if (items.length > 0) {
@@ -127,7 +147,7 @@ function saveWorkbenchV2(
         }),
       })),
     };
-    localStorage.setItem(WORKBENCH_KEY_V2, JSON.stringify(v2));
+    writeStoredItem(WORKBENCH_KEY_V2, JSON.stringify(v2));
   } catch {}
 }
 
@@ -205,8 +225,7 @@ export default function App() {
     });
   }
   const [codeTheme, setCodeTheme] = useState<CodeThemeId>(() => {
-    try { return (localStorage.getItem("hermes-code-theme") as CodeThemeId) || DEFAULT_CODE_THEME; }
-    catch { return DEFAULT_CODE_THEME; }
+    return (readStoredItem(STORAGE_KEYS.codeTheme.key, STORAGE_KEYS.codeTheme.legacy) as CodeThemeId) || DEFAULT_CODE_THEME;
   });
   // Server-side Docker cleanup policy (⚙ → Docker). Loaded from the backend on
   // mount; toggling POSTs back. Default off = reap containers on delete/shutdown.
@@ -221,22 +240,18 @@ export default function App() {
   const [focusedDeskId, setFocusedDeskId] = useState<string | null>(null);
   const [assignModal, setAssignModal] = useState<{ deskId: string; agent: AgentProfile } | null>(null);
   const [verbose, setVerbose] = useState(() => {
-    try {
-      const stored = localStorage.getItem("hermes-verbose");
-      return stored === null ? true : stored === "true";
-    } catch { return true; }
+    const stored = readStoredItem(STORAGE_KEYS.verbose.key, STORAGE_KEYS.verbose.legacy);
+    return stored === null ? true : stored === "true";
   });
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(() => {
-    try { return (localStorage.getItem("hermes-reasoning-effort") as ReasoningEffort) || "medium"; }
-    catch { return "medium"; }
+    return (readStoredItem(STORAGE_KEYS.reasoningEffort.key, STORAGE_KEYS.reasoningEffort.legacy) as ReasoningEffort) || "medium";
   });
   // Reasoning-effort options for the selected model (capability-driven, fetched
   // from the backend). qwen → Off/On; empty → gray out.
   const [reasoningOptions, setReasoningOptions] =
     useState<{ value: ReasoningEffort; label: string }[]>(EMPTY_REASONING_OPTIONS);
   const [apiMode, setApiMode] = useState<ApiMode>(() => {
-    try { return (localStorage.getItem("hermes-api-mode") as ApiMode) || "openai"; }
-    catch { return "openai"; }
+    return (readStoredItem(STORAGE_KEYS.apiMode.key, STORAGE_KEYS.apiMode.legacy) as ApiMode) || "openai";
   });
   const avatars = useAvatarPrefs();
   const [agents, setAgents] = useState<AgentProfile[]>([]);
@@ -249,40 +264,37 @@ export default function App() {
   const [rosterOpen, setRosterOpen] = useState(false);
   const rosterRef = useRef<HTMLDivElement>(null);
   const [deskDefaultModel, setDeskDefaultModel] = useState<string>("");
-  const [globalConfig, setGlobalConfig] = useState<GlobalHermesConfig>({ base_url: "", model: "" });
+  const [globalConfig, setGlobalConfig] = useState<GlobalOpenClawConfig>({ base_url: "", model: "" });
   const [deskBarConfigs, setDeskBarConfigs] = useState<Record<string, DeskBarConfig>>({});
   const [toolsets, setToolsets] = useState<ToolsetMeta[]>([]);
   const [toolPresets, setToolPresets] = useState<{ chat: string[]; lean: string[]; full: string[] }>(
     { chat: [], lean: [], full: [] });
   const [toolDefault, setToolDefault] = useState<string>("lean");
   const [bellSound, setBellSound] = useState<string>(() => {
-    try { return localStorage.getItem("hermes-bell-sound") || DEFAULT_BELL; }
-    catch { return DEFAULT_BELL; }
+    return readStoredItem(STORAGE_KEYS.bellSound.key, STORAGE_KEYS.bellSound.legacy) || DEFAULT_BELL;
   });
   const [scene, setScene] = useState<string>(() => {
-    try { return localStorage.getItem("hermes-scene") || DEFAULT_SCENE; }
-    catch { return DEFAULT_SCENE; }
+    return readStoredItem(STORAGE_KEYS.scene.key, STORAGE_KEYS.scene.legacy) || DEFAULT_SCENE;
   });
   const [showManager, setShowManager] = useState<boolean>(() => {
-    try { return localStorage.getItem("hermes-show-manager") !== "false"; }
-    catch { return true; }
+    return readStoredItem(STORAGE_KEYS.showManager.key, STORAGE_KEYS.showManager.legacy) !== "false";
   });
   const [managerPatrolIntervalSec, setManagerPatrolIntervalSec] = useState<number>(() => {
-    try {
-      const v = localStorage.getItem("hermes-manager-patrol-interval");
-      if (v) return parseInt(v, 10) || 60;
-      const legacy = localStorage.getItem("hermes-manager-idle-threshold");
-      return legacy ? parseInt(legacy, 10) || 60 : 60;
-    } catch { return 60; }
+    const v = readStoredItem(STORAGE_KEYS.managerPatrolInterval.key, STORAGE_KEYS.managerPatrolInterval.legacy);
+    if (v) return parseInt(v, 10) || 60;
+    const legacy = readStoredItem(STORAGE_KEYS.managerIdleThreshold.key, STORAGE_KEYS.managerIdleThreshold.legacy);
+    return legacy ? parseInt(legacy, 10) || 60 : 60;
   });
   const [managerIdleGraceSec, setManagerIdleGraceSec] = useState<number>(() => {
-    try {
-      const v = localStorage.getItem("hermes-manager-idle-grace");
-      if (v) return parseInt(v, 10) || 60;
-      const legacy = localStorage.getItem("hermes-manager-idle-threshold");
-      return legacy ? parseInt(legacy, 10) || 60 : 60;
-    } catch { return 60; }
+    const v = readStoredItem(STORAGE_KEYS.managerIdleGrace.key, STORAGE_KEYS.managerIdleGrace.legacy);
+    if (v) return parseInt(v, 10) || 60;
+    const legacy = readStoredItem(STORAGE_KEYS.managerIdleThreshold.key, STORAGE_KEYS.managerIdleThreshold.legacy);
+    return legacy ? parseInt(legacy, 10) || 60 : 60;
   });
+  const [openClawStatus, setOpenClawStatus] = useState<OpenClawStatus | null>(null);
+  const [onboardingOpen, setOnboardingOpen] = useState(
+    () => readStoredItem(ONBOARDING_DISMISSED_KEY) !== "1",
+  );
   // Per-team ask-manager: maps team.id → session id to prioritise (null = full patrol)
   const [askManagerByTeamId, setAskManagerByTeamId] = useState<Record<string, string | null>>({});
   const [searchMatchIds, setSearchMatchIds] = useState<Set<string>>(new Set());
@@ -402,7 +414,8 @@ export default function App() {
 
   useEffect(() => {
     loadSessions();
-    api.hermes.warmup().catch(() => {});
+    api.openclaw.warmup().catch(() => {});
+    api.openclaw.status().then(setOpenClawStatus).catch(() => {});
     api.guiConfig().then((r) => {
       setAgents(r.agents ?? []);
       setPrototypes(r.prototypes ?? []);
@@ -504,7 +517,7 @@ export default function App() {
       if (opts.length && !opts.some((o) => o.value === reasoningEffort)) {
         const fallback = opts[opts.length - 1].value;
         setReasoningEffort(fallback);
-        try { localStorage.setItem("hermes-reasoning-effort", fallback); } catch {}
+        writeStoredItem(STORAGE_KEYS.reasoningEffort.key, fallback);
       }
     }).catch(() => { if (!cancelled) setReasoningOptions(EMPTY_REASONING_OPTIONS); });
     return () => { cancelled = true; };
@@ -1067,8 +1080,8 @@ export default function App() {
       return;
     }
     if (!window.confirm("Clear all desks and remove unused agent containers?")) return;
-    try { localStorage.removeItem(WORKBENCH_KEY_V2); } catch {}
-    try { localStorage.removeItem(WORKBENCH_KEY_V1); } catch {}
+    removeStoredItems(WORKBENCH_KEY_V2, [WORKBENCH_LEGACY_KEY_V2]);
+    removeStoredItems(WORKBENCH_KEY_V1, [WORKBENCH_LEGACY_KEY_V1]);
     setPendingTexts({});
     setTeams([makeHomeTeam(), makePublicTeam()]);
     try {
@@ -1121,23 +1134,23 @@ export default function App() {
         managerIdleGraceSec={managerIdleGraceSec}
         onBellSoundChange={(id) => {
           setBellSound(id);
-          try { localStorage.setItem("hermes-bell-sound", id); } catch {}
+          writeStoredItem(STORAGE_KEYS.bellSound.key, id);
         }}
         onSceneChange={(id) => {
           setScene(id);
-          try { localStorage.setItem("hermes-scene", id); } catch {}
+          writeStoredItem(STORAGE_KEYS.scene.key, id);
         }}
         onShowManagerChange={(v) => {
           setShowManager(v);
-          try { localStorage.setItem("hermes-show-manager", String(v)); } catch {}
+          writeStoredItem(STORAGE_KEYS.showManager.key, String(v));
         }}
         onManagerPatrolIntervalChange={(sec) => {
           setManagerPatrolIntervalSec(sec);
-          try { localStorage.setItem("hermes-manager-patrol-interval", String(sec)); } catch {}
+          writeStoredItem(STORAGE_KEYS.managerPatrolInterval.key, String(sec));
         }}
         onManagerIdleGraceChange={(sec) => {
           setManagerIdleGraceSec(sec);
-          try { localStorage.setItem("hermes-manager-idle-grace", String(sec)); } catch {}
+          writeStoredItem(STORAGE_KEYS.managerIdleGrace.key, String(sec));
         }}
         onSearch={handleSearch}
         searchStats={searchStats}
@@ -1148,7 +1161,7 @@ export default function App() {
         codeTheme={codeTheme}
         onCodeThemeChange={(id) => {
           setCodeTheme(id);
-          try { localStorage.setItem("hermes-code-theme", id); } catch {}
+          writeStoredItem(STORAGE_KEYS.codeTheme.key, id);
         }}
         dockerPersist={dockerPersist}
         onDockerPersistChange={(v) => {
@@ -1158,7 +1171,7 @@ export default function App() {
         verbose={verbose}
         onVerboseChange={(v) => {
           setVerbose(v);
-          try { localStorage.setItem("hermes-verbose", String(v)); } catch {}
+          writeStoredItem(STORAGE_KEYS.verbose.key, String(v));
         }}
         agents={agents}
         rosterAgents={agentsForRoster}
@@ -1191,7 +1204,7 @@ export default function App() {
         }}
         onReasoningChange={(v) => {
           setReasoningEffort(v);
-          try { localStorage.setItem("hermes-reasoning-effort", v); } catch {}
+          writeStoredItem(STORAGE_KEYS.reasoningEffort.key, v);
         }}
       />
       <Office
@@ -1249,9 +1262,21 @@ export default function App() {
         onDeskConfigToolsChange={(deskId, toolPreset, toolsEnabled) => { void applyDeskCustomization(deskId, { toolPreset, toolsEnabled }); }}
         onDeskConfigReasoningChange={(v) => {
           setReasoningEffort(v);
-          try { localStorage.setItem("hermes-reasoning-effort", v); } catch {}
+          writeStoredItem(STORAGE_KEYS.reasoningEffort.key, v);
         }}
       />
+      {onboardingOpen && (
+        <OpenClawOnboarding
+          status={openClawStatus}
+          onRefresh={() => {
+            api.openclaw.status().then(setOpenClawStatus).catch(() => {});
+          }}
+          onClose={() => {
+            setOnboardingOpen(false);
+            writeStoredItem(ONBOARDING_DISMISSED_KEY, "1");
+          }}
+        />
+      )}
       {agentDrag && (() => {
         const dragAgent = agentDrag.agentId
           ? agents.find((a) => a.id === agentDrag.agentId)

@@ -95,7 +95,7 @@ export function AgentProfileModal({ mode, agent, prototypes, agents = [], embedd
   }, [mode, agent?.id, baseUrl]);
 
   useEffect(() => {
-    // Edit → that profile's providers; create → global (~/.hermes) catalog, since
+    // Edit -> that profile's providers; create -> global OpenClaw catalog, since
     // prototypes ship with an empty `providers:` block.
     let cancelled = false;
     setProvidersLoading(true);
@@ -221,7 +221,7 @@ export function AgentProfileModal({ mode, agent, prototypes, agents = [], embedd
                   style={inputStyle}
                   autoFocus
                 />
-                <Hint>Lowercase letters, numbers, hyphens. Used by Hermes as the profile name.</Hint>
+                <Hint>Lowercase letters, numbers, hyphens. Used by OSA as the profile name.</Hint>
               </Field>
               <Field label="Clone from">
                 <select value={cloneFrom} onChange={(e) => setCloneFrom(e.target.value)} style={inputStyle}>

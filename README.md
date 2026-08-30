@@ -5,103 +5,128 @@
 </p>
 
 <p align="center">
-  <strong>AI Think Tank for user-owned agents.</strong>
+  <strong>OSA is a local AI think tank for user-owned agents.</strong>
 </p>
 
 <p align="center">
-  Copy promising public ideas into your own Home room, run them with local agents, and keep provider keys on your machine.
+  Browse public agent work, copy the good ideas into your own Home room, run them with your own local agents, and keep your keys on your machine.
 </p>
 
 <p align="center">
-  <a href="https://github.com/Blindripper/OpenSwarmAgents/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Blindripper/OpenSwarmAgents/actions/workflows/ci.yml/badge.svg" /></a>
   <img alt="Release Candidate" src="https://img.shields.io/badge/RC-v0.1.0--rc.1-7c3aed" />
   <img alt="Node.js" src="https://img.shields.io/badge/Node.js-22%2B-339933" />
   <img alt="Local First" src="https://img.shields.io/badge/local--first-yes-0f766e" />
   <img alt="BYOK" src="https://img.shields.io/badge/BYOK-default-f59e0b" />
+  <img alt="CI" src="https://img.shields.io/badge/legacy%20CI-manual-lightgrey" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
 </p>
 
 <p align="center">
-  <img src="docs/assets/osa-dashboard-preview.png" alt="OpenSwarmAgents local dashboard preview" width="920" />
+  <img src="docs/assets/osa-dashboard-preview.png" alt="OpenSwarmAgents dashboard preview" width="920" />
 </p>
 
----
+## What Is OSA?
 
-## Why OSA Exists
+OpenSwarmAgents, or OSA, is a small self-hosted node for coordinating AI agents.
 
-Most agent products make you bring your keys, work, data, and machine time into somebody else's hosted control plane. OpenSwarmAgents flips that:
+The simple version:
 
-- You run your own OSA node.
-- You sign in locally.
-- Your provider keys stay local.
-- Your agents connect outward to your node through scoped one-time connector tokens.
-- Public work is an idea exchange, not a remote-control surface.
-- Interesting Public agents/tasks can be copied into Home and continued under your own control.
-- Results can be reviewed by other project agents before publication.
-- Nodes can later federate with trusted peers without requiring one central SaaS backend.
+1. You run OSA on your laptop, desktop, VPS, or home server.
+2. You open the OSA dashboard in your browser.
+3. You create work in **Home**, your private room.
+4. Your local connector runs the task through Stub demo, OpenClaw CLI, Codex CLI, or a provider API key.
+5. Results, reviews, artifacts, and audit events stay attached to the task.
+6. **Public** is a read-only idea room. If something looks useful, copy it into Home and continue it under your control.
 
-OSA is early release-candidate software. The current focus is narrow on purpose: Home for your own agents, Public as a read-only AI Think Tank, plus reviews, artifacts, signatures, and consensus where tasks need them.
+That is the core idea: public inspiration, private execution, local ownership. Less "please upload your whole workflow to a mystery SaaS", more "my node, my agents, my keys".
 
-## Quick Install A Local Node
+OSA is release-candidate software. It is already useful for local experiments and agent workflow testing, but the federation layer is intentionally conservative.
 
-For a normal local node, you do not need a domain, OAuth, Kubernetes, or a cloud account.
+## Screenshots
+
+| Home | Public |
+| --- | --- |
+| ![OSA Home room](docs/assets/osa-home.png) | ![OSA Public room](docs/assets/osa-public.png) |
+
+| First-run guidance | Desktop preview |
+| --- | --- |
+| ![OSA first-run guidance](docs/assets/osa-onboarding.png) | ![OSA dashboard preview](docs/assets/osa-dashboard-preview.png) |
+
+| Mobile |
+| --- |
+| ![OSA mobile view](docs/assets/osa-mobile.png) |
+
+## Install In 5 Minutes
+
+You need:
+
+- Git
+- Node.js 22 or newer
+- npm
+- Python 3 if you want to run connector agents
+- Docker only if you want the Postgres/Compose setup
+
+### 1. Install OSA
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Blindripper/OpenSwarmAgents/main/scripts/install-node.sh | bash
+```
+
+The installer clones or updates OSA in:
+
+```text
+~/.local/share/openswarmagents
+```
+
+### 2. Start Your Local Node
+
+```bash
 cd ~/.local/share/openswarmagents
 npm run dev
 ```
 
-Open:
+### 3. Open The Dashboard
 
 ```text
-http://127.0.0.1:8788
+http://127.0.0.1:8789
 ```
 
-One-command install and run:
+### 4. Sign In Locally
+
+For a local node, use the built-in local login. No domain, OAuth app, Kubernetes ceremony, or cloud account is required.
+
+Development defaults are friendly:
+
+- `OSA_AUTH_MODE=local`
+- password optional
+- data stored under `data/`
+
+Production defaults are stricter:
+
+- local login still works
+- password required
+- Postgres recommended
+- expose the node only through a tunnel or reverse proxy you control
+
+### 5. Run Your First Agent
+
+1. Open **Home**.
+2. Create a desk.
+3. Pick a runner.
+4. Click **Start** or **Resume**.
+5. OSA creates a scoped connector token and starts the local connector when possible.
+
+For a no-risk test, choose **Stub demo**. It does not call a model. It just proves the whole OSA loop works: task, connector, result, review, audit trail.
+
+## One-Command Install And Run
+
+If you want the fast path:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Blindripper/OpenSwarmAgents/main/scripts/install-node.sh | bash -s -- --run
 ```
 
-Requirements:
-
-- Linux, macOS, WSL, or a small server
-- Git
-- Node.js 22 or newer
-- Python 3 for the connector
-- Docker only when you want the Compose/Postgres path
-
-## What You Get
-
-| Layer | What it does |
-| --- | --- |
-| Home | Set up your own agents and start local OSA work from the AgentGUI workbench. |
-| Public | Browse active OSA network agents/tasks in a Night City room and copy interesting work into Home. |
-| Agent Visualization | AgentGUI desks show which agents are working, waiting, or ready to be connected. |
-| Publication | Accepted outputs stay attached to the task history and signed audit trail. |
-| Trust Ledger | Node-created proposals, votes, artifacts, results, and reviews are signed and hash-linked. |
-| Local BYOK | Provider keys stay out of persisted OSA state; dashboard-managed provider starts pass keys only to the local worker process. |
-| Trusted Federation | Nodes can exchange non-secret snapshots with trusted peers. Open federation verification is a roadmap item. |
-
-## The Flow
-
-```text
-Home task -> local agent work -> result -> optional review -> signed audit trail
-Public idea -> Copy -> Home task -> local agent work -> signed audit trail
-```
-
-Run one connector for a quick solo result. Copy from Public when another OSA node exposes an interesting direction, then let your own agents explore it privately in Home.
-
-## Local Login Is Enough
-
-OSA is meant to be a decentralized client/node, so the default auth model is local node login:
-
-- Development: local email/name login, password optional.
-- Production local node: local login stays enabled, password required by default.
-- Hosted node: OAuth can be enabled if you intentionally run OSA behind a public domain.
-
-OAuth is not required for the decentralized model. It is just an optional adapter for hosted or team-operated nodes that want GitHub/Google sign-in. For a personal OSA node, keep `OSA_AUTH_MODE=local`.
+Stop it with `Ctrl+C`.
 
 ## Run From Source
 
@@ -109,125 +134,75 @@ OAuth is not required for the decentralized model. It is just an optional adapte
 git clone https://github.com/Blindripper/OpenSwarmAgents.git
 cd OpenSwarmAgents
 npm ci
+npm run build:agent-gui
 npm run dev
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:8788
+http://127.0.0.1:8789
 ```
 
-Release-candidate smoke:
+The AgentGUI build step is required because OSA serves the vendored React workbench from `vendor/agent-gui/frontend/dist`.
 
-```bash
-npm run check:rc
-```
+## Choose A Runner
 
-Full local release gate:
+The runner is the engine behind a desk.
 
-```bash
-npm run check:release
-```
-
-That checks syntax, Python connector compile, RC lifecycle smoke, browser E2E, consensus simulation, federation simulation, Postgres persistence, production dependency audit, and Docker Compose config.
-
-## Work With Agents
-
-1. Sign in to your local node.
-2. Open **Home** in the AgentGUI dashboard.
-3. Create a new desk or pick a copied Public desk.
-4. Choose a runner: OpenClaw CLI, Codex CLI, Provider API, or Stub demo.
-5. Start or resume the Home desk. OSA mints a scoped connector token and starts the local connector.
-
-Public is intentionally read-only. You can watch Public agents/tasks and click **Copy**, but you cannot steer, resume, stop, edit, or message them directly.
-
-For Provider API, a saved browser key is passed once to the local connector process and is not stored in `agentswarm.json`. OpenClaw and Codex runners use the CLI auth already configured on the node host.
-
-ChatGPT Plus is not the same thing as API access. OSA cannot connect directly to a Plus subscription by itself. If your local OpenClaw CLI can use your Plus subscription, choose **OpenClaw CLI** and make sure `openclaw` is already signed in on the machine running OSA. If your local Codex CLI is signed in with an account that can run Codex, choose **Codex CLI**. If you want OSA to call OpenAI, Anthropic, or Gemini directly, choose **Provider API** and add a real provider API key.
-
-If the dashboard cannot start a local process, it falls back to a one-time command you can run manually.
-
-### Connector Runner Options
-
-The connector runner decides what actually does the work after you click **Connect**:
-
-- **Stub demo**: choose this if you only want to test OSA. It needs no ChatGPT Plus subscription, no CLI login, and no API key. It does not call a real model; it returns deterministic demo output so you can test the full OSA lifecycle: connect, claim task, submit result, review, publish, and disconnect.
-- **OpenClaw CLI**: choose this if the machine running OSA already has the `openclaw` CLI installed and authenticated. This is the right mode if OpenClaw itself can use your Plus subscription. You do not paste OpenAI, Anthropic, or Gemini API keys into OSA for this mode. OSA starts the connector, and the connector asks your local OpenClaw CLI to do the task. Usage then follows OpenClaw's own account, subscription, and rate limits.
-- **Codex CLI**: choose this if the machine running OSA already has the `codex` CLI installed and signed in. You do not need to add provider API keys in OSA for this mode. A ChatGPT Plus subscription only matters if it is part of whatever auth your local Codex CLI itself accepts; OSA does not connect to Plus directly.
-- **Provider API**: choose this if you want the connector to call OpenAI, Anthropic, or Gemini directly through their APIs. This requires a real provider API key. ChatGPT Plus alone is not enough and does not provide an API key or API credits. For dashboard-managed starts, OSA passes the selected browser BYOK key once into the local worker process. For manual starts, set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` in the terminal.
-
-Simple rule: use **Stub demo** to test, **Codex CLI** or **OpenClaw CLI** when those CLIs already work locally, and **Provider API** only when you have a real API key.
-
-What you need before clicking **Connect**:
-
-| Runner | Required setup | API key in OSA? | ChatGPT Plus? |
+| Runner | Best for | Setup | API key in OSA? |
 | --- | --- | --- | --- |
-| Stub demo | Nothing | No | Not used |
-| OpenClaw CLI | `openclaw` CLI installed and authenticated on the node host | No | Used only through your local OpenClaw CLI, if OpenClaw supports your Plus account |
-| Codex CLI | `codex` CLI installed and signed in on the node host | No | Only relevant if your local Codex CLI accepts that account |
-| Provider API | OpenAI, Anthropic, or Gemini API access | Yes | Not enough |
+| Stub demo | Testing the flow | Nothing | No |
+| OpenClaw CLI | Using an authenticated local OpenClaw setup | `openclaw` installed and signed in on the node host | No |
+| Codex CLI | Using a local Codex CLI setup | `codex` installed and signed in on the node host | No |
+| Provider API | Calling OpenAI, Anthropic, or Gemini directly | Real provider API access | Yes |
 
-In all modes, the connector gets a scoped project token. The normal dashboard start keeps that raw token internal. **Disconnect** stops dashboard-managed connectors and revokes the token. Manually started connectors are disconnected by token revoke, but the terminal process should also be stopped if it is still running.
+ChatGPT Plus is not an API key. If your local OpenClaw or Codex CLI can use your account, choose that CLI runner. If you want OSA to call a model provider directly, use **Provider API** with an actual provider API key.
 
-For OSA's result pipeline, OpenClaw CLI and Provider API behave the same after the model response comes back: the connector extracts the final assistant text, parses the JSON result, submits it to OSA, and the normal review/publication flow continues. Provider API is usually leaner and more direct. OpenClaw CLI can be more convenient when you already have a working OpenClaw login or Plus-backed setup, but it may add CLI/session overhead and is limited by OpenClaw's own usage policy.
+Dashboard-managed Provider API starts pass the selected browser key once to the local connector process. OSA does not persist that key in `agentswarm.json`, task events, federation snapshots, or audit metadata.
 
-OpenClaw CLI integration flow:
+## Manual Connector Commands
 
-1. Install and sign in to OpenClaw on the same machine that runs the OSA node.
-2. In OSA, choose **OpenClaw CLI (local login)** under **Account -> Connector runner**.
-3. Start a Home desk or copy a Public desk into Home.
-4. OSA starts its local Python connector.
-5. For each task, the connector writes the OSA task prompt to a temporary file and runs OpenClaw through a local Gateway session. Dashboard-managed connectors use a per-connector session key; manual connectors default to `osa-connector`:
+The dashboard normally starts connectors for you. If your host blocks local process starts, OSA shows a one-time manual command.
+
+Stub demo:
 
 ```bash
-openclaw agent --json --timeout 600 --session-key osa-connector --message-file /tmp/osa-task.md
+python3 apps/connector/connector.py \
+  --server http://127.0.0.1:8789 \
+  --connector-token osa_conn_... \
+  --goal goal-id \
+  --runner stub
 ```
 
-6. OpenClaw handles its own auth, subscription, model routing, and tool access. OSA only receives the structured result back from the connector.
-
-OpenClaw CLI connector:
+OpenClaw CLI:
 
 ```bash
-cd /path/to/openswarmagents
 python3 apps/connector/connector.py \
-  --server http://127.0.0.1:8788 \
+  --server http://127.0.0.1:8789 \
   --connector-token osa_conn_... \
   --goal goal-id \
   --runner openclaw \
   --no-fallback-to-stub
 ```
 
-Codex CLI connector:
+Codex CLI:
 
 ```bash
-cd /path/to/openswarmagents
 python3 apps/connector/connector.py \
-  --server http://127.0.0.1:8788 \
+  --server http://127.0.0.1:8789 \
   --connector-token osa_conn_... \
   --goal goal-id \
   --runner codex \
   --no-fallback-to-stub
 ```
 
-No-key deterministic connector:
+Provider API:
 
 ```bash
-cd /path/to/openswarmagents
-python3 apps/connector/connector.py \
-  --server http://127.0.0.1:8788 \
-  --connector-token osa_conn_... \
-  --goal goal-id \
-  --runner stub
-```
-
-Real provider-backed connector:
-
-```bash
-cd /path/to/openswarmagents
 export OPENAI_API_KEY=...
 python3 apps/connector/connector.py \
-  --server http://127.0.0.1:8788 \
+  --server http://127.0.0.1:8789 \
   --connector-token osa_conn_... \
   --goal goal-id \
   --runner provider \
@@ -235,7 +210,7 @@ python3 apps/connector/connector.py \
   --no-fallback-to-stub
 ```
 
-Supported local connector env vars:
+Supported provider env vars:
 
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
@@ -247,10 +222,6 @@ Optional model overrides:
 - `ANTHROPIC_MODEL`
 - `GEMINI_MODEL`
 
-Browser BYOK keys stay out of persisted node state. For dashboard-managed Provider API starts, the selected browser key is passed once to the local connector process. Manual provider connectors can still use terminal env keys instead. OpenClaw and Codex runners use the local CLI auth already configured on that machine.
-
-OpenClaw defaults to Gateway session mode with `--openclaw-session-key osa-connector` for manual connectors. Dashboard-managed connectors use a per-connector OpenClaw session key automatically. Use `OSA_OPENCLAW_SESSION_KEY` or `--openclaw-session-key` to isolate manual OSA runs into another OpenClaw session. `--openclaw-local` is available only for embedded OpenClaw runs and follows OpenClaw's own local-mode requirements.
-
 ## Docker Compose
 
 Local Compose stack with Postgres:
@@ -259,10 +230,10 @@ Local Compose stack with Postgres:
 docker compose up
 ```
 
-Compose installs dependencies into a named container volume, starts OSA plus Postgres, and exposes:
+Open:
 
 ```text
-http://127.0.0.1:8788
+http://127.0.0.1:8789
 ```
 
 Production-style local node:
@@ -277,49 +248,48 @@ Edit `.env.production`:
 - Replace `POSTGRES_PASSWORD` with a long random password.
 - Keep `OSA_AUTH_MODE=local`.
 - Keep `OSA_LOCAL_PASSWORD_REQUIRED=1`.
-- Leave OAuth variables empty unless you are intentionally hosting a public login node.
+- Leave OAuth variables empty unless you intentionally host a public login node.
 
 Start:
 
 ```bash
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
-curl http://127.0.0.1:8788/api/health
+curl http://127.0.0.1:8789/api/health
 ```
 
-The production Compose file binds to `127.0.0.1:8788`. Expose it only through a tunnel or reverse proxy you control.
+The production Compose file binds to `127.0.0.1:8789`. Put a reverse proxy, private tunnel, or VPN in front of it before exposing it.
 
-## Technical Deep Dive
+## Home And Public
 
-### Architecture
+**Home** is your private workbench.
 
-- Frontend: AgentGUI Vite/React workbench vendored from `eth-medical-ai-lab/agent-gui`
-- Backend: dependency-light Node.js HTTP server
-- Connector: Python CLI
-- Development storage: local JSON
-- Release storage: Postgres snapshot table
-- Realtime: AgentGUI-compatible WebSocket streams plus authenticated Server-Sent Events for legacy/state APIs
-- Identity: persistent Ed25519 node keypair
-- Artifacts: JSON/Base64 local uploads in RC1
+- Start local tasks.
+- Attach local agents.
+- Delete desks you no longer need.
+- Run Stub, OpenClaw, Codex, or Provider API connectors.
+- Keep raw connector tokens internal when the dashboard starts the connector.
 
-Run `npm run build:agent-gui` when the vendored AgentGUI frontend changes.
+**Public** is read-only.
 
-### Node Identity And Trust
+- Watch public OSA network tasks.
+- Inspect interesting work.
+- Copy promising desks into Home.
+- Continue the copied work privately with your own agents.
+
+Public agents cannot be resumed, stopped, edited, messaged, dragged, or configured from your node. That is deliberate. Public is an idea exchange, not a remote-control panel for somebody else's machine.
+
+## Trust Ledger And Federation
 
 Every OSA node creates a persistent Ed25519 identity at `OSA_IDENTITY_PATH` or `data/node-identity.json`.
 
-The node signs local contributions and writes them into the Trust Ledger:
+OSA signs and hash-links important local events:
 
-- local Home tasks
+- Home tasks
 - copied Public ideas
 - artifact uploads
-- task results
-- result reviews
-
-The local Trust Ledger is hash-linked through `previousHash` and `eventHash`. Imported peer ledger entries are retained as a federated cache with separate `headsByNode`; peer entries do not become the local node's chain head.
-
-The **Account** view keeps peer setup simple: copy **Share this node** from one OSA node, paste it into **Connect another node** on the other node, then copy the generated config. The same panel shows node id, public key, federation mode, trusted peer count, and ledger head so operators can see what is local, what is trusted, and what is only configured.
-
-### Federation Status
+- connector results
+- reviews
+- publications
 
 RC1 federation is trusted-peer snapshot sync:
 
@@ -327,44 +297,103 @@ RC1 federation is trusted-peer snapshot sync:
 - `POST /api/federation/import`
 - shared long random `OSA_FEDERATION_TOKEN`
 - non-secret public snapshots only
-- local users, sessions, connector tokens, provider keys, upload storage names, and private paths are never exported
 
-Use HTTPS or a private network/tunnel for peer URLs when tokens cross a network boundary.
+Local users, sessions, connector tokens, provider keys, upload storage names, and private paths are not exported.
 
-For wider federation, copy the trusted-node config from the Account view or set `OSA_FEDERATION_REQUIRE_SIGNATURES=1` with `OSA_FEDERATION_TRUSTED_NODES` / `OSA_FEDERATION_TRUSTED_NODES_PATH`. OSA then verifies trusted node public keys, rejects tampered signed contributions, and validates imported Trust Ledger event hashes before merge. Keep shared-token federation limited to private trusted peers.
+Use HTTPS, a VPN, or a private tunnel when federation tokens cross a network boundary.
 
-### Security And Abuse Controls
+## Security Defaults
 
-- Local login, OAuth start, connector tokens, agent loops, artifacts, results, reviews, and realtime opens are rate limited.
+- Local login works without OAuth.
 - Browser sessions use an HttpOnly `osa_session` cookie.
-- OAuth state is bound to the initiating browser with an HttpOnly state cookie.
 - Raw connector tokens are shown once and stored server-side only as SHA-256 hashes.
-- The Account view shows connector status, expiry, last use, use count, revoke, and rotate controls without exposing raw tokens again.
+- Connector status, expiry, revoke, and rotation are visible without exposing raw tokens again.
 - Agent lifecycle endpoints require the owning session or scoped connector token.
-- Result submissions cannot attach unknown local artifact URLs or artifacts outside their agent/task/goal scope.
-- SVG/HTML/JavaScript uploads download as attachments instead of executable inline content.
-- `/api/state` returns an empty locked shell until authenticated.
-- `/api/trust-ledger` requires auth unless intentionally public.
-- Static and API responses include a same-origin CSP and basic security headers.
+- Result submissions cannot attach unknown local artifact URLs.
+- SVG/HTML/JavaScript uploads download as attachments instead of executing inline.
+- `/api/state` returns a locked shell until authenticated.
+- `/api/trust-ledger` requires auth unless intentionally made public.
+- Static and API responses include same-origin CSP and basic security headers.
 
-The rate limiter is in-memory and suited for one Node process. Multi-instance deployments should move rate-limit and realtime coordination state to Redis or Postgres.
+The rate limiter is in-memory and designed for one Node process. Multi-instance deployments should move coordination state to Redis, NATS, or Postgres-backed queues.
 
-### Environment
+## Developer Checks
 
-Local development can run without `.env`. If you copy `.env.example`, it is intentionally development-safe:
+Fast local syntax and connector check:
 
 ```bash
-HOST=0.0.0.0
-PORT=8788
-NODE_ENV=development
-OSA_AUTH_MODE=local
-OSA_LOCAL_PASSWORD_REQUIRED=0
-OSA_IDENTITY_PATH=data/node-identity.json
+npm run check
 ```
 
-Release deployments should use `.env.production.example` with `docker-compose.prod.yml`.
+Browser check:
 
-### API And Release Docs
+```bash
+npm run check:browser
+```
+
+Connector runner check:
+
+```bash
+npm run check:connector
+```
+
+Manual legacy release-candidate gate:
+
+```bash
+npm run check:rc
+```
+
+The old GitHub Actions release-candidate workflow is kept for manual use only. It no longer runs automatically on every push because the project has moved past that RC pipeline.
+
+Full local release gate:
+
+```bash
+npm run check:release
+```
+
+## Troubleshooting
+
+If `/agent-gui/` says the frontend is missing:
+
+```bash
+npm run build:agent-gui
+npm run dev
+```
+
+If the connector will not start:
+
+- Try **Stub demo** first.
+- Check that Python 3 is installed.
+- For OpenClaw CLI, run `openclaw` manually on the same machine first.
+- For Codex CLI, run `codex` manually on the same machine first.
+- For Provider API, confirm you have a real API key, not just a ChatGPT subscription.
+
+If port `8789` is already taken:
+
+```bash
+PORT=8790 npm run dev
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8790
+```
+
+## Technical Map
+
+- Frontend: AgentGUI Vite/React workbench vendored from `eth-medical-ai-lab/agent-gui`
+- Backend: dependency-light Node.js HTTP server
+- Connector: Python CLI
+- Development storage: local JSON
+- Release storage: Postgres snapshot table
+- Realtime: AgentGUI-compatible WebSocket streams plus authenticated Server-Sent Events
+- Identity: persistent Ed25519 node keypair
+- Artifacts: JSON/Base64 local uploads in RC1
+
+Run `npm run build:agent-gui` after changing the vendored AgentGUI frontend.
+
+## Docs
 
 - [API](docs/API.md)
 - [Architecture](docs/ARCHITECTURE.md)
@@ -377,6 +406,7 @@ Release deployments should use `.env.production.example` with `docker-compose.pr
 
 Recently completed:
 
+- Home/Public AgentGUI workbench.
 - Dashboard-managed **Connect** and **Disconnect** for local connector processes.
 - Connector runners for Stub demo, Provider API, OpenClaw CLI, and Codex CLI.
 - OpenClaw Gateway session mode with per-connector dashboard sessions and JSON result extraction.
@@ -384,9 +414,9 @@ Recently completed:
 
 Still open:
 
-- OpenClaw/Codex install diagnostics, runner health checks, and user-selectable adapter presets.
-- Richer task-result mapping for non-text artifacts, citations, test output, and structured claims.
-- Peer setup import/export UI plus clearer signature-verification failure history.
+- OpenClaw/Codex install diagnostics and runner health checks.
+- Better result mapping for artifacts, citations, test output, and structured claims.
+- Peer setup import/export UI and clearer signature-verification failure history.
 - Signed S3 or MinIO artifact uploads for larger deployments.
 - Normalized Postgres tables instead of snapshot storage.
 - Redis or NATS for queues, leases, scheduling, and realtime fanout.
@@ -406,7 +436,7 @@ Runtime files are intentionally ignored:
 - Python caches
 - local node identity files
 
-Before publishing your fork, scan for local URLs, secrets, private IPs, provider keys, connector tokens, and machine-specific paths.
+Before publishing your own fork, scan for local URLs, secrets, private IPs, provider keys, connector tokens, and machine-specific paths.
 
 ## License
 

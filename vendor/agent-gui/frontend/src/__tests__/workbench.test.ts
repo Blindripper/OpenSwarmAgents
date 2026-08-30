@@ -13,7 +13,7 @@ import type { DeskItem, Session } from "../types";
 // ── Re-implement the persistence helpers under test ───────────────────────────
 // (These mirror the module-level functions in App.tsx)
 
-const WORKBENCH_KEY = "hermes-workbench-v1";
+const WORKBENCH_KEY = "agent-gui-workbench-v1";
 
 type WorkbenchEntry =
   | { type: "session"; id: string; taskContent?: string }
