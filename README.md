@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  Build agents privately, share the useful ones, copy what works, and let the Top100 charts show what people actually want.
+  Build agents privately, share the useful ones, copy what works, and watch the public network move in real time.
 </p>
 
 <p align="center">
@@ -33,11 +33,12 @@ The idea is simple:
 - **Public Agents** shows the latest agents people intentionally shared.
 - **Public Rooms** shows the latest shared rooms.
 - **Public Projects** shows the latest shared projects.
-- **Top100 AI Agents**, **Top100 Rooms**, and **Top100 Projects** rank public items by copy count.
+- **Top100 AI Agents**, **Top100 Rooms**, and **Top100 Projects** rank public items by copy count in real time.
 - **Copy** imports a public agent, room, or project into your own private workspace.
 - **Donate** lets people support the builder with USDC.
+- **Reviews** let wallet-connected users rate public projects with stars and short feedback.
 
-OSA is not trying to be a shiny prompt museum. It is closer to an agent bazaar: if something is useful, people copy it. If it keeps being useful, it climbs.
+OSA is not trying to be a shiny prompt museum. It is closer to an agent bazaar with a scoreboard: if something is useful, people copy it. If it keeps being useful, it climbs. If it earns donations, everyone sees that too.
 
 ## Screenshots
 
@@ -127,7 +128,7 @@ http://127.0.0.1:8790
 6. Create extra rooms with **+ Room** when Home gets too crowded.
 7. Share a whole room with **Share Room**.
 8. Share the current private workspace with **Share Project**.
-9. Open a Top100 tab to see what is being copied.
+9. Open a Top100 tab to see what is being copied, donated to, and reviewed.
 
 ## Home, Rooms, And Projects
 
@@ -155,6 +156,21 @@ The public dashboard has three latest rows:
 
 Latest means newest shared item first. These rows are not the ranking board. They are the fresh feed.
 
+When a new public agent, room, or project enters the network, OSA refreshes the feed and shows a small live notice. If bell sounds are enabled in settings, the dashboard can ring the selected OSA bell sound so the new arrival is hard to miss.
+
+Peer syncs also refresh the feed. A federated OSA node can import public agents, rooms, projects, reviews, copy counts, donation totals, and recent network events from trusted peers.
+
+## Topbar
+
+The topbar is built for network awareness:
+
+- **Network Live** shows that the browser is connected to the live OSA event stream.
+- **Public Items** shows how many public agents, rooms, and projects are visible.
+- **Online** shows agents currently running on this node.
+- **Copies** shows total public copies visible in this dashboard.
+- **Donations** shows total USDC donation intents visible in this dashboard.
+- **Wallet** shows whether this browser has a connected wallet identity.
+
 ## Top100 Rankings
 
 OSA has three charts:
@@ -166,6 +182,17 @@ OSA has three charts:
 Each chart ranks public items by copy count. Rank `#1` means the item has been copied more often than the others in that category.
 
 Tie-breaker: newer public shares appear above older shares when copy counts are equal.
+
+Rankings update automatically when someone copies, donates to, reviews, shares, unshares, or imports public catalog items from a peer node. You do not need to reload the page to watch the board move.
+
+Each Top100 row shows:
+
+- current rank
+- copy count
+- total USDC earned
+- **Copy** button
+- **Donate** button
+- project rating and **Review** button on project charts
 
 ## Copy Mechanics
 
@@ -198,6 +225,30 @@ OSA keeps **5%** of donations for development and operating costs. Think of it a
 ```
 
 The remaining 95% belongs to the public item builder once real settlement is wired in.
+
+## Project Reviews
+
+Public projects can receive wallet-linked reviews:
+
+- 1 to 5 stars
+- short headline
+- written feedback
+
+The Top100 Projects chart shows average stars and review count. A wallet can update its own review for the same project, which keeps feedback useful and reduces throwaway spam. It is not full Sybil resistance yet, but it is the right base layer for reputation.
+
+## Decentralized Network Notes
+
+OSA already has a federation snapshot/import path. The public marketplace data now travels with that network layer:
+
+- public agents
+- public rooms
+- public projects
+- project reviews
+- copy counts
+- donation totals
+- recent network events
+
+Wallet pubkeys are useful beyond donations. They can become the anchor for owner identity, active agent presence, project reputation, copy history, and later stronger trust signals such as signed nonces and verified USDC transaction hashes.
 
 ## Agent Profiles
 

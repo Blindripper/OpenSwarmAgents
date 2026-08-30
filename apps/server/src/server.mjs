@@ -140,6 +140,7 @@ async function loadStore() {
       agentProfiles: [],
       walletSessions: [],
       agentDonations: [],
+      publicProjectReviews: [],
       publicRooms: [],
       publicProjects: [],
       connectorTokens: [],
@@ -170,6 +171,7 @@ function normalizeStore(input) {
     agentProfiles: normalizeAgentProfiles(input.agentProfiles || []),
     walletSessions: normalizeWalletSessions(input.walletSessions || []),
     agentDonations: normalizeAgentDonations(input.agentDonations || []),
+    publicProjectReviews: normalizePublicProjectReviews(input.publicProjectReviews || []),
     publicRooms: normalizePublicCollections(input.publicRooms || [], "room"),
     publicProjects: normalizePublicCollections(input.publicProjects || [], "project"),
     connectorTokens: normalizeConnectorTokens(input.connectorTokens || []),
@@ -280,6 +282,30 @@ function normalizeAgentDonations(donations) {
           status: donation.status === "confirmed" ? "confirmed" : "pledged",
           txHash: donation.txHash ? String(donation.txHash).slice(0, 100) : null,
           createdAt: donation.createdAt || now()
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function normalizePublicProjectReviews(reviews) {
+  return reviews
+    .filter((review) => review?.projectId && review?.walletAddress)
+    .map((review) => {
+      try {
+        const rating = Number(review.rating);
+        if (!Number.isFinite(rating) || rating < 1 || rating > 5) return null;
+        return {
+          id: String(review.id || `project-review-${randomUUID()}`).slice(0, 100),
+          projectId: String(review.projectId).slice(0, 140),
+          walletAddress: normalizeWalletAddress(review.walletAddress),
+          rating: Math.round(rating),
+          title: String(review.title || "").trim().slice(0, 120),
+          comment: String(review.comment || "").trim().slice(0, 2000),
+          createdAt: review.createdAt || now(),
+          updatedAt: review.updatedAt || review.createdAt || now()
         };
       } catch {
         return null;
@@ -519,6 +545,7 @@ async function loadPostgresStore() {
     agentProfiles: [],
     walletSessions: [],
     agentDonations: [],
+    publicProjectReviews: [],
     publicRooms: [],
     publicProjects: [],
     connectorTokens: [],
@@ -633,6 +660,50 @@ function serveRealtimeStream(req, res) {
   realtimeClients.add(client);
   sendSse(res, "connected", {
     userId: auth.user.id,
+    serverTime: now(),
+    lastEventId: store.events[0]?.id || null
+  });
+
+  const heartbeat = setInterval(() => {
+    try {
+      sendSse(res, "heartbeat", { serverTime: now() });
+    } catch {
+      clearInterval(heartbeat);
+      realtimeClients.delete(client);
+    }
+  }, 25000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    realtimeClients.delete(client);
+  });
+}
+
+function serveAgentGuiNetworkStream(req, res) {
+  if (!enforceRateLimit(req, res, "agentgui-network-stream", `ip:${clientIdentity(req)}`, { limit: 20, windowMs: 60 * 1000 })) {
+    return;
+  }
+  const userId = `agentgui:${clientIdentity(req)}`;
+  const userRealtimeClients = [...realtimeClients].filter((client) => client.userId === userId).length;
+  if (realtimeClients.size >= maxRealtimeClients || userRealtimeClients >= maxRealtimeClientsPerUser) {
+    return tooManyRequests(res, {
+      limit: userRealtimeClients >= maxRealtimeClientsPerUser ? maxRealtimeClientsPerUser : maxRealtimeClients,
+      remaining: 0,
+      resetAt: Math.ceil((Date.now() + 60 * 1000) / 1000),
+      retryAfterSeconds: 60
+    });
+  }
+  res.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-store, no-transform",
+    connection: "keep-alive",
+    ...securityHeaders()
+  });
+  res.flushHeaders?.();
+
+  const client = { res, userId, connectedAt: now() };
+  realtimeClients.add(client);
+  sendSse(res, "connected", {
     serverTime: now(),
     lastEventId: store.events[0]?.id || null
   });
@@ -1011,6 +1082,7 @@ function publicState(auth = null) {
     tasks: store.tasks,
     results: store.results,
     reviews: store.reviews,
+    publicProjectReviews: store.publicProjectReviews,
     claims: store.claims,
     resultPool: store.resultPool,
     proposals: store.proposals,
@@ -1046,6 +1118,7 @@ function publicLockedState() {
     tasks: [],
     results: [],
     reviews: [],
+    publicProjectReviews: [],
     claims: [],
     resultPool: [],
     proposals: [],
@@ -1158,6 +1231,9 @@ function publicFederationSnapshot() {
       proposals: federationSlice(store.proposals).map(publicFederatedProposal),
       proposalVotes: federationSlice(store.proposalVotes).map(publicFederatedProposalVote),
       uploadedArtifacts: federationSlice(store.uploadedArtifacts).map(publicFederatedArtifact),
+      publicRooms: federationSlice(store.publicRooms).map(publicFederatedPublicCollection),
+      publicProjects: federationSlice(store.publicProjects).map(publicFederatedPublicCollection),
+      publicProjectReviews: federationSlice(store.publicProjectReviews).map(publicFederatedProjectReview),
       trustLedger: publicTrustLedger(500),
       events: store.events
         .filter((entry) => !["federation_imported", "user_signed_in"].includes(entry.type))
@@ -1224,6 +1300,14 @@ function publicFederatedTask(task) {
     "reviewForResultId",
     "assignedReviewerId",
     "assignedReviewerName",
+    "sharedPublic",
+    "sharedPublicAt",
+    "copyCount",
+    "lastCopiedAt",
+    "ownerWalletAddress",
+    "agentGuiRoom",
+    "agentGuiAgent",
+    "agentGuiModel",
     "createdAt",
     "updatedAt"
   ]);
@@ -1334,6 +1418,36 @@ function publicFederatedArtifact(artifact) {
     ...publicArtifact(artifact),
     uploadedBy: null
   };
+}
+
+function publicFederatedPublicCollection(item) {
+  return pick(item, [
+    "id",
+    "type",
+    "sourceTeamId",
+    "name",
+    "summary",
+    "taskIds",
+    "rooms",
+    "sharedAt",
+    "updatedAt",
+    "copyCount",
+    "lastCopiedAt",
+    "ownerWalletAddress"
+  ]);
+}
+
+function publicFederatedProjectReview(review) {
+  return pick(review, [
+    "id",
+    "projectId",
+    "walletAddress",
+    "rating",
+    "title",
+    "comment",
+    "createdAt",
+    "updatedAt"
+  ]);
 }
 
 function publicFederatedEvent(eventEntry) {
@@ -1595,6 +1709,9 @@ function importFederationSnapshot(snapshot) {
     proposals: mergeFederatedCollection("proposals", collections.proposals, publicFederatedProposal),
     proposalVotes: mergeFederatedCollection("proposalVotes", collections.proposalVotes, publicFederatedProposalVote),
     uploadedArtifacts: mergeFederatedCollection("uploadedArtifacts", collections.uploadedArtifacts, publicFederatedArtifact),
+    publicRooms: mergeFederatedPublicCollections("publicRooms", collections.publicRooms, "room"),
+    publicProjects: mergeFederatedPublicCollections("publicProjects", collections.publicProjects, "project"),
+    publicProjectReviews: mergeFederatedProjectReviews(collections.publicProjectReviews),
     trustLedger: mergeFederatedTrustLedger(collections.trustLedger),
     events: mergeFederatedEvents(collections.events)
   };
@@ -1624,6 +1741,49 @@ function mergeFederatedCollection(name, incoming, sanitize) {
       merged += 1;
     }
   }
+  return merged;
+}
+
+function mergeFederatedPublicCollections(name, incoming, type) {
+  if (!Array.isArray(incoming)) return 0;
+  if (!Array.isArray(store[name])) store[name] = [];
+  let merged = 0;
+  for (const item of normalizePublicCollections(incoming, type).slice(0, federationCollectionLimit)) {
+    const existingIndex = store[name].findIndex((candidate) => candidate.id === item.id);
+    if (existingIndex === -1) {
+      store[name].push(item);
+      merged += 1;
+      continue;
+    }
+    const existing = store[name][existingIndex];
+    const chosen = chooseFederatedItem(name, existing, item);
+    if (chosen !== existing) {
+      store[name][existingIndex] = chosen;
+      merged += 1;
+    }
+  }
+  store[name].sort((a, b) => String(b.sharedAt).localeCompare(String(a.sharedAt)));
+  return merged;
+}
+
+function mergeFederatedProjectReviews(incoming) {
+  if (!Array.isArray(incoming)) return 0;
+  store.publicProjectReviews = normalizePublicProjectReviews(store.publicProjectReviews || []);
+  let merged = 0;
+  for (const review of normalizePublicProjectReviews(incoming).slice(0, federationCollectionLimit)) {
+    const existingIndex = store.publicProjectReviews.findIndex((item) => item.id === review.id);
+    if (existingIndex === -1) {
+      store.publicProjectReviews.push(review);
+      merged += 1;
+      continue;
+    }
+    const existing = store.publicProjectReviews[existingIndex];
+    if (Date.parse(review.updatedAt || review.createdAt || 0) > Date.parse(existing.updatedAt || existing.createdAt || 0)) {
+      store.publicProjectReviews[existingIndex] = review;
+      merged += 1;
+    }
+  }
+  store.publicProjectReviews.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   return merged;
 }
 
@@ -2817,6 +2977,28 @@ function agentGuiDonationStatsForTaskId(taskId) {
   return agentGuiDonationStats("agent", taskId);
 }
 
+function agentGuiProjectReviewStats(projectId) {
+  const reviews = store.publicProjectReviews.filter((review) => review.projectId === projectId);
+  const ratingTotal = reviews.reduce((sum, review) => sum + Number(review.rating || 0), 0);
+  const average = reviews.length ? Math.round((ratingTotal / reviews.length) * 10) / 10 : 0;
+  const latest = reviews
+    .slice()
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0] || null;
+  return {
+    review_count: reviews.length,
+    rating_avg: average,
+    latest_review: latest
+      ? {
+          rating: latest.rating,
+          title: latest.title,
+          comment: latest.comment,
+          wallet_address: latest.walletAddress,
+          created_at: latest.createdAt
+        }
+      : null
+  };
+}
+
 function agentGuiRankedPublicAgents(limit = 100) {
   return store.tasks
     .filter((task) => task.sharedPublic && !["deleted", "rejected"].includes(task.status) && !task.agentGuiDeletedAt)
@@ -2859,6 +3041,7 @@ function agentGuiRankedPublicCollections(type, limit = 100) {
   return items
     .map((item) => {
       const donationStats = agentGuiDonationStats(type, item.id);
+      const reviewStats = type === "project" ? agentGuiProjectReviewStats(item.id) : {};
       return {
         id: `${type === "room" ? "public-room" : "public-project"}-${item.id}`,
         target_type: type,
@@ -2874,7 +3057,8 @@ function agentGuiRankedPublicCollections(type, limit = 100) {
         shared_at: item.sharedAt,
         last_copied_at: item.lastCopiedAt || null,
         owner_wallet_address: item.ownerWalletAddress || null,
-        ...donationStats
+        ...donationStats,
+        ...reviewStats
       };
     })
     .sort((a, b) => b.copy_count - a.copy_count || String(b.shared_at).localeCompare(String(a.shared_at)))
@@ -2884,6 +3068,7 @@ function agentGuiRankedPublicCollections(type, limit = 100) {
 
 function agentGuiPublicCollectionSession(item, type) {
   const donationStats = agentGuiDonationStats(type, item.id);
+  const reviewStats = type === "project" ? agentGuiProjectReviewStats(item.id) : {};
   return {
     id: `${type === "room" ? "public-room" : "public-project"}-${item.id}`,
     started_at: item.sharedAt,
@@ -2914,6 +3099,7 @@ function agentGuiPublicCollectionSession(item, type) {
     copy_count: Math.max(0, Number(item.copyCount || 0)),
     last_copied_at: item.lastCopiedAt || null,
     ...donationStats,
+    ...reviewStats,
     connector_status: null,
     connector_exit_code: null,
     connector_error: null
@@ -3755,6 +3941,73 @@ async function createAgentGuiDonation(body = {}) {
   };
 }
 
+function publicProjectReview(review) {
+  return {
+    id: review.id,
+    project_id: review.projectId,
+    wallet_address: review.walletAddress,
+    rating: review.rating,
+    title: review.title,
+    comment: review.comment,
+    created_at: review.createdAt,
+    updated_at: review.updatedAt
+  };
+}
+
+function publicProjectReviews(projectId) {
+  return store.publicProjectReviews
+    .filter((review) => review.projectId === projectId)
+    .slice()
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .map(publicProjectReview);
+}
+
+async function createPublicProjectReview(projectId, body = {}) {
+  const project = store.publicProjects.find((item) => item.id === projectId);
+  if (!project) {
+    const error = new Error("Public Project not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+  const walletAddress = normalizeWalletAddress(body.wallet_address || body.walletAddress);
+  const rating = Math.round(Number(body.rating));
+  if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+    const error = new Error("Rating must be between 1 and 5 stars.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const comment = String(body.comment || "").trim().slice(0, 2000);
+  const title = String(body.title || "").trim().slice(0, 120);
+  const updatedAt = now();
+  const existing = store.publicProjectReviews.find((review) =>
+    review.projectId === project.id && review.walletAddress === walletAddress
+  );
+  const review = existing || {
+    id: `project-review-${randomUUID()}`,
+    projectId: project.id,
+    walletAddress,
+    createdAt: updatedAt
+  };
+  review.rating = rating;
+  review.title = title;
+  review.comment = comment;
+  review.updatedAt = updatedAt;
+  if (!existing) store.publicProjectReviews.unshift(review);
+  project.updatedAt = updatedAt;
+  event(existing ? "agentgui_project_review_updated" : "agentgui_project_review_created", "Public Project review saved", {
+    publicProjectId: project.id,
+    walletAddress,
+    rating
+  });
+  await saveStore();
+  return {
+    ok: true,
+    review: publicProjectReview(review),
+    stats: agentGuiProjectReviewStats(project.id),
+    project: agentGuiRankedPublicCollections("project", 100).find((item) => item.target_id === project.id) || null
+  };
+}
+
 async function deleteAgentGuiSession(sessionId) {
   const taskId = agentGuiTaskIdFromSessionId(sessionId);
   const task = store.tasks.find((item) => item.id === taskId);
@@ -3912,6 +4165,10 @@ function openClawSetupStatus() {
 }
 
 async function maybeHandleAgentGuiApi(req, res, url, method, path) {
+  if (method === "GET" && path === "/api/network/stream") {
+    return serveAgentGuiNetworkStream(req, res);
+  }
+
   if (method === "GET" && path === "/api/sessions") {
     return sendJson(res, 200, agentGuiSessions());
   }
@@ -4051,6 +4308,24 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       return sendJson(res, 200, await shareAgentGuiProject(await readJson(req)));
     } catch (error) {
       return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to share project" });
+    }
+  }
+
+  const projectReviewMatch = path.match(/^\/api\/public\/projects\/([^/]+)\/reviews$/);
+  if (projectReviewMatch) {
+    const projectId = decodeURIComponent(projectReviewMatch[1]);
+    if (method === "GET") {
+      const project = store.publicProjects.find((item) => item.id === projectId);
+      return project
+        ? sendJson(res, 200, { reviews: publicProjectReviews(projectId), stats: agentGuiProjectReviewStats(projectId) })
+        : notFound(res);
+    }
+    if (method === "POST") {
+      try {
+        return sendJson(res, 201, await createPublicProjectReview(projectId, await readJson(req)));
+      } catch (error) {
+        return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to save project review" });
+      }
     }
   }
 

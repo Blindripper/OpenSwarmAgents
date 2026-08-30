@@ -52,6 +52,14 @@ export function TopAgentsPanel({
   const [donationPending, setDonationPending] = useState(false);
   const [donationError, setDonationError] = useState<string | null>(null);
   const [donationStatus, setDonationStatus] = useState<string | null>(null);
+  const [reviewingProject, setReviewingProject] = useState<TopAgent | null>(null);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewTitle, setReviewTitle] = useState("");
+  const [reviewComment, setReviewComment] = useState("");
+  const [reviewPending, setReviewPending] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewStatus, setReviewStatus] = useState<string | null>(null);
+  const isProjectChart = entityLabel.toLowerCase() === "project";
 
   async function connectWallet(): Promise<WalletSession | null> {
     setDonationError(null);
@@ -93,6 +101,8 @@ export function TopAgentsPanel({
       if (!activeWallet) return;
       await api.donations.create({
         session_id: donatingAgent.id,
+        target_type: donatingAgent.target_type,
+        target_id: donatingAgent.target_id,
         amount,
         wallet_address: activeWallet.address,
         chain_id: activeWallet.chain_id,
@@ -103,6 +113,34 @@ export function TopAgentsPanel({
       setDonationError((error as Error).message || "Donation failed.");
     } finally {
       setDonationPending(false);
+    }
+  }
+
+  async function submitProjectReview() {
+    if (!reviewingProject || reviewPending) return;
+    setReviewError(null);
+    setReviewStatus(null);
+    const projectId = reviewingProject.target_id || reviewingProject.id.replace(/^public-project-/, "");
+    if (!projectId) {
+      setReviewError("Project id missing.");
+      return;
+    }
+    setReviewPending(true);
+    try {
+      const activeWallet = wallet || await connectWallet();
+      if (!activeWallet) return;
+      await api.publicProjects.review(projectId, {
+        wallet_address: activeWallet.address,
+        rating: reviewRating,
+        title: reviewTitle,
+        comment: reviewComment,
+      });
+      setReviewStatus("Review saved.");
+      onDonateRecorded?.();
+    } catch (error) {
+      setReviewError((error as Error).message || "Review failed.");
+    } finally {
+      setReviewPending(false);
     }
   }
 
@@ -213,7 +251,7 @@ export function TopAgentsPanel({
                   <div style={{
                     position: "relative",
                     display: "grid",
-                    gridTemplateColumns: "58px minmax(0, 1fr) 132px 74px 82px",
+                    gridTemplateColumns: isProjectChart ? "58px minmax(0, 1fr) 156px 70px 74px 82px" : "58px minmax(0, 1fr) 132px 74px 82px",
                     alignItems: "center",
                     gap: 12,
                     minHeight: 76,
@@ -261,9 +299,39 @@ export function TopAgentsPanel({
                     }}>
                       <span>{agent.copy_count} copies</span>
                       <span style={{ color: "var(--text-dim)", fontWeight: 700 }}>
-                        {Number(agent.donation_total_usdc || 0)} USDC
+                        {Number(agent.donation_total_usdc || 0)} USDC earned
                       </span>
+                      {isProjectChart && (
+                        <span style={{ color: "#facc15", fontWeight: 800 }}>
+                          {agent.review_count ? `${Number(agent.rating_avg || 0).toFixed(1)} stars` : "No reviews"}
+                        </span>
+                      )}
                     </div>
+                    {isProjectChart && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReviewingProject(agent);
+                          setReviewRating(5);
+                          setReviewTitle("");
+                          setReviewComment("");
+                          setReviewError(null);
+                          setReviewStatus(null);
+                        }}
+                        style={{
+                          height: 30,
+                          borderRadius: 6,
+                          border: "1px solid #7a6420",
+                          background: "#241f10",
+                          color: "#facc15",
+                          fontSize: 11,
+                          fontWeight: 800,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Review
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => onCopy?.(agent.id)}
@@ -463,6 +531,177 @@ export function TopAgentsPanel({
                 }}
               >
                 {donationPending ? "Saving" : "Donate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {reviewingProject && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Review ${reviewingProject.title}`}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 3000,
+            display: "grid",
+            placeItems: "center",
+            background: "rgba(4,8,18,0.72)",
+            padding: 18,
+          }}
+          onClick={() => setReviewingProject(null)}
+        >
+          <div
+            style={{
+              width: "min(480px, 100%)",
+              borderRadius: 8,
+              border: "1px solid #273453",
+              background: "#101827",
+              boxShadow: "0 24px 80px rgba(0,0,0,0.45)",
+              padding: 16,
+              boxSizing: "border-box",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 900 }}>Project Review</div>
+                <div style={{
+                  marginTop: 4,
+                  fontSize: 12,
+                  color: "var(--text-dim)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }} title={reviewingProject.title}>
+                  {reviewingProject.title}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReviewingProject(null)}
+                title="Close"
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 6,
+                  border: "1px solid var(--card-border)",
+                  background: "#121828",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  fontWeight: 900,
+                }}
+              >
+                x
+              </button>
+            </div>
+
+            <div style={{ display: "flex", gap: 6, marginTop: 14 }}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  type="button"
+                  onClick={() => setReviewRating(star)}
+                  title={`${star} star${star === 1 ? "" : "s"}`}
+                  style={{
+                    width: 36,
+                    height: 34,
+                    borderRadius: 6,
+                    border: star <= reviewRating ? "1px solid #facc15" : "1px solid var(--card-border)",
+                    background: star <= reviewRating ? "#2a230f" : "#121828",
+                    color: star <= reviewRating ? "#facc15" : "var(--text-dim)",
+                    cursor: "pointer",
+                    fontSize: 18,
+                    lineHeight: 1,
+                  }}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+
+            <input
+              value={reviewTitle}
+              onChange={(e) => setReviewTitle(e.currentTarget.value)}
+              placeholder="Short headline"
+              maxLength={120}
+              style={{
+                marginTop: 12,
+                width: "100%",
+                height: 36,
+                borderRadius: 6,
+                border: "1px solid var(--card-border)",
+                background: "#0b1020",
+                color: "var(--text)",
+                padding: "0 10px",
+                boxSizing: "border-box",
+              }}
+            />
+            <textarea
+              value={reviewComment}
+              onChange={(e) => setReviewComment(e.currentTarget.value)}
+              placeholder="What worked, what was useful, what should be improved?"
+              maxLength={2000}
+              rows={5}
+              style={{
+                marginTop: 10,
+                width: "100%",
+                borderRadius: 6,
+                border: "1px solid var(--card-border)",
+                background: "#0b1020",
+                color: "var(--text)",
+                padding: 10,
+                boxSizing: "border-box",
+                resize: "vertical",
+              }}
+            />
+
+            <div style={{ marginTop: 12, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.4 }}>
+              Reviews are tied to your wallet pubkey so project feedback can become part of OSA reputation instead of disposable noise.
+            </div>
+            {reviewError && (
+              <div style={{ marginTop: 10, fontSize: 12, color: "#ff8a8a" }}>{reviewError}</div>
+            )}
+            {reviewStatus && (
+              <div style={{ marginTop: 10, fontSize: 12, color: "#7ee0c2" }}>{reviewStatus}</div>
+            )}
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+              <button
+                type="button"
+                onClick={() => void connectWallet()}
+                style={{
+                  height: 34,
+                  padding: "0 12px",
+                  borderRadius: 6,
+                  border: "1px solid #2a3558",
+                  background: "#121828",
+                  color: wallet ? "#7ee0c2" : "var(--text)",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  fontWeight: 800,
+                }}
+              >
+                {wallet ? "Wallet Connected" : "Connect Wallet"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitProjectReview()}
+                disabled={reviewPending}
+                style={{
+                  height: 34,
+                  padding: "0 14px",
+                  borderRadius: 6,
+                  border: "1px solid #7a6420",
+                  background: reviewPending ? "#262115" : "#b98b14",
+                  color: "white",
+                  cursor: reviewPending ? "default" : "pointer",
+                  fontSize: 12,
+                  fontWeight: 900,
+                }}
+              >
+                {reviewPending ? "Saving" : "Save Review"}
               </button>
             </div>
           </div>

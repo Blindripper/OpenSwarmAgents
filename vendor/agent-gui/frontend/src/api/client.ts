@@ -22,6 +22,14 @@ export interface WalletSession {
   last_seen_at?: string;
 }
 
+export interface NetworkEvent {
+  id: string;
+  type: string;
+  message: string;
+  data?: Record<string, unknown>;
+  createdAt: string;
+}
+
 async function errorDetail(r: Response): Promise<string> {
   try {
     const j = await r.json();
@@ -294,6 +302,19 @@ export const api = {
     get<{ agents: TopAgent[]; generated_at: string }>(`/top-rooms?limit=${limit}`),
   topProjects: (limit = 100) =>
     get<{ agents: TopAgent[]; generated_at: string }>(`/top-projects?limit=${limit}`),
+  networkStream: (
+    onActivity: (event: NetworkEvent) => void,
+    onClose?: () => void,
+  ): EventSource => {
+    const source = new EventSource(`${BASE}/network/stream`);
+    source.addEventListener("activity", (event) => {
+      try {
+        onActivity(JSON.parse((event as MessageEvent).data) as NetworkEvent);
+      } catch { /* ignore malformed network events */ }
+    });
+    source.onerror = () => onClose?.();
+    return source;
+  },
   wallet: {
     login: (body: { address: string; chain_id?: string | null; signature?: string | null }) =>
       post<{ ok: boolean; wallet: WalletSession }>("/wallet/login", body),
@@ -315,6 +336,18 @@ export const api = {
   publicProjects: {
     share: (body: { name?: string; rooms?: { id: string; name?: string }[] }) =>
       post<{ ok: boolean; shared_public: boolean; project?: Session }>("/public/projects/share", body),
+    reviews: (projectId: string) =>
+      get<{
+        reviews: { id: string; project_id: string; wallet_address: string; rating: number; title?: string; comment?: string; created_at: string; updated_at: string }[];
+        stats: { review_count: number; rating_avg: number };
+      }>(`/public/projects/${encodeURIComponent(projectId)}/reviews`),
+    review: (projectId: string, body: { wallet_address: string; rating: number; title?: string; comment?: string }) =>
+      post<{
+        ok: boolean;
+        review: { id: string; project_id: string; wallet_address: string; rating: number; title?: string; comment?: string; created_at: string; updated_at: string };
+        stats: { review_count: number; rating_avg: number };
+        project?: TopAgent | null;
+      }>(`/public/projects/${encodeURIComponent(projectId)}/reviews`, body),
   },
   search: (q: string) => get<Session[]>(`/search?q=${encodeURIComponent(q)}`),
   file: {

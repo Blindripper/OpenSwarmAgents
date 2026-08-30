@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "./api/client";
+import { api, type NetworkEvent } from "./api/client";
 import { Header } from "./components/Header";
 import type { ApiMode, ReasoningEffort } from "./types";
 import { Office } from "./components/Office";
@@ -11,7 +11,7 @@ import { OpenClawOnboarding } from "./components/OpenClawOnboarding";
 import { TopAgentsPanel } from "./components/TopAgentsPanel";
 import { FilePreview, DEFAULT_CODE_THEME } from "./components/FilePreview";
 import type { CodeThemeId } from "./components/FilePreview";
-import { DEFAULT_BELL } from "./sounds";
+import { DEFAULT_BELL, playBell } from "./sounds";
 import { DEFAULT_SCENE } from "./components/SceneBackground";
 import { buildDeskConfigView, defaultDeskBarConfig, deskIsRunning, findDeskItem, pendingStartParams, resolveDeskBarConfig, type DeskBarConfig, type GlobalOpenClawConfig } from "./deskConfig";
 import { DESK_PANEL_Z_BASE, nextPanelZ } from "./floatingPanelStack";
@@ -81,6 +81,7 @@ const legacyStorageKey = (name: string) => `${LEGACY_STORAGE_PREFIX}-${name}`;
 const WORKBENCH_LEGACY_KEY_V2 = legacyStorageKey("workbench-v2");
 const WORKBENCH_LEGACY_KEY_V1 = legacyStorageKey("workbench-v1");
 const ONBOARDING_DISMISSED_KEY = "osa-openclaw-onboarding-dismissed";
+const WALLET_STORAGE_KEY = "osa-wallet-session";
 type DashboardTab = "workbench" | "top-agents" | "top-rooms" | "top-projects";
 const STORAGE_KEYS = {
   codeTheme: { key: "osa-code-theme", legacy: [legacyStorageKey("code-theme")] },
@@ -158,6 +159,42 @@ function saveWorkbenchV2(
 
 function makePending(): DeskItem {
   return { id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`, isPending: true as const };
+}
+
+function readWalletConnected(): boolean {
+  try {
+    const raw = localStorage.getItem(WALLET_STORAGE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as { address?: string };
+    return /^0x[a-fA-F0-9]{40}$/.test(parsed.address || "");
+  } catch {
+    return false;
+  }
+}
+
+function networkEventLabel(event: NetworkEvent): string | null {
+  if (event.type === "agentgui_session_shared") return "New public agent joined OSA.";
+  if (event.type === "agentgui_room_shared") return "New public room joined OSA.";
+  if (event.type === "agentgui_project_shared") return "New public project joined OSA.";
+  if (event.type === "agent_registered") return "Network agent came online.";
+  if (event.type === "federation_imported") return "A peer node synced new OSA network updates.";
+  return null;
+}
+
+function rankingEventChanged(event: NetworkEvent): boolean {
+  return [
+    "agentgui_session_shared",
+    "agentgui_session_unshared",
+    "agentgui_room_shared",
+    "agentgui_project_shared",
+    "agentgui_public_copied",
+    "agentgui_public_room_copied",
+    "agentgui_public_project_copied",
+    "agentgui_donation_pledged",
+    "agentgui_project_review_created",
+    "agentgui_project_review_updated",
+    "federation_imported",
+  ].includes(event.type);
 }
 
 function makeHomeTeam(desks: DeskItem[] = [makePending()]): Team {
@@ -278,6 +315,9 @@ export default function App() {
   const [topAgentsLoading, setTopAgentsLoading] = useState(false);
   const [topRoomsLoading, setTopRoomsLoading] = useState(false);
   const [topProjectsLoading, setTopProjectsLoading] = useState(false);
+  const [networkLive, setNetworkLive] = useState(false);
+  const [networkNotice, setNetworkNotice] = useState<string | null>(null);
+  const [walletConnected, setWalletConnected] = useState(readWalletConnected);
   const [preview, setPreview] = useState<FilePreviewData | null>(null);
   const panelZCounter = useRef(DESK_PANEL_Z_BASE);
   const [deskPanelZ, setDeskPanelZ] = useState<Record<string, number>>({});
@@ -523,6 +563,14 @@ export default function App() {
     }
   }, []);
 
+  const refreshNetworkViews = useCallback(() => {
+    void loadSessions();
+    void refreshTopAgents();
+    void refreshTopRooms();
+    void refreshTopProjects();
+    setWalletConnected(readWalletConnected());
+  }, [loadSessions, refreshTopAgents, refreshTopRooms, refreshTopProjects]);
+
   useEffect(() => {
     loadSessions();
     api.openclaw.warmup().catch(() => {});
@@ -548,9 +596,25 @@ export default function App() {
       refreshTopAgents();
       refreshTopRooms();
       refreshTopProjects();
+      setWalletConnected(readWalletConnected());
     }, POLL_INTERVAL);
     return () => clearInterval(poll);
   }, [loadSessions, refreshAgents, refreshTopAgents, refreshTopRooms, refreshTopProjects]);
+
+  useEffect(() => {
+    const source = api.networkStream((event) => {
+      setNetworkLive(true);
+      const label = networkEventLabel(event);
+      if (label) {
+        setNetworkNotice(label);
+        try { playBell(bellSound); } catch { /* bell is optional */ }
+        window.setTimeout(() => setNetworkNotice((current) => current === label ? null : current), 5200);
+      }
+      if (rankingEventChanged(event)) refreshNetworkViews();
+    }, () => setNetworkLive(false));
+    source.onopen = () => setNetworkLive(true);
+    return () => source.close();
+  }, [bellSound, refreshNetworkViews]);
 
   // Persist workbench to localStorage on every change
   useEffect(() => {
@@ -1376,6 +1440,16 @@ export default function App() {
   const realDesks = allDesks.filter((d) => !("isPending" in d)) as Session[];
   const activeCount = realDesks.filter((s) => s.is_running === true).length;
   const deskCount = realDesks.length;
+  const networkStats = {
+    publicAgents: sessions.filter((session) => session.team_id === PUBLIC_TEAM_ID).length,
+    publicRooms: sessions.filter((session) => session.team_id === PUBLIC_ROOMS_TEAM_ID).length,
+    publicProjects: sessions.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID).length,
+    copies: [...topAgents, ...topRooms, ...topProjects].reduce((sum, item) => sum + Number(item.copy_count || 0), 0),
+    donationsUsdc: [...topAgents, ...topRooms, ...topProjects].reduce((sum, item) => sum + Number(item.donation_total_usdc || 0), 0),
+    onlineAgents: activeCount,
+    walletConnected,
+    live: networkLive,
+  };
 
   if (backendError) {
     return (
@@ -1405,6 +1479,7 @@ export default function App() {
         sessions={sessions}
         sessionCount={deskCount}
         activeCount={activeCount}
+        networkStats={networkStats}
         bellSound={bellSound}
         scene={scene}
         showManager={showManager}
@@ -1560,6 +1635,28 @@ export default function App() {
           Share Project
         </button>
       </div>
+      {networkNotice && (
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "7px 16px",
+          borderBottom: "1px solid rgba(46, 197, 142, 0.28)",
+          background: "rgba(16, 37, 31, 0.96)",
+          color: "#7ee0c2",
+          fontSize: 12,
+          fontWeight: 800,
+        }}>
+          <span style={{
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            background: "#7ee0c2",
+            boxShadow: "0 0 10px rgba(126, 224, 194, 0.8)",
+          }} />
+          <span>{networkNotice} Latest and Top100 refreshed.</span>
+        </div>
+      )}
       {dashboardTab === "top-agents" ? (
         <TopAgentsPanel
           agents={topAgents}

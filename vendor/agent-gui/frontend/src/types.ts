@@ -41,6 +41,9 @@ export interface Session {
   donation_count?: number;
   donation_total_usdc?: number;
   osa_fee_total_usdc?: number;
+  review_count?: number;
+  rating_avg?: number;
+  latest_review?: ProjectReviewSummary | null;
   connector_status?: string | null;
   connector_exit_code?: number | null;
   connector_error?: string | null;
@@ -61,10 +64,21 @@ export interface TopAgent {
   donation_count?: number;
   donation_total_usdc?: number;
   osa_fee_total_usdc?: number;
+  review_count?: number;
+  rating_avg?: number;
+  latest_review?: ProjectReviewSummary | null;
   item_count?: number;
   owner_wallet_address?: string | null;
   shared_at: string;
   last_copied_at?: string | null;
+}
+
+export interface ProjectReviewSummary {
+  rating: number;
+  title?: string;
+  comment?: string;
+  wallet_address?: string;
+  created_at?: string;
 }
 
 export interface ToolsetMeta {

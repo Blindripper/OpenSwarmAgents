@@ -1841,8 +1841,14 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
             })()}
             {readOnly ? (
               <div style={{ display: "grid", justifyItems: "center", gap: 5, marginTop: 8 }}>
-                <div style={{ fontSize: 10, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>
-                  {Math.max(0, Number(session.copy_count || 0))} copies
+                <div style={{ display: "grid", justifyItems: "center", gap: 2, fontSize: 10, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>
+                  <span>{Math.max(0, Number(session.copy_count || 0))} copies</span>
+                  <span>{Number(session.donation_total_usdc || 0)} USDC earned</span>
+                  {session.public_kind === "project" && (
+                    <span style={{ color: session.review_count ? "#facc15" : "var(--text-dim)" }}>
+                      {session.review_count ? `${Number(session.rating_avg || 0).toFixed(1)} stars · ${session.review_count} reviews` : "No reviews yet"}
+                    </span>
+                  )}
                 </div>
                 <button
                   onClick={(e) => { e.stopPropagation(); void handleCopy(); }}

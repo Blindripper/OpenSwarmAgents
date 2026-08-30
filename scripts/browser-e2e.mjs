@@ -169,11 +169,23 @@ try {
     wallet_address: walletAddress,
     chain_id: "0x1"
   });
+  const projectId = projectShare.project.id.replace("public-project-", "");
+  const review = await postJson(`/api/public/projects/${encodeURIComponent(projectId)}/reviews`, {
+    wallet_address: walletAddress,
+    rating: 5,
+    title: "Actually useful",
+    comment: "Imported cleanly and gave me a sensible project structure."
+  });
+  assert(review.stats?.review_count === 1, "Public Project reviews should be counted");
+  assert(review.stats?.rating_avg === 5, "Public Project reviews should average ratings");
   topProjects = await getJson("/api/top-projects?limit=100");
   assert(topProjects.agents[0]?.donation_total_usdc === 1, "Top100 Projects should sum project donations");
+  assert(topProjects.agents[0]?.review_count === 1, "Top100 Projects should expose review counts");
+  assert(topProjects.agents[0]?.rating_avg === 5, "Top100 Projects should expose average ratings");
 
   await page.reload({ waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Enter Home" }).click().catch(() => {});
+  await expectText(page, "body", "Network Live");
   await expectText(page, "body", "Build a small market-research agent");
   await expectText(page, "body", "Public");
   await expectText(page, "body", "Public Rooms");
@@ -193,6 +205,9 @@ try {
   await page.getByRole("button", { name: "Top100 Projects" }).click();
   await expectText(page, "body", "Top100 Projects");
   await expectText(page, "body", "Browser E2E Project");
+  await expectText(page, "body", "1 USDC earned");
+  await expectText(page, "body", "5.0 stars");
+  await expectText(page, "body", "Review");
 
   shared = await postJson(`/api/sessions/${encodeURIComponent(created.session_id)}/share`, { shared: false });
   assert(shared.shared_public === false, "Home agent should be removable from Public");

@@ -15,6 +15,16 @@ interface Props {
   sessions: Session[];
   sessionCount: number;
   activeCount: number;
+  networkStats?: {
+    publicAgents: number;
+    publicRooms: number;
+    publicProjects: number;
+    copies: number;
+    donationsUsdc: number;
+    onlineAgents: number;
+    walletConnected: boolean;
+    live: boolean;
+  };
   bellSound: string;
   scene: string;
   showManager: boolean;
@@ -63,8 +73,33 @@ interface Props {
   onVerboseChange: (v: boolean) => void;
 }
 
+function TopMetric({ label, value, hint, tone = "accent" }: { label: string; value: string; hint: string; tone?: "accent" | "green" | "muted" }) {
+  const color = tone === "green" ? "#7ee0c2" : tone === "muted" ? "var(--text-dim)" : "var(--accent2)";
+  return (
+    <div
+      title={hint}
+      style={{
+        minWidth: 0,
+        height: 34,
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        padding: "0 10px",
+        borderRadius: 6,
+        border: "1px solid #2a3558",
+        background: "#121828",
+        boxSizing: "border-box",
+      }}
+    >
+      <span style={{ fontSize: 9, fontWeight: 800, color: "var(--text-dim)", letterSpacing: 0.4 }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 900, color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</span>
+    </div>
+  );
+}
+
 export function Header({
   teams, sessions, sessionCount, activeCount,
+  networkStats,
   bellSound, scene, showManager, managerPatrolIntervalSec, managerIdleGraceSec,
   agents, rosterAgents, toolsets, defaultModel,
   selectedDeskId, deskConfig, deskConfigLocked,
@@ -85,6 +120,16 @@ export function Header({
   const showReasoning = Boolean(
     deskConfig && !reasoningDisabled && reasoningOptions.length > 0,
   );
+  const stats = networkStats ?? {
+    publicAgents: 0,
+    publicRooms: 0,
+    publicProjects: 0,
+    copies: 0,
+    donationsUsdc: 0,
+    onlineAgents: activeCount,
+    walletConnected: false,
+    live: false,
+  };
 
   return (
     <div style={{
@@ -120,79 +165,37 @@ export function Header({
 
       <div style={{ width: 1, height: 28, background: "var(--card-border)", flexShrink: 0 }} />
 
-      {/* Task counts — replaces the old "Agent online" pill, which only mirrored
-          a periodic LLM-endpoint poll and was often stale. These come straight
-          from the session list, so they're always current. */}
       <div style={{
-        display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
-        padding: "3px 8px", background: "#121828", borderRadius: 6, border: "1px solid #2a3558",
+        display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
+        padding: "5px 10px", background: "#10251f", borderRadius: 6, border: "1px solid #2a8c72",
       }}>
         <span style={{
-          width: 6, height: 6, borderRadius: "50%",
-          background: activeCount > 0 ? "var(--green)" : "var(--text-dim)",
-          ...(activeCount > 0 ? {
-            boxShadow: "0 0 6px var(--green)",
+          width: 7, height: 7, borderRadius: "50%",
+          background: stats.live ? "var(--green)" : "var(--text-dim)",
+          ...(stats.live ? {
+            boxShadow: "0 0 7px var(--green)",
             animation: "blink 1.5s ease-in-out infinite",
           } : {}),
         }} />
-        <span style={{ fontSize: 10, color: "var(--text-dim)", letterSpacing: 0.4 }}>TASKS</span>
-        <span style={{ fontSize: 13, fontWeight: 600 }}>{sessionCount}</span>
-        <span style={{ fontSize: 10, color: "var(--card-border)" }}>|</span>
-        <span style={{
-          fontSize: 12, whiteSpace: "nowrap",
-          color: activeCount > 0 ? "var(--green)" : "var(--text-dim)",
-        }}>
-          {activeCount} ongoing
+        <span style={{ fontSize: 12, fontWeight: 900, color: stats.live ? "#7ee0c2" : "var(--text-dim)", whiteSpace: "nowrap" }}>
+          {stats.live ? "Network Live" : "Network Syncing"}
         </span>
       </div>
 
       <div style={{ width: 1, height: 28, background: "var(--card-border)", flexShrink: 0 }} />
 
-      {/* Desk config — spread evenly across the bar center */}
       <div style={{
         flex: 1,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-evenly",
+        display: "grid",
+        gridTemplateColumns: "repeat(5, minmax(92px, 1fr))",
         minWidth: 0,
-        gap: 16,
-        opacity: deskConfigLocked ? 0.45 : 1,
-        pointerEvents: deskConfigLocked ? "none" : "auto",
+        gap: 8,
       }}>
-        {selectedDeskId && deskConfig ? (
-          <>
-            <DeskContextBar
-              config={deskConfig}
-              agents={agents}
-              toolsets={toolsets}
-              bare
-              spread
-              showLabels
-              showAdvanced={false}
-              profileReadOnly
-              modelReadOnly
-              toolsReadOnly
-              onProfileChange={onDeskProfileChange}
-              onModelChange={onDeskModelChange}
-              onToolsChange={onDeskToolsChange}
-            />
-            {showReasoning && (
-              <div style={{ flexShrink: 0 }}>
-                <ReasoningEffortControl
-                  header
-                  readOnly
-                  value={reasoningEffort}
-                  options={reasoningOptions}
-                  onChange={onReasoningChange}
-                />
-              </div>
-            )}
-          </>
-        ) : (
-          <span style={{ fontSize: 11, color: "var(--text-dim)", fontStyle: "italic" }}>
-            Select a desk — click its avatar to choose a profile
-          </span>
-        )}
+        <TopMetric label="PUBLIC ITEMS" value={String(stats.publicAgents + stats.publicRooms + stats.publicProjects)} hint={`${stats.publicAgents} agents, ${stats.publicRooms} rooms, ${stats.publicProjects} projects shared to the public network`} />
+        <TopMetric label="ONLINE" value={String(stats.onlineAgents)} hint="Agents currently running on this node" tone={stats.onlineAgents > 0 ? "green" : "muted"} />
+        <TopMetric label="COPIES" value={String(stats.copies)} hint="Total public copies across agents, rooms, and projects" />
+        <TopMetric label="DONATIONS" value={`${stats.donationsUsdc.toFixed(stats.donationsUsdc % 1 ? 2 : 0)} USDC`} hint="Donation intents recorded by this OSA network view" tone={stats.donationsUsdc > 0 ? "green" : "muted"} />
+        <TopMetric label="WALLET" value={stats.walletConnected ? "Connected" : "No wallet"} hint="Wallet pubkey anchors donation and review identity" tone={stats.walletConnected ? "green" : "muted"} />
       </div>
 
       <div style={{ width: 1, height: 28, background: "var(--card-border)", flexShrink: 0 }} />
