@@ -1758,6 +1758,12 @@ function connectorCommandArgs(rawToken, connector, origin) {
     args.push("--goal", connector.goalId);
   }
   args.push("--runner", runner, "--agent-name", connector.name || "Local Agent");
+  if (connector.models?.length) {
+    args.push("--models", connector.models.join(","));
+  }
+  if (connector.agentGuiRunOnce) {
+    args.push("--once");
+  }
   if (runner === "provider") {
     args.push("--provider", connector.provider, "--providers", (connector.providers || []).join(","), "--no-fallback-to-stub");
   }
@@ -2628,7 +2634,7 @@ function taskCollaborationContext(task) {
 function agentGuiSessions() {
   const taskSessions = [];
   for (const task of store.tasks) {
-    if (["done", "rejected", "deleted"].includes(task.status) || task.agentGuiDeletedAt) continue;
+    if (["rejected", "deleted"].includes(task.status) || task.agentGuiDeletedAt) continue;
     const isDashboardHomeTask = task.agentGuiRoom === "home"
       || task.source === "agent-gui-home"
       || (task.agentGuiConnectorId && task.source === "agent-gui");
@@ -2656,26 +2662,28 @@ function agentGuiTaskSession(task, roomOverride = null) {
   const fallbackAgent = task.agentGuiAgent || "openclaw-codex";
   const room = roomOverride || agentGuiTaskRoom(task);
   const lastAt = task.updatedAt || result?.createdAt || task.createdAt;
+  const displayModel = task.agentGuiModel || agent?.models?.join(", ") || agent?.provider || "OSA connector";
+  const taskSolved = task.status === "done" || result?.status === "accepted";
   return {
     id: `${room}-${task.id}`,
     started_at: task.createdAt,
     ended_at: ["done", "in_consensus"].includes(task.status) ? lastAt : null,
     source: room === "home" ? "osa-home" : "osa-public",
-    model: agent?.models?.[0] || task.agentGuiModel || agent?.provider || "OSA connector",
+    model: task.agentGuiModel || agent?.models?.[0] || agent?.provider || "OSA connector",
     parent_session_id: null,
     title: task.title,
     message_count: agent ? 3 : 1,
     token_estimate: task.description.length + (result?.content || "").length,
-    is_running: task.status === "leased" || ["starting", "running"].includes(managed?.status),
+    is_running: !taskSolved && (task.status === "leased" || ["starting", "running"].includes(managed?.status)),
     first_activity_at: task.createdAt,
     last_activity_at: lastAt,
     title_summary: room === "home" ? "Home" : goal?.title || "Public OSA task",
     auto_continue: false,
-    task_solved: task.status === "done" || result?.status === "accepted",
+    task_solved: taskSolved,
     workspace_path: null,
     is_sleeping: false,
     agent: agent ? agentGuiAgentId(agent) : fallbackAgent,
-    agent_model: agent?.models?.join(", ") || task.agentGuiModel || "Waiting for network agent",
+    agent_model: displayModel,
     agent_base_url: "",
     desk_tools: task.requiredCapabilities || [task.type || "task"],
     team_id: room === "home" ? agentGuiHomeTeamId : agentGuiPublicTeamId,
@@ -3148,6 +3156,7 @@ function startAgentGuiTaskConnector(req, task, agentId) {
     expiresAt: afterMs(now(), 7 * 24 * 60 * 60 * 1000)
   });
   task.agentGuiConnectorId = connector.id;
+  connector.agentGuiRunOnce = true;
   startManagedConnector(req, rawToken, connector, {
     models: connector.models,
     provider: connector.provider,

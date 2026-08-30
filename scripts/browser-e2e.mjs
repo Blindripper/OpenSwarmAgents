@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -8,11 +8,21 @@ const rootDir = join(import.meta.dirname, "..");
 const port = Number(process.env.OSA_BROWSER_E2E_PORT || 19880 + Math.floor(Math.random() * 700));
 const baseUrl = `http://127.0.0.1:${port}`;
 const dataDir = await mkdtemp(join(tmpdir(), "osa-browser-e2e-"));
+const openClawFixturePath = join(dataDir, "openclaw-fixture.sh");
 const pageErrors = [];
 let browser = null;
 let server = null;
 
 try {
+  await writeFile(
+    openClawFixturePath,
+    [
+      "#!/usr/bin/env bash",
+      "printf '%s\\n' '{\"final\":\"{\\\"summary\\\":\\\"Done\\\",\\\"content\\\":\\\"Finished by the browser E2E fixture.\\\",\\\"sources\\\":[\\\"fixture://openclaw\\\"],\\\"confidence\\\":0.9}\"}'"
+    ].join("\n")
+  );
+  await chmod(openClawFixturePath, 0o755);
+
   server = spawn(process.execPath, ["apps/server/src/server.mjs"], {
     cwd: rootDir,
     env: {
@@ -24,7 +34,7 @@ try {
       OSA_LOCAL_PASSWORD_REQUIRED: "0",
       OSA_DEMO_ENDPOINTS: "0",
       OSA_RATE_LIMIT_MULTIPLIER: "0",
-      OSA_OPENCLAW_COMMAND: process.env.OSA_OPENCLAW_COMMAND || "true"
+      OSA_OPENCLAW_COMMAND: process.env.OSA_OPENCLAW_COMMAND || openClawFixturePath
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -58,6 +68,12 @@ try {
     agent: "openclaw-codex"
   });
   assert(created.session_id?.startsWith("home-"), "new AgentGUI sessions should start in Home");
+  const completed = await waitForJson(
+    "/api/sessions",
+    (items) => items.find((session) => session.id === created.session_id && session.task_solved === true),
+    "completed Home session to stay visible"
+  );
+  assert(completed.ended_at, "completed Home session should expose an end timestamp");
 
   let shared = await postJson(`/api/sessions/${encodeURIComponent(created.session_id)}/share`, { shared: true });
   assert(shared.shared_public === true, "Home agent should be shareable to Public");
@@ -148,4 +164,14 @@ function assert(condition, message) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForJson(path, predicate, label) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const payload = await getJson(path);
+    const match = predicate(payload);
+    if (match) return match;
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for ${label}`);
 }
