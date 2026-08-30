@@ -68,6 +68,9 @@ try {
   page.on("console", (message) => {
     if (message.type() === "error") pageErrors.push(message.text());
   });
+  await page.addInitScript(() => {
+    localStorage.setItem("osa-openclaw-onboarding-dismissed", "1");
+  });
 
   await page.goto(`${baseUrl}/agent-gui/`, { waitUntil: "networkidle" });
   await expectText(page, "body", "Home");
@@ -75,6 +78,13 @@ try {
   await expectText(page, "body", "Top100 AI Agents");
   assert(!(await page.locator("body").innerText()).includes("Open agent voting quality benchmark"), "legacy example tasks should not render");
   assert(await page.getByRole("button", { name: "Copy" }).count() === 0, "Public should not render example Copy buttons");
+  assert(await page.locator('button[title="Delete this room"]').count() === 0, "Home/Public should not be removable");
+  await page.getByRole("button", { name: "+ Room" }).click();
+  await expectText(page, "body", "Room 1");
+  assert(await page.locator('button[title="Delete this room"]').count() === 1, "custom rooms should expose a remove control");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator('button[title="Delete this room"]').click();
+  await page.locator("body").filter({ hasNotText: "Room 1" }).waitFor({ state: "visible" });
 
   const created = await postJson("/api/sessions/new", {
     content: "Build a small market-research agent for weird profitable niches.",

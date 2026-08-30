@@ -1109,11 +1109,11 @@ export function TeamRow({
                 {onDeleteTeam && (
                   <button
                     onClick={() => {
-                      if (window.confirm(`Delete "${teamLabel}" and all its desks?`)) {
+                      if (window.confirm(`Delete room "${teamLabel}" and all desks inside it?`)) {
                         onDeleteTeam();
                       }
                     }}
-                    title="Delete this team"
+                    title="Delete this room"
                     style={{
                       width: 20, height: 18, borderRadius: 4, border: `1px solid ${chrome.controlBorder}`,
                       background: chrome.controlBg, color: chrome.controlColor,

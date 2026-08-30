@@ -131,13 +131,14 @@ export function Office({
       <div data-floor-scroll style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: FLOOR_BOTTOM_RESERVE }}>
         {teams.map((team, idx) => {
           const isPublicRoom = team.id === "public-room";
+          const isProtectedRoom = team.id === "home-room" || isPublicRoom;
           return (
           <TeamRow
             key={team.id}
             team={team}
             teamIndex={idx}
             searchMatchIds={searchMatchIds}
-            onDeleteTeam={onDeleteTeam && teams.length > 1 ? () => onDeleteTeam(team.id) : undefined}
+            onDeleteTeam={onDeleteTeam && !isProtectedRoom ? () => onDeleteTeam(team.id) : undefined}
             justStartedId={justStartedId}
             justStartedAnchor={justStartedAnchor}
             onJustStartedConsumed={onJustStartedConsumed}

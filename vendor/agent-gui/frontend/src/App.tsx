@@ -1034,6 +1034,66 @@ export default function App() {
     });
   }
 
+  async function deleteRoom(teamId: string) {
+    if (teamId === HOME_TEAM_ID || teamId === PUBLIC_TEAM_ID) return;
+    const team = teams.find((item) => item.id === teamId);
+    if (!team) return;
+    const realDesks = team.desks.filter((desk) => !("isPending" in desk)) as Session[];
+    const running = realDesks.filter((session) => session.is_running === true);
+    if (running.length > 0) {
+      window.alert(`Stop ${running.length} running agent(s) before deleting this room.`);
+      return;
+    }
+
+    try {
+      await Promise.all(realDesks.map((session) => api.sessions.delete(session.id)));
+      const ids = new Set(team.desks.map((desk) => desk.id));
+      setSessions((prev) => prev.filter((session) => !ids.has(session.id)));
+      sessionsRef.current = sessionsRef.current.filter((session) => !ids.has(session.id));
+      setWorkspacePaths((prev) => {
+        const next = { ...prev };
+        for (const id of ids) delete next[id];
+        return next;
+      });
+      setTaskContents((prev) => {
+        const next = { ...prev };
+        for (const id of ids) delete next[id];
+        return next;
+      });
+      setTaskImages((prev) => {
+        const next = { ...prev };
+        for (const id of ids) delete next[id];
+        return next;
+      });
+      setPendingTexts((prev) => {
+        const next = { ...prev };
+        for (const id of ids) delete next[id];
+        return next;
+      });
+      setPendingAssignments((prev) => {
+        const next = { ...prev };
+        for (const id of ids) delete next[id];
+        return next;
+      });
+      setDeskBarConfigs((prev) => {
+        const next = { ...prev };
+        for (const id of ids) delete next[id];
+        return next;
+      });
+      setAskManagerByTeamId((prev) => {
+        const next = { ...prev };
+        delete next[teamId];
+        return next;
+      });
+      if (focusedDeskId && ids.has(focusedDeskId)) setFocusedDeskId(null);
+      if (activePendingDeskId && ids.has(activePendingDeskId)) setActivePendingDeskId(null);
+      setTeams((prev) => prev.filter((item) => item.id !== teamId));
+      void loadSessions();
+    } catch (e) {
+      window.alert((e as Error).message || "Couldn't delete this room.");
+    }
+  }
+
   function renameTeam(teamId: string, name: string) {
     if (teamId === PUBLIC_TEAM_ID) return;
     setTeams((prev) => prev.map((team) =>
@@ -1406,6 +1466,7 @@ export default function App() {
           onAddDesk={addDeskToTeam}
           onCopyDesk={copyDeskToHome}
           onPublicShareChange={setPublicShare}
+          onDeleteTeam={deleteRoom}
           onTeamSceneChange={setTeamScene}
           onTeamRename={renameTeam}
           onSessionInterrupt={handleSessionInterrupt}
