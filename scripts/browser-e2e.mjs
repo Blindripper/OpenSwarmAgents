@@ -46,6 +46,20 @@ try {
   assert(Array.isArray(sessions) && sessions.length === 0, "fresh dashboard should have no Home/Public example tasks");
   let top = await getJson("/api/top-agents?limit=100");
   assert(Array.isArray(top.agents) && top.agents.length === 0, "fresh Top100 should start empty");
+  let config = await getJson("/api/gui-config");
+  assert(config.agents.map((agent) => agent.id).join(",") === "openclaw-codex,codex-cli", "Agent Profiles should start with OpenClaw/Codex templates only");
+  const customProfile = await postJson("/api/agents", {
+    id: "profit-scout",
+    clone_from: "openclaw-codex",
+    name: "Profit Scout",
+    tagline: "Find useful OpenClaw opportunities"
+  });
+  assert(customProfile.agent?.id === "profit-scout", "custom OpenClaw profiles should be creatable");
+  config = await getJson("/api/gui-config");
+  assert(config.agents.some((agent) => agent.id === "profit-scout"), "custom profile should appear in Agent Profiles");
+  await deleteJson("/api/agents/profit-scout");
+  config = await getJson("/api/gui-config");
+  assert(!config.agents.some((agent) => agent.id === "profit-scout"), "custom profile should be deletable");
 
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
@@ -74,6 +88,13 @@ try {
     "completed Home session to stay visible"
   );
   assert(completed.ended_at, "completed Home session should expose an end timestamp");
+
+  const roomCreated = await postJson("/api/sessions/new", {
+    content: "Create a compact launch plan for a private room.",
+    team_id: "room-launch",
+    team_name: "Launch"
+  });
+  assert(roomCreated.session?.team_id === "room-launch", "private room sessions should keep their team id");
 
   let shared = await postJson(`/api/sessions/${encodeURIComponent(created.session_id)}/share`, { shared: true });
   assert(shared.shared_public === true, "Home agent should be shareable to Public");
@@ -150,6 +171,12 @@ async function postJson(path, body) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body)
   });
+  if (!response.ok) throw new Error(`${path} failed with ${response.status}: ${await response.text()}`);
+  return response.json();
+}
+
+async function deleteJson(path) {
+  const response = await fetch(`${baseUrl}${path}`, { method: "DELETE" });
   if (!response.ok) throw new Error(`${path} failed with ${response.status}: ${await response.text()}`);
   return response.json();
 }

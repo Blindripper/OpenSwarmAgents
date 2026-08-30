@@ -134,6 +134,7 @@ function AgentRosterSlot({
   const draggable = !unavailable && !!onDragStart;
   const displayName = agent.name || agent.id;
   const effectiveColor = avatarPref?.color || agent.color;
+  const editable = !agent.is_prototype && !!onEdit;
 
   return (
     <div
@@ -152,10 +153,12 @@ function AgentRosterSlot({
           ? `${displayName} — profile not installed`
           : inUse
             ? `${displayName} — running on a desk · click to edit · drag onto another desk or section`
-            : `${displayName} — click to edit · drag onto desk or section`
+            : agent.is_prototype
+              ? `${displayName} — OpenClaw template · drag onto desk or clone into a new profile`
+              : `${displayName} — click to edit · drag onto desk or section`
       }
     >
-      {onEdit && !unavailable && hov && (
+      {editable && !unavailable && hov && (
         <button
           type="button"
           title="Edit SOUL + MEMORY"
@@ -204,7 +207,7 @@ function AgentRosterSlot({
           wordBreak: "break-word",
           cursor: onEdit ? "pointer" : "default",
         }}
-        onClick={() => { if (onEdit) onEdit(agent); }}
+        onClick={() => { if (editable) onEdit?.(agent); }}
       >
         {displayName}
       </div>
@@ -480,6 +483,18 @@ export function AgentRoster({
 
   return (
     <div>
+      <div style={{
+        marginBottom: 14,
+        padding: "10px 12px",
+        borderRadius: 8,
+        border: "1px solid rgba(126,224,194,0.18)",
+        background: "rgba(34,211,238,0.06)",
+        color: "var(--text-dim)",
+        fontSize: 11,
+        lineHeight: 1.45,
+      }}>
+        Agent Profiles are reusable OpenClaw worker presets. Drag one onto a private desk, or edit/create profiles here to give a desk a different local runner personality.
+      </div>
       <section style={{ marginBottom: 18 }}>
         <EditableHeader
           name={globalSection.name}

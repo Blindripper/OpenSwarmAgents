@@ -133,6 +133,7 @@ async function loadStore() {
       claims: [],
       users: [],
       sessions: [],
+      agentProfiles: [],
       connectorTokens: [],
       uploadedArtifacts: [],
       proposalVotes: [],
@@ -158,6 +159,7 @@ function normalizeStore(input) {
     claims: input.claims || [],
     users: input.users || [],
     sessions: input.sessions || [],
+    agentProfiles: normalizeAgentProfiles(input.agentProfiles || []),
     connectorTokens: normalizeConnectorTokens(input.connectorTokens || []),
     uploadedArtifacts: input.uploadedArtifacts || [],
     trustLedger: normalizeTrustLedger(input.trustLedger || []),
@@ -177,6 +179,27 @@ function normalizeTasks(tasks) {
     copyCount: Math.max(0, Number(task.copyCount || 0)),
     lastCopiedAt: task.lastCopiedAt || null
   }));
+}
+
+function normalizeAgentProfiles(profiles) {
+  return profiles
+    .filter((profile) => profile?.id)
+    .map((profile) => ({
+      id: String(profile.id).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80),
+      name: String(profile.name || profile.id || "OpenClaw Agent").slice(0, 80),
+      tagline: String(profile.tagline || "Private OpenClaw worker profile").slice(0, 160),
+      color: String(profile.color || "#22d3ee").slice(0, 32),
+      available: profile.available !== false,
+      model: String(profile.model || "OpenClaw local agent").slice(0, 120),
+      base_url: String(profile.base_url || "").slice(0, 500),
+      profile_path: String(profile.profile_path || `osa://profiles/${profile.id}`).slice(0, 500),
+      is_prototype: false,
+      clone_from: profile.clone_from || "openclaw-codex",
+      runner: ["openclaw", "codex"].includes(profile.runner) ? profile.runner : (profile.clone_from === "codex-cli" ? "codex" : "openclaw"),
+      soul: String(profile.soul || "You are a user-owned OpenClaw agent profile. Work clearly, locally, and keep results useful.").slice(0, 20_000),
+      memory: String(profile.memory || "").slice(0, 20_000)
+    }))
+    .filter((profile) => profile.id);
 }
 
 function removeLegacySeedExamples(target) {
@@ -383,6 +406,7 @@ async function loadPostgresStore() {
     claims: [],
     users: [],
     sessions: [],
+    agentProfiles: [],
     connectorTokens: [],
     proposalVotes: [],
     uploadedArtifacts: [],
@@ -1846,6 +1870,14 @@ function startManagedConnector(req, rawToken, connector, body = {}) {
     managed.exitCode = code;
     managed.signal = signal || null;
     managed.status = managed.status === "stopping" || signal === "SIGTERM" ? "stopped" : code === 0 ? "exited" : "failed";
+    const task = store.tasks.find((item) => item.agentGuiConnectorId === connector.id);
+    if (task && connector.agentGuiRunOnce && managed.status === "failed" && !["done", "rejected", "deleted"].includes(task.status)) {
+      task.status = "failed";
+      task.agentGuiConnectorError = trimManagedConnectorOutput(managed.output || `Connector exited with ${code ?? signal ?? "unknown"}`);
+      task.updatedAt = now();
+      task.leaseUntil = null;
+      task.leaseId = null;
+    }
     event("managed_connector_exited", `Dashboard connector stopped`, {
       connectorId: connector.id,
       goalId: connector.goalId,
@@ -2664,17 +2696,19 @@ function agentGuiTaskSession(task, roomOverride = null) {
   const lastAt = task.updatedAt || result?.createdAt || task.createdAt;
   const displayModel = task.agentGuiModel || agent?.models?.join(", ") || agent?.provider || "OSA connector";
   const taskSolved = task.status === "done" || result?.status === "accepted";
+  const connectorExit = task.agentGuiConnectorId ? agentGuiConnectorExitForTask(task) : null;
+  const taskFailed = task.status === "failed" || connectorExit?.isError;
   return {
     id: `${room}-${task.id}`,
     started_at: task.createdAt,
-    ended_at: ["done", "in_consensus"].includes(task.status) ? lastAt : null,
+    ended_at: taskFailed ? (connectorExit?.createdAt || lastAt) : ["done", "in_consensus"].includes(task.status) ? lastAt : null,
     source: room === "home" ? "osa-home" : "osa-public",
     model: task.agentGuiModel || agent?.models?.[0] || agent?.provider || "OSA connector",
     parent_session_id: null,
     title: task.title,
     message_count: agent ? 3 : 1,
     token_estimate: task.description.length + (result?.content || "").length,
-    is_running: !taskSolved && (task.status === "leased" || ["starting", "running"].includes(managed?.status)),
+    is_running: !taskSolved && !taskFailed && (task.status === "leased" || ["starting", "running"].includes(managed?.status)),
     first_activity_at: task.createdAt,
     last_activity_at: lastAt,
     title_summary: room === "home" ? "Home" : goal?.title || "Public OSA task",
@@ -2682,15 +2716,37 @@ function agentGuiTaskSession(task, roomOverride = null) {
     task_solved: taskSolved,
     workspace_path: null,
     is_sleeping: false,
-    agent: agent ? agentGuiAgentId(agent) : fallbackAgent,
+    agent: fallbackAgent,
     agent_model: displayModel,
     agent_base_url: "",
     desk_tools: task.requiredCapabilities || [task.type || "task"],
-    team_id: room === "home" ? agentGuiHomeTeamId : agentGuiPublicTeamId,
+    team_id: room === "home" ? normalizeAgentGuiPrivateTeamId(task.agentGuiTeamId) : agentGuiPublicTeamId,
+    team_name: room === "home" ? task.agentGuiTeamName || null : "Public",
     shared_public: Boolean(task.sharedPublic),
     shared_public_at: task.sharedPublicAt || null,
     copy_count: Math.max(0, Number(task.copyCount || 0)),
-    last_copied_at: task.lastCopiedAt || null
+    last_copied_at: task.lastCopiedAt || null,
+    connector_status: taskFailed ? "failed" : (managed?.status || connectorExit?.status || null),
+    connector_exit_code: connectorExit?.exitCode ?? managed?.exitCode ?? null,
+    connector_error: task.agentGuiConnectorError || (connectorExit?.isError ? connectorExit.message : null)
+  };
+}
+
+function agentGuiConnectorExitForTask(task) {
+  if (!task?.agentGuiConnectorId) return null;
+  const eventItem = store.events.find((item) =>
+    item.type === "managed_connector_exited" && item.data?.connectorId === task.agentGuiConnectorId
+  );
+  if (!eventItem) return null;
+  const exitCode = eventItem.data?.exitCode;
+  const signal = eventItem.data?.signal || null;
+  return {
+    status: signal ? "stopped" : exitCode === 0 ? "exited" : "failed",
+    exitCode,
+    signal,
+    isError: exitCode !== 0 && signal !== "SIGTERM",
+    message: `Connector exited with ${signal || `code ${exitCode}`}`,
+    createdAt: eventItem.createdAt
   };
 }
 
@@ -2699,6 +2755,19 @@ function agentGuiTaskRoom(task) {
   if (task.agentGuiRoom === "home" || task.source === "agent-gui-home") return "home";
   if (task.agentGuiConnectorId && task.source === "agent-gui") return "home";
   return "public";
+}
+
+function normalizeAgentGuiPrivateTeamId(teamId) {
+  const value = String(teamId || "").trim();
+  if (!value || value === agentGuiHomeTeamId || value === agentGuiPublicTeamId) return agentGuiHomeTeamId;
+  const clean = value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+  if (!clean || clean === "public-room") return agentGuiHomeTeamId;
+  return clean.startsWith("room-") ? clean : `room-${clean}`;
 }
 
 function agentGuiSessionRoom(sessionId, task = null) {
@@ -2732,28 +2801,68 @@ function agentGuiTopAgents(limit = 100) {
 }
 
 function agentGuiAgents() {
-  const networkAgents = store.agents.map((agent) => ({
-    id: agentGuiAgentId(agent),
-    name: agent.name,
-    tagline: agentGoalTagline(agent),
-    color: agent.status === "online" ? "#4a8eff" : "#6a7a9a",
-    available: agent.status === "online",
-    model: (agent.models || []).join(", ") || agent.provider || "OSA connector",
-    base_url: "",
-    profile_path: `osa://agents/${agent.id}`,
-    is_prototype: false,
-    clone_from: "coder"
-  }));
-  return [...agentGuiPrototypes(), ...networkAgents];
+  return [...agentGuiPrototypes(), ...store.agentProfiles.map(publicAgentGuiProfile)];
 }
 
 function agentGuiPrototypes() {
   return [
-    { id: "openclaw-codex", name: "Codex / OpenClaw", tagline: "Connect this OpenClaw agent to OSA work", color: "#22d3ee", available: true, model: "OpenClaw local agent", base_url: "", profile_path: "osa://prototype/openclaw-codex", is_prototype: true, clone_from: null },
-    { id: "codex-cli", name: "Codex CLI", tagline: "Run work through the local Codex CLI connector", color: "#60a5fa", available: true, model: "Codex CLI", base_url: "", profile_path: "osa://prototype/codex-cli", is_prototype: true, clone_from: null },
-    { id: "coder", name: "Worker Agent", tagline: "Claims and executes OSA tasks", color: "#4a8eff", available: true, model: "OSA connector", base_url: "", profile_path: "osa://prototype/worker", is_prototype: true, clone_from: null },
-    { id: "local-ollama", name: "Waiting Desk", tagline: "No decentralized agent is seated yet", color: "#58a6ff", available: true, model: "pending", base_url: "", profile_path: "osa://prototype/pending", is_prototype: true, clone_from: null }
+    { id: "openclaw-codex", name: "OpenClaw Agent", tagline: "Use this local OpenClaw agent for a Home desk", color: "#22d3ee", available: true, model: "OpenClaw local agent", base_url: "", profile_path: "osa://prototype/openclaw-codex", is_prototype: true, clone_from: null },
+    { id: "codex-cli", name: "Codex CLI", tagline: "Run a Home desk through the local Codex CLI", color: "#60a5fa", available: true, model: "Codex CLI", base_url: "", profile_path: "osa://prototype/codex-cli", is_prototype: true, clone_from: null }
   ];
+}
+
+function publicAgentGuiProfile(profile) {
+  return {
+    id: profile.id,
+    name: profile.name,
+    tagline: profile.tagline,
+    color: profile.color,
+    available: profile.available !== false,
+    model: profile.model || "OpenClaw local agent",
+    base_url: profile.base_url || "",
+    profile_path: profile.profile_path || `osa://profiles/${profile.id}`,
+    is_prototype: false,
+    clone_from: profile.clone_from || "openclaw-codex"
+  };
+}
+
+function createAgentGuiProfile(body = {}) {
+  const id = String(body.id || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+  if (!id) {
+    const error = new Error("Profile id is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (agentGuiPrototypes().some((profile) => profile.id === id) || store.agentProfiles.some((profile) => profile.id === id)) {
+    const error = new Error("An OpenClaw profile with this id already exists.");
+    error.statusCode = 409;
+    throw error;
+  }
+  const cloneFrom = String(body.clone_from || "openclaw-codex");
+  const source = store.agentProfiles.find((profile) => profile.id === cloneFrom);
+  const prototype = agentGuiPrototypes().find((profile) => profile.id === cloneFrom);
+  const runner = cloneFrom === "codex-cli" || source?.runner === "codex" ? "codex" : "openclaw";
+  const profile = normalizeAgentProfiles([{
+    id,
+    name: body.name || `${id.replaceAll("-", " ")} Agent`,
+    tagline: body.tagline || (prototype?.tagline ?? source?.tagline ?? "Private OpenClaw worker profile"),
+    color: prototype?.color || source?.color || "#22d3ee",
+    model: body.model_default || source?.model || (runner === "codex" ? "Codex CLI" : "OpenClaw local agent"),
+    base_url: body.base_url || source?.base_url || "",
+    profile_path: `osa://profiles/${id}`,
+    clone_from: cloneFrom,
+    runner,
+    soul: body.soul || source?.soul || "You are a private OpenClaw worker profile inside OSA. Keep work bounded, visible, and useful.",
+    memory: body.memory || source?.memory || ""
+  }])[0];
+  store.agentProfiles.push(profile);
+  event("agentgui_profile_created", `Created OpenClaw agent profile ${profile.name}`, { profileId: profile.id, runner });
+  return profile;
 }
 
 function agentGuiAgentId(agent) {
@@ -2780,34 +2889,8 @@ function agentGuiTaskIdFromSessionId(sessionId) {
 }
 
 function agentGuiSubagents(sessionId) {
-  const session = agentGuiSessionById(sessionId);
-  if (!session) return [];
-  const agents = agentGuiAgents()
-    .filter((agent) => !agent.is_prototype && (agent.available || session.agent === agent.id))
-    .slice(0, 12);
-  if (!agents.length && session.agent) {
-    const profile = agentGuiAgents().find((agent) => agent.id === session.agent);
-    if (profile) agents.push(profile);
-  }
-  return agents
-    .map((agent, index) => ({
-      subagent_id: agent.id,
-      parent_id: sessionId,
-      depth: 0,
-      model: agent.model || "OSA connector",
-      task_index: index,
-      task_count: Math.max(1, store.agents.length),
-      goal: session.title,
-      timeline: [
-        {
-          event: session.is_running ? "progress" : "start",
-          ts: Math.floor(Date.parse(session.last_activity_at || session.started_at || now()) / 1000),
-          text: agent.tagline || "OpenSwarmAgents network agent"
-        }
-      ],
-      status: session.is_running ? "working" : "idle",
-      output: ""
-    }));
+  agentGuiSessionById(sessionId);
+  return [];
 }
 
 function agentGuiTaskActivity(taskId) {
@@ -2821,7 +2904,13 @@ function agentGuiTaskActivity(taskId) {
   ];
   if (task.assignedAgentId) {
     const agent = findAgent(task.assignedAgentId);
-    events.push(agentGuiActivityEvent(task.updatedAt || task.createdAt, "tool_call", "RUN", `${agent?.name || "Agent"} is working`, statusLabelForAgentGui(task.status), "claim_task", false, []));
+    const exit = agentGuiConnectorExitForTask(task);
+    const failed = task.status === "failed" || exit?.isError;
+    events.push(agentGuiActivityEvent(failed ? (exit?.createdAt || task.updatedAt || task.createdAt) : (task.updatedAt || task.createdAt), failed ? "error" : "tool_call", failed ? "ERR" : "RUN", `${agent?.name || "Agent"} ${failed ? "failed" : "is working"}`, task.agentGuiConnectorError || exit?.message || statusLabelForAgentGui(task.status), "claim_task", failed, []));
+  }
+  const exit = agentGuiConnectorExitForTask(task);
+  if (exit?.isError && !events.some((item) => item.tool_name === "connector_exit")) {
+    events.push(agentGuiActivityEvent(exit.createdAt || task.updatedAt || task.createdAt, "error", "ERR", "Connector failed", task.agentGuiConnectorError || exit.message, "connector_exit", true, []));
   }
   for (const result of relatedResults) {
     const agent = findAgent(result.agentId);
@@ -2832,6 +2921,48 @@ function agentGuiTaskActivity(taskId) {
     events.push(agentGuiActivityEvent(review.createdAt, "tool_result", "REV", `${agent?.name || "Agent"} reviewed output`, `${review.decision}: ${review.reason}`, "review_result", review.decision === "rejected", []));
   }
   return events.sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)));
+}
+
+function agentGuiConsoleText(sessionId, kind = "terminal") {
+  const taskId = agentGuiTaskIdFromSessionId(sessionId);
+  const task = store.tasks.find((item) => item.id === taskId);
+  if (!task) return "";
+  const session = agentGuiTaskSession(task, agentGuiSessionRoom(sessionId, task));
+  const result = store.results.find((item) => item.taskId === task.id);
+  const connector = task.agentGuiConnectorId
+    ? store.connectorTokens.find((item) => item.id === task.agentGuiConnectorId)
+    : null;
+  const managed = task.agentGuiConnectorId ? managedConnectorStatus(task.agentGuiConnectorId) : null;
+  const exit = agentGuiConnectorExitForTask(task);
+  const visibleStatus = session.connector_status === "failed" ? "failed" : task.status;
+  const lines = [
+    `OSA desk: ${task.title}`,
+    `Status: ${visibleStatus}${session.task_solved ? " (solved)" : ""}`,
+    `Runner: ${connectorRunner(connector || { models: [task.agentGuiAgent === "codex-cli" ? "connector:codex" : "connector:openclaw"] })}`,
+    `Profile: ${task.agentGuiModel || "OpenClaw local agent"}`,
+    `Task: ${task.id}`,
+    `Connector: ${task.agentGuiConnectorId || "none"}`,
+    `Last activity: ${session.last_activity_at || "none"}`
+  ];
+  if (task.leaseUntil && task.status === "leased") lines.push(`Lease until: ${task.leaseUntil}`);
+  if (managed) {
+    lines.push(`Managed connector: ${managed.status}${managed.pid ? ` pid ${managed.pid}` : ""}`);
+    if (managed.exitCode !== null) lines.push(`Exit: ${managed.exitCode}${managed.signal ? ` ${managed.signal}` : ""}`);
+  } else if (exit) {
+    lines.push(`Managed connector: ${exit.status}`);
+    lines.push(`Exit: ${exit.exitCode}${exit.signal ? ` ${exit.signal}` : ""}`);
+  }
+  if (task.agentGuiConnectorError) lines.push(`Error: ${task.agentGuiConnectorError}`);
+  if (managed?.output) {
+    lines.push("", "Connector output:", managed.output.trim());
+  }
+  if (result) {
+    lines.push("", "Result:", result.summary || "Result submitted", "", String(result.content || "").trim());
+  }
+  if (kind === "console" && !result && !managed?.output && !task.agentGuiConnectorError) {
+    lines.push("", "No command output has been recorded yet. OpenClaw may still be working or the runner exited before producing output.");
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function agentGuiActivityEvent(timestamp, eventType, icon, title, detail, toolName, isError, filesTouched) {
@@ -2908,6 +3039,8 @@ async function startAgentGuiSession(req, body = {}) {
   const goal = agentGuiGoalForStart(body, title, content);
   const agentId = String(body.agent || "openclaw-codex");
   const runner = agentGuiRunnerForAgent(agentId);
+  const teamId = normalizeAgentGuiPrivateTeamId(body.team_id);
+  const teamName = String(body.team_name || "").trim().slice(0, 80);
   const startedAt = now();
   const task = {
     id: `task-${randomUUID()}`,
@@ -2922,6 +3055,8 @@ async function startAgentGuiSession(req, body = {}) {
     updatedAt: startedAt,
     source: "agent-gui-home",
     agentGuiRoom: "home",
+    agentGuiTeamId: teamId,
+    agentGuiTeamName: teamName || null,
     agentGuiAgent: runner === "codex" ? "codex-cli" : "openclaw-codex",
     agentGuiModel: runner === "codex" ? "Codex CLI" : "OpenClaw local agent"
   };
@@ -3140,15 +3275,16 @@ function startAgentGuiTaskConnector(req, task, agentId) {
   }
 
   const runner = agentGuiRunnerForAgent(agentId);
-  task.agentGuiAgent = runner === "codex" ? "codex-cli" : "openclaw-codex";
-  task.agentGuiModel = runner === "codex" ? "Codex CLI" : "OpenClaw local agent";
+  const profile = agentGuiProfileById(agentId);
+  task.agentGuiAgent = profile?.id || (runner === "codex" ? "codex-cli" : "openclaw-codex");
+  task.agentGuiModel = profile?.model || (runner === "codex" ? "Codex CLI" : "OpenClaw local agent");
   task.updatedAt = now();
 
   const auth = agentGuiConnectorAuth(task.id);
   const { rawToken, connector } = createConnectorToken(auth, {
     mode: "worker",
     goalId: task.goalId,
-    name: runner === "codex" ? "Codex CLI Agent" : "Codex OpenClaw Agent",
+    name: profile?.name || (runner === "codex" ? "Codex CLI Agent" : "Codex OpenClaw Agent"),
     capabilities: task.requiredCapabilities || ["research", "review", "synthesis"],
     models: [`connector:${runner}`],
     provider: "unknown",
@@ -3189,7 +3325,13 @@ function agentGuiGoalForStart(body, title, content) {
 
 function agentGuiRunnerForAgent(agentId) {
   if (agentId === "codex-cli") return "codex";
+  const profile = store.agentProfiles.find((item) => item.id === agentId);
+  if (profile?.runner === "codex") return "codex";
   return "openclaw";
+}
+
+function agentGuiProfileById(agentId) {
+  return agentGuiAgents().find((profile) => profile.id === agentId) || null;
 }
 
 function agentGuiConnectorAuth(taskId) {
@@ -3253,6 +3395,9 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     return session ? sendJson(res, 200, session) : notFound(res);
   }
 
+  const inspectStopMatch = path.match(/^\/api\/sessions\/([^/]+)\/inspect\/stop$/);
+  if (method === "POST" && inspectStopMatch) return sendJson(res, 200, { ok: true });
+
   const sessionChildMatch = path.match(/^\/api\/sessions\/([^/]+)\/([^/]+)$/);
   if (sessionChildMatch) {
     const sessionId = decodeURIComponent(sessionChildMatch[1]);
@@ -3271,7 +3416,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     }
     if (method === "GET" && child === "todos") return sendJson(res, 200, agentGuiTodos(sessionId));
     if (method === "GET" && (child === "files" || child === "workspace_tree")) return sendJson(res, 200, []);
-    if (method === "GET" && (child === "console" || child === "terminal")) return sendJson(res, 200, { text: "" });
+    if (method === "GET" && (child === "console" || child === "terminal")) return sendJson(res, 200, { text: agentGuiConsoleText(sessionId, child) });
     if (method === "GET" && child === "history") {
       const session = agentGuiSessionById(sessionId);
       return session ? sendJson(res, 200, { desk_id: sessionId, profile: session.agent || "", sessions: [{ ...session, is_root: true, profile: session.agent || "" }] }) : notFound(res);
@@ -3310,6 +3455,14 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       } catch (error) {
         return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to connect OSA desk" });
       }
+    }
+    if (method === "POST" && child === "inspect") {
+      const body = await readJson(req);
+      return sendJson(res, 200, {
+        ok: true,
+        tool: body.tool || "diagnostics",
+        result: agentGuiConsoleText(sessionId, "terminal")
+      });
     }
     if (method === "POST" && ["redirect", "interrupt", "arrive", "sleep", "wake", "autocontinue", "audit", "progress"].includes(child)) {
       return sendJson(res, 200, { ok: true, enabled: false, max: 0, content: agentGuiTaskFile(sessionId), exists: true });
@@ -3368,21 +3521,69 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
   if (method === "POST" && path === "/api/docker/cleanup") return sendJson(res, 200, { removed: 0, kept: 0, skipped: true, reason: "OSA connector workers are managed outside AgentGUI Docker cleanup" });
   if (method === "GET" && path === "/api/agents") return sendJson(res, 200, { agents: agentGuiAgents() });
   if (method === "GET" && path === "/api/agents/prototypes") return sendJson(res, 200, { prototypes: agentGuiPrototypes() });
+  if (method === "POST" && path === "/api/agents") {
+    try {
+      const body = await readJson(req);
+      const profile = createAgentGuiProfile(body);
+      await saveStore();
+      return sendJson(res, 201, { ok: true, agent: publicAgentGuiProfile(profile) });
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to create OpenClaw profile" });
+    }
+  }
+
+  const agentProfileMatch = path.match(/^\/api\/agents\/([^/]+)$/);
+  if (method === "DELETE" && agentProfileMatch) {
+    const id = decodeURIComponent(agentProfileMatch[1]);
+    const index = store.agentProfiles.findIndex((profile) => profile.id === id);
+    if (index < 0) return notFound(res);
+    store.agentProfiles.splice(index, 1);
+    await saveStore();
+    return sendJson(res, 200, { ok: true, id });
+  }
 
   const agentChildMatch = path.match(/^\/api\/agents\/([^/]+)\/(capabilities|persona)$/);
   if (method === "GET" && agentChildMatch) {
     const id = decodeURIComponent(agentChildMatch[1]);
     if (agentChildMatch[2] === "capabilities") return sendJson(res, 200, agentGuiCapability(id));
+    const profile = store.agentProfiles.find((item) => item.id === id);
+    if (profile) {
+      return sendJson(res, 200, {
+        id: profile.id,
+        soul: profile.soul,
+        memory: profile.memory,
+        profile_path: profile.profile_path,
+        name: profile.name,
+        tagline: profile.tagline,
+        model: profile.model,
+        base_url: profile.base_url,
+        clone_from: profile.clone_from
+      });
+    }
     return sendJson(res, 200, {
       id,
-      soul: "OSA decentralized network agent.",
-      memory: "State is maintained by the OpenSwarmAgents node.",
+      soul: "OpenClaw-local worker profile for OpenSwarmAgents.",
+      memory: "State is maintained by this OSA node and your local OpenClaw setup.",
       profile_path: `osa://agents/${id}`,
       name: id,
-      tagline: "OpenSwarmAgents connector",
-      model: "OSA connector",
+      tagline: "OpenClaw worker profile",
+      model: id === "codex-cli" ? "Codex CLI" : "OpenClaw local agent",
       base_url: ""
     });
+  }
+  if (method === "PUT" && agentChildMatch && agentChildMatch[2] === "persona") {
+    const id = decodeURIComponent(agentChildMatch[1]);
+    const profile = store.agentProfiles.find((item) => item.id === id);
+    if (!profile) return notFound(res);
+    const body = await readJson(req);
+    if (body.name !== undefined) profile.name = String(body.name || profile.id).slice(0, 80);
+    if (body.tagline !== undefined) profile.tagline = String(body.tagline || "Private OpenClaw worker profile").slice(0, 160);
+    profile.soul = String(body.soul || "").slice(0, 20_000);
+    profile.memory = String(body.memory || "").slice(0, 20_000);
+    if (body.model_default !== undefined) profile.model = String(body.model_default || "OpenClaw local agent").slice(0, 120);
+    if (body.base_url !== undefined) profile.base_url = String(body.base_url || "").slice(0, 500);
+    await saveStore();
+    return sendJson(res, 200, { ok: true, id });
   }
 
   if (method === "GET" && path === "/api/llm/models") {
@@ -3413,7 +3614,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
   }
 
   if (method === "GET" && path === "/api/global/persona") {
-    return sendJson(res, 200, { id: "osa-default", profile_path: "osa://global", model: "OSA connector", base_url: "", soul: "OpenSwarmAgents", memory: "" });
+    return sendJson(res, 200, { id: "osa-default", profile_path: "osa://global", model: "OpenClaw local agent", base_url: "", soul: "OpenClaw-local OpenSwarmAgents worker.", memory: "" });
   }
   if (method === "PUT" && path === "/api/global/persona") return sendJson(res, 200, { ok: true });
   if (method === "GET" && path === "/api/openclaw/status") return sendJson(res, 200, openClawSetupStatus());
@@ -4962,8 +5163,7 @@ function serveAgentGuiWebSocket(req, socket, url) {
       if (nextLive) send({ live: nextLive });
     }, 5000);
   } else if (kind === "terminal" || kind === "console") {
-    const session = agentGuiSessionById(sessionId);
-    send(session ? `${session.title}\n${session.title_summary || ""}\n` : "");
+    send(agentGuiConsoleText(sessionId, kind));
   } else if (kind === "tail") {
     send("");
   }

@@ -73,7 +73,9 @@ function loadGlobalMeta(): GlobalSectionMeta {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed.name === "string") {
-        return { name: parsed.name, blurb: typeof parsed.blurb === "string" ? parsed.blurb : "" };
+        const blurb = typeof parsed.blurb === "string" ? parsed.blurb : "";
+        if (blurb.toLowerCase().includes("hermes")) return { ...DEFAULT_GLOBAL };
+        return { name: parsed.name, blurb };
       }
     }
   } catch {

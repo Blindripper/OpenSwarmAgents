@@ -30,11 +30,15 @@ export interface Session {
   /** Team this desk belongs to.
    *  Lets the office reconstruct teams created outside the browser (API/script). */
   team_id?: string | null;
+  team_name?: string | null;
   /** OSA: whether this Home desk is visible in Public. */
   shared_public?: boolean;
   shared_public_at?: string | null;
   copy_count?: number;
   last_copied_at?: string | null;
+  connector_status?: string | null;
+  connector_exit_code?: number | null;
+  connector_error?: string | null;
 }
 
 export interface TopAgent {

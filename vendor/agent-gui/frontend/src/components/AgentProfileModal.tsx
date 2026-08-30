@@ -55,7 +55,7 @@ export function AgentProfileModal({ mode, agent, prototypes, agents = [], embedd
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const canDelete = mode === "edit" && !!agent;
+  const canDelete = mode === "edit" && !!agent && !agent.is_prototype;
   const avatars = useAvatarPrefs();
 
   useEffect(() => {
@@ -164,6 +164,8 @@ export function AgentProfileModal({ mode, agent, prototypes, agents = [], embedd
         await api.agents.savePersona(agent.id, {
           soul,
           memory,
+          name: displayName.trim() || agent.name,
+          tagline: tagline.trim(),
           ...(baseUrl.trim() || selected ? { model_default: profileModel } : {}),
           ...(selected ? { base_url: selected.base_url, provider: selected.id } : {}),
         });

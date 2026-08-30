@@ -2,11 +2,9 @@ import { useState } from "react";
 import { api } from "../api/client";
 
 /**
- * Operator "inspect" REPL: run a read-only tool against the desk's live Docker
- * sandbox. Calls POST /sessions/:id/inspect, which routes through the desk's
- * persistent worker so it executes with the SAME container, path translation,
- * and read guards the agent uses. Tools are whitelisted server-side
- * (read_file, search_files, list_files, terminal — no writes).
+ * Operator inspect panel. In OSA mode this reports desk, connector, lease,
+ * result, and runner diagnostics. The older sandbox tools remain as presets for
+ * compatible backends.
  */
 
 type Tool = "terminal" | "search_files" | "read_file" | "list_files";
@@ -72,8 +70,7 @@ export function InspectPanel({ sessionId }: { sessionId: string }) {
   return (
     <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.4 }}>
-        Run read-only tools against this desk's sandbox — same container & paths the agent sees.
-        First call may take a few seconds while the worker warms up.
+        Inspect shows the desk's OSA runtime state: task, connector, lease, exit code, runner output, and submitted result.
       </div>
 
       <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>

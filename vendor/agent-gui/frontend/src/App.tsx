@@ -169,28 +169,76 @@ function isPublicSession(session: Session): boolean {
   return session.team_id === PUBLIC_TEAM_ID;
 }
 
-function isHomeSession(session: Session): boolean {
-  return session.team_id === HOME_TEAM_ID;
+function isPrivateSession(session: Session): boolean {
+  return !isPublicSession(session);
 }
 
-// OSA has exactly two rooms: Home for your local agents, Public for network tasks.
-// Older saved AgentGUI layouts are collapsed into these rooms on load.
+function privateTeamId(session: Session): string {
+  const id = session.team_id?.trim();
+  return id && id !== PUBLIC_TEAM_ID ? id : HOME_TEAM_ID;
+}
+
+function makePrivateTeam(id: string, name?: string | null, desks: DeskItem[] = []): Team {
+  if (id === HOME_TEAM_ID) return makeHomeTeam(desks);
+  return {
+    id,
+    name: name?.trim() || "Room",
+    color: "green",
+    scene: DEFAULT_SCENE,
+    desks,
+  };
+}
+
+// OSA rooms: Home and custom private rooms can run local agents; Public is a
+// copy-only network view. Older saved AgentGUI layouts are folded into private
+// rooms and refreshed from the server session list.
 function mergeServerTeams(current: Team[], sessions: Session[]): Team[] {
   const byId = new Map(sessions.map((session) => [session.id, session]));
-  const existingHomeDesks = current
-    .filter((team) => team.id === HOME_TEAM_ID || team.id !== PUBLIC_TEAM_ID)
-    .flatMap((team) => team.desks)
-    .map((desk) => ("isPending" in desk ? desk : byId.get(desk.id)))
-    .filter((desk): desk is DeskItem => Boolean(desk && ("isPending" in desk || isHomeSession(desk as Session))));
-  const placedHomeIds = new Set(
-    existingHomeDesks.filter((desk) => !("isPending" in desk)).map((desk) => desk.id),
-  );
-  const homeSessions = sessions.filter((session) => isHomeSession(session) && !placedHomeIds.has(session.id));
-  const homeDesks = [...existingHomeDesks, ...homeSessions];
-  if (!homeDesks.some((desk) => "isPending" in desk)) homeDesks.unshift(makePending());
+  const placedPrivateIds = new Set<string>();
+  const privateTeams: Team[] = [];
+
+  for (const sourceTeam of current.filter((team) => team.id !== PUBLIC_TEAM_ID)) {
+    const teamId = sourceTeam.id || HOME_TEAM_ID;
+    const desks = sourceTeam.desks
+      .map((desk) => {
+        if ("isPending" in desk) return desk;
+        const fresh = byId.get(desk.id);
+        if (!fresh || !isPrivateSession(fresh) || privateTeamId(fresh) !== teamId) return null;
+        placedPrivateIds.add(fresh.id);
+        return fresh;
+      })
+      .filter((desk): desk is DeskItem => Boolean(desk));
+    if (!desks.some((desk) => "isPending" in desk)) desks.unshift(makePending());
+    privateTeams.push({
+      ...sourceTeam,
+      id: teamId,
+      name: teamId === HOME_TEAM_ID ? "Home" : sourceTeam.name || "Room",
+      desks,
+    });
+  }
+
+  if (!privateTeams.some((team) => team.id === HOME_TEAM_ID)) {
+    privateTeams.unshift(makeHomeTeam());
+  }
+
+  for (const session of sessions.filter(isPrivateSession)) {
+    if (placedPrivateIds.has(session.id)) continue;
+    const teamId = privateTeamId(session);
+    let team = privateTeams.find((item) => item.id === teamId);
+    if (!team) {
+      team = makePrivateTeam(teamId, session.team_name, [makePending()]);
+      privateTeams.push(team);
+    }
+    team.desks.push(session);
+    placedPrivateIds.add(session.id);
+  }
 
   const publicDesks = sessions.filter(isPublicSession);
-  return [makeHomeTeam(homeDesks), makePublicTeam(publicDesks)];
+  const orderedPrivate = [
+    ...privateTeams.filter((team) => team.id === HOME_TEAM_ID),
+    ...privateTeams.filter((team) => team.id !== HOME_TEAM_ID),
+  ];
+  return [...orderedPrivate, makePublicTeam(publicDesks)];
 }
 
 function serverTeamName(teamId: string, sessions: Session[]): string {
@@ -757,12 +805,14 @@ export default function App() {
     const teamId = teams.find((t) => t.desks.some((d) => d.id === deskId))?.id;
     let started;
     try {
+      const team = teams.find((t) => t.id === teamId);
       started = await api.sessions.new(
         msg, apiReasoningEffort, apiMode,
         start.model,
         attachments, start.tools,
         start.agent,
         teamId,
+        team?.name,
       );
     } catch (e) {
       // Surface a failed start (e.g. backend unreachable, bad profile) instead of
@@ -965,9 +1015,29 @@ export default function App() {
   }
 
   function addDeskToTeam(teamId: string) {
-    if (teamId !== HOME_TEAM_ID) return;
+    if (teamId === PUBLIC_TEAM_ID) return;
     setTeams((prev) => prev.map((t) =>
-      t.id === HOME_TEAM_ID ? { ...t, desks: [...t.desks, makePending()] } : t
+      t.id === teamId ? { ...t, desks: [...t.desks, makePending()] } : t
+    ));
+  }
+
+  function addRoom() {
+    const roomNumber = teams.filter((team) => team.id !== PUBLIC_TEAM_ID).length;
+    const id = `room-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    setTeams((prev) => {
+      const next = [...prev];
+      const publicIndex = next.findIndex((team) => team.id === PUBLIC_TEAM_ID);
+      const room = makePrivateTeam(id, `Room ${roomNumber}`, [makePending()]);
+      if (publicIndex >= 0) next.splice(publicIndex, 0, room);
+      else next.push(room);
+      return next;
+    });
+  }
+
+  function renameTeam(teamId: string, name: string) {
+    if (teamId === PUBLIC_TEAM_ID) return;
+    setTeams((prev) => prev.map((team) =>
+      team.id === teamId ? { ...team, name: team.id === HOME_TEAM_ID ? "Home" : name } : team
     ));
   }
 
@@ -1275,6 +1345,24 @@ export default function App() {
             {label}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={addRoom}
+          title="Create a private OpenClaw room with its own desks"
+          style={{
+            height: 30,
+            padding: "0 12px",
+            borderRadius: 6,
+            border: "1px dashed #2a8c72",
+            background: "#10251f",
+            color: "#7ee0c2",
+            fontSize: 12,
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          + Room
+        </button>
       </div>
       {dashboardTab === "top100" ? (
         <TopAgentsPanel
@@ -1319,6 +1407,7 @@ export default function App() {
           onCopyDesk={copyDeskToHome}
           onPublicShareChange={setPublicShare}
           onTeamSceneChange={setTeamScene}
+          onTeamRename={renameTeam}
           onSessionInterrupt={handleSessionInterrupt}
           onAssignAgentToDesk={(deskId, agentId) => handleAssignAgentToDesk(deskId, agentId)}
           deskDropHoverId={deskDropHoverId}

@@ -142,12 +142,14 @@ type DeskTab = "activity" | "tasks" | "files" | "console";
 type ConsoleView = "agent" | "debug" | "inspect";
 
 function statusColor(session: Session): string {
+  if (session.connector_status === "failed" || session.connector_error) return "var(--red)";
   if (session.is_running) return "var(--green)";
   if (session.ended_at) return "var(--text-dim)";
   return "var(--yellow)";
 }
 
 function statusLabel(session: Session): string {
+  if (session.connector_status === "failed" || session.connector_error) return "failed";
   if (session.is_running) return "active";
   if (session.ended_at) return "done";
   return "idle";
@@ -1790,6 +1792,23 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
                 maxWidth: 190, fontStyle: "italic",
               }} title={session.title_summary}>
                 {session.title_summary}
+              </div>
+            )}
+            {session.connector_error && (
+              <div
+                title={session.connector_error}
+                style={{
+                  marginTop: 3,
+                  fontSize: 9,
+                  color: "var(--red)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  maxWidth: 190,
+                  marginInline: "auto",
+                }}
+              >
+                {session.connector_error}
               </div>
             )}
             {/* Profile · model line — under the status, above resume/stop. */}

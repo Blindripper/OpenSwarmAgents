@@ -193,6 +193,7 @@ export const api = {
       tools?: string[],
       agent?: string,
       team_id?: string,
+      team_name?: string,
     ) =>
       post<{ session_id: string; workspace_path?: string; response: string; session?: Session; agent?: string | null }>(
         "/sessions/new",
@@ -205,6 +206,7 @@ export const api = {
           ...(tools !== undefined        ? { tools }                            : {}),
           ...(agent                     ? { agent }                             : {}),
           ...(team_id                   ? { team_id }                           : {}),
+          ...(team_name                 ? { team_name }                         : {}),
         },
       ),
     sendMessage: async (
@@ -338,7 +340,7 @@ export const api = {
     persona: (id: string) => get<AgentPersona>(`/agents/${encodeURIComponent(id)}/persona`),
     savePersona: (
       id: string,
-      body: { soul: string; memory: string; model_default?: string; base_url?: string; provider?: string },
+      body: { soul: string; memory: string; name?: string; tagline?: string; model_default?: string; base_url?: string; provider?: string },
     ) =>
       put<{ ok: boolean; id: string }>(`/agents/${encodeURIComponent(id)}/persona`, body),
     create: (body: {
