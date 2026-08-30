@@ -8,13 +8,14 @@ import { AgentAssignModal } from "./components/AgentAssignModal";
 import { DeskAgentPicker } from "./components/DeskAgentPicker";
 import { GlobalDefaultPersonaEditor } from "./components/GlobalDefaultPersonaEditor";
 import { OpenClawOnboarding } from "./components/OpenClawOnboarding";
+import { TopAgentsPanel } from "./components/TopAgentsPanel";
 import { FilePreview, DEFAULT_CODE_THEME } from "./components/FilePreview";
 import type { CodeThemeId } from "./components/FilePreview";
 import { DEFAULT_BELL } from "./sounds";
 import { DEFAULT_SCENE } from "./components/SceneBackground";
 import { buildDeskConfigView, defaultDeskBarConfig, deskIsRunning, findDeskItem, pendingStartParams, resolveDeskBarConfig, type DeskBarConfig, type GlobalOpenClawConfig } from "./deskConfig";
 import { DESK_PANEL_Z_BASE, nextPanelZ } from "./floatingPanelStack";
-import type { DeskItem, FilePreviewData, Session, Team, TeamColor, ToolsetMeta, AgentProfile, AgentPrototype, PendingAssignment, ToolPresetId, AgentCapabilities } from "./types";
+import type { DeskItem, FilePreviewData, Session, Team, TeamColor, ToolsetMeta, AgentProfile, AgentPrototype, PendingAssignment, ToolPresetId, AgentCapabilities, TopAgent } from "./types";
 import type { OpenClawStatus } from "./api/client";
 import { useAgentDrag } from "./useAgentDrag";
 import { useRosterLayout } from "./rosterLayout";
@@ -77,6 +78,7 @@ const legacyStorageKey = (name: string) => `${LEGACY_STORAGE_PREFIX}-${name}`;
 const WORKBENCH_LEGACY_KEY_V2 = legacyStorageKey("workbench-v2");
 const WORKBENCH_LEGACY_KEY_V1 = legacyStorageKey("workbench-v1");
 const ONBOARDING_DISMISSED_KEY = "osa-openclaw-onboarding-dismissed";
+type DashboardTab = "workbench" | "top100";
 const STORAGE_KEYS = {
   codeTheme: { key: "osa-code-theme", legacy: [legacyStorageKey("code-theme")] },
   verbose: { key: "osa-verbose", legacy: [legacyStorageKey("verbose")] },
@@ -203,6 +205,9 @@ export default function App() {
   const [justStartedId, setJustStartedId] = useState<string | null>(null);
   const [justStartedAnchor, setJustStartedAnchor] = useState<{ top: number; left: number } | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [dashboardTab, setDashboardTab] = useState<DashboardTab>("workbench");
+  const [topAgents, setTopAgents] = useState<TopAgent[]>([]);
+  const [topAgentsLoading, setTopAgentsLoading] = useState(false);
   const [preview, setPreview] = useState<FilePreviewData | null>(null);
   const panelZCounter = useRef(DESK_PANEL_Z_BASE);
   const [deskPanelZ, setDeskPanelZ] = useState<Record<string, number>>({});
@@ -412,6 +417,18 @@ export default function App() {
     } catch { /* ignore */ }
   }, []);
 
+  const refreshTopAgents = useCallback(async () => {
+    setTopAgentsLoading(true);
+    try {
+      const r = await api.topAgents(100);
+      setTopAgents(r.agents ?? []);
+    } catch {
+      setTopAgents([]);
+    } finally {
+      setTopAgentsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadSessions();
     api.openclaw.warmup().catch(() => {});
@@ -428,9 +445,10 @@ export default function App() {
     api.toolsets().then((r) => { setToolsets(r.toolsets); setToolPresets(r.presets); setToolDefault(r.default); }).catch(() => {});
     // Also re-pull the roster: profiles installed/changed on disk while the GUI
     // is open (e.g. install_profiles.sh) otherwise never appear until a reload.
-    const poll = setInterval(() => { loadSessions(); refreshAgents(); }, POLL_INTERVAL);
+    refreshTopAgents();
+    const poll = setInterval(() => { loadSessions(); refreshAgents(); refreshTopAgents(); }, POLL_INTERVAL);
     return () => clearInterval(poll);
-  }, [loadSessions, refreshAgents]);
+  }, [loadSessions, refreshAgents, refreshTopAgents]);
 
   // Persist workbench to localStorage on every change
   useEffect(() => {
@@ -971,8 +989,24 @@ export default function App() {
       setJustStartedId(session.id);
       setJustStartedAnchor(null);
       setTeams((prev) => mergeServerTeams(prev, nextSessions));
+      setDashboardTab("workbench");
+      void refreshTopAgents();
     } catch (e) {
       window.alert((e as Error).message || "Couldn't copy this Public agent into Home.");
+    }
+  }
+
+  async function setPublicShare(sessionId: string, shared: boolean) {
+    try {
+      const result = await api.sessions.share(sessionId, shared);
+      const latest = await api.sessions.list(50);
+      sessionsRef.current = latest;
+      setSessions(latest);
+      setTeams((prev) => mergeServerTeams(prev, latest));
+      if (result.session?.id) setFocusedDeskId(result.session.id);
+      await refreshTopAgents();
+    } catch (e) {
+      window.alert((e as Error).message || "Couldn't update Public sharing.");
     }
   }
 
@@ -1097,7 +1131,7 @@ export default function App() {
   const allDesks = teams.flatMap((t) => t.desks);
   const realDesks = allDesks.filter((d) => !("isPending" in d)) as Session[];
   const activeCount = realDesks.filter((s) => s.is_running === true).length;
-  const deskCount = allDesks.length;
+  const deskCount = realDesks.length;
 
   if (backendError) {
     return (
@@ -1207,64 +1241,109 @@ export default function App() {
           writeStoredItem(STORAGE_KEYS.reasoningEffort.key, v);
         }}
       />
-      <Office
-        teams={teams}
-        searchMatchIds={searchMatchIds}
-        justStartedId={justStartedId}
-        justStartedAnchor={justStartedAnchor}
-        onJustStartedConsumed={() => {
-          setJustStartedId(null);
-          setJustStartedAnchor(null);
-        }}
-        workspacePaths={workspacePaths}
-        taskContents={taskContents}
-        taskImages={taskImages}
-        pendingTexts={pendingTexts}
-        verbose={verbose}
-        reasoningEffort={apiReasoningEffort}
-        apiMode={apiMode}
-        bellSound={bellSound}
-        scene={scene}
-        showManager={showManager}
-        managerPatrolIntervalSec={managerPatrolIntervalSec}
-        managerIdleGraceSec={managerIdleGraceSec}
-        agents={agents}
-        pendingAssignments={pendingAssignments}
-        activePendingDeskId={activePendingDeskId}
-        askManagerByTeamId={askManagerByTeamId}
-        onAskManagerDone={(teamId) => setAskManagerByTeamId((prev) => ({ ...prev, [teamId]: null }))}
-        onPreview={handleFilePreview}
-        deskPanelZ={deskPanelZ}
-        onDeskPanelActivate={activateDeskPanel}
-        onDeskStart={handleDeskStart}
-        onDeskClose={closeDesk}
-        onAddDesk={addDeskToTeam}
-        onCopyDesk={copyDeskToHome}
-        onTeamSceneChange={setTeamScene}
-        onSessionInterrupt={handleSessionInterrupt}
-        onAssignAgentToDesk={(deskId, agentId) => handleAssignAgentToDesk(deskId, agentId)}
-        deskDropHoverId={deskDropHoverId}
-        onAgentDragStart={handleAgentDragStart}
-        onPendingMsgChange={(id, msg) => setPendingTexts((prev) => ({ ...prev, [id]: msg }))}
-        onPendingAssignmentPatch={patchPendingAssignment}
-        onActivePendingDeskChange={handleActivePendingDeskChange}
-        onDeskFocus={handleDeskFocus}
-        focusedDeskId={focusedDeskId}
-        selectedDeskId={selectedDeskId}
-        deskConfigsById={deskConfigsById}
-        onAvatarClick={handleAvatarClick}
-        onDeskAskManager={(teamId, sid) => setAskManagerByTeamId((prev) => ({ ...prev, [teamId]: sid }))}
-        toolsets={toolsets}
-        reasoningValue={reasoningEffort}
-        reasoningOptions={reasoningOptions}
-        onDeskConfigProfileChange={(deskId, agentId) => { void handleDeskProfileChange(deskId, agentId); }}
-        onDeskConfigModelChange={(deskId, model) => { void applyDeskCustomization(deskId, { model }); }}
-        onDeskConfigToolsChange={(deskId, toolPreset, toolsEnabled) => { void applyDeskCustomization(deskId, { toolPreset, toolsEnabled }); }}
-        onDeskConfigReasoningChange={(v) => {
-          setReasoningEffort(v);
-          writeStoredItem(STORAGE_KEYS.reasoningEffort.key, v);
-        }}
-      />
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "8px 16px",
+        borderBottom: "1px solid var(--card-border)",
+        background: "#0f1626",
+      }}>
+        {([
+          ["workbench", "Home / Public"],
+          ["top100", "Top100 AI Agents"],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => {
+              setDashboardTab(id);
+              if (id === "top100") void refreshTopAgents();
+            }}
+            style={{
+              height: 30,
+              padding: "0 12px",
+              borderRadius: 6,
+              border: "1px solid #2a3558",
+              background: dashboardTab === id ? "var(--accent2)" : "#121828",
+              color: dashboardTab === id ? "white" : "var(--text-dim)",
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: "pointer",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {dashboardTab === "top100" ? (
+        <TopAgentsPanel
+          agents={topAgents}
+          loading={topAgentsLoading}
+          onRefresh={refreshTopAgents}
+          onCopy={copyDeskToHome}
+        />
+      ) : (
+        <Office
+          teams={teams}
+          searchMatchIds={searchMatchIds}
+          justStartedId={justStartedId}
+          justStartedAnchor={justStartedAnchor}
+          onJustStartedConsumed={() => {
+            setJustStartedId(null);
+            setJustStartedAnchor(null);
+          }}
+          workspacePaths={workspacePaths}
+          taskContents={taskContents}
+          taskImages={taskImages}
+          pendingTexts={pendingTexts}
+          verbose={verbose}
+          reasoningEffort={apiReasoningEffort}
+          apiMode={apiMode}
+          bellSound={bellSound}
+          scene={scene}
+          showManager={showManager}
+          managerPatrolIntervalSec={managerPatrolIntervalSec}
+          managerIdleGraceSec={managerIdleGraceSec}
+          agents={agents}
+          pendingAssignments={pendingAssignments}
+          activePendingDeskId={activePendingDeskId}
+          askManagerByTeamId={askManagerByTeamId}
+          onAskManagerDone={(teamId) => setAskManagerByTeamId((prev) => ({ ...prev, [teamId]: null }))}
+          onPreview={handleFilePreview}
+          deskPanelZ={deskPanelZ}
+          onDeskPanelActivate={activateDeskPanel}
+          onDeskStart={handleDeskStart}
+          onDeskClose={closeDesk}
+          onAddDesk={addDeskToTeam}
+          onCopyDesk={copyDeskToHome}
+          onPublicShareChange={setPublicShare}
+          onTeamSceneChange={setTeamScene}
+          onSessionInterrupt={handleSessionInterrupt}
+          onAssignAgentToDesk={(deskId, agentId) => handleAssignAgentToDesk(deskId, agentId)}
+          deskDropHoverId={deskDropHoverId}
+          onAgentDragStart={handleAgentDragStart}
+          onPendingMsgChange={(id, msg) => setPendingTexts((prev) => ({ ...prev, [id]: msg }))}
+          onPendingAssignmentPatch={patchPendingAssignment}
+          onActivePendingDeskChange={handleActivePendingDeskChange}
+          onDeskFocus={handleDeskFocus}
+          focusedDeskId={focusedDeskId}
+          selectedDeskId={selectedDeskId}
+          deskConfigsById={deskConfigsById}
+          onAvatarClick={handleAvatarClick}
+          onDeskAskManager={(teamId, sid) => setAskManagerByTeamId((prev) => ({ ...prev, [teamId]: sid }))}
+          toolsets={toolsets}
+          reasoningValue={reasoningEffort}
+          reasoningOptions={reasoningOptions}
+          onDeskConfigProfileChange={(deskId, agentId) => { void handleDeskProfileChange(deskId, agentId); }}
+          onDeskConfigModelChange={(deskId, model) => { void applyDeskCustomization(deskId, { model }); }}
+          onDeskConfigToolsChange={(deskId, toolPreset, toolsEnabled) => { void applyDeskCustomization(deskId, { toolPreset, toolsEnabled }); }}
+          onDeskConfigReasoningChange={(v) => {
+            setReasoningEffort(v);
+            writeStoredItem(STORAGE_KEYS.reasoningEffort.key, v);
+          }}
+        />
+      )}
       {onboardingOpen && (
         <OpenClawOnboarding
           status={openClawStatus}

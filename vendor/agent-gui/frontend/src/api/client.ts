@@ -1,4 +1,4 @@
-import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, Session, SubagentRecord, TodoData, WorkerEvent } from "../types";
+import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
 
 const BASE = "/api";
 const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
@@ -121,6 +121,11 @@ export const api = {
       post<{ ok: boolean; session_id: string; workspace_path?: string | null; response: string; session?: Session; agent?: string | null }>(
         `/sessions/${encodeURIComponent(id)}/copy`,
         {},
+      ),
+    share: (id: string, shared: boolean) =>
+      post<{ ok: boolean; shared_public: boolean; copy_count: number; session?: Session; public_session?: Session | null }>(
+        `/sessions/${encodeURIComponent(id)}/share`,
+        { shared },
       ),
     redirect: (id: string, content: string, attachments?: { name: string; data: string }[], reasoning_effort?: string, api_mode?: string) =>
       post<{ ok: boolean }>(`/sessions/${id}/redirect`, {
@@ -274,6 +279,8 @@ export const api = {
       return ws;
     },
   },
+  topAgents: (limit = 100) =>
+    get<{ agents: TopAgent[]; generated_at: string }>(`/top-agents?limit=${limit}`),
   search: (q: string) => get<Session[]>(`/search?q=${encodeURIComponent(q)}`),
   file: {
     preview: (path: string) =>

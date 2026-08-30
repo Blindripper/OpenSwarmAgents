@@ -123,6 +123,7 @@ interface Props {
   readOnly?: boolean;
   copyLabel?: string;
   onCopy?: () => void | Promise<void>;
+  onPublicShareChange?: (shared: boolean) => void | Promise<void>;
   /** Fired once after autoExpand opens the panel (so the parent can clear justStartedId). */
   onAutoExpanded?: () => void;
   onActivity?: () => void;
@@ -610,7 +611,7 @@ function DeskHistoryView({ history }: { history: DeskHistory | null }) {
   );
 }
 
-export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExpand, openAnchor, workspacePath, taskContent, taskImages, verbose = true, reasoningEffort, apiMode, onPreview, panelZIndex, onPanelActivate, onSelect, onFocus, onOpen, onOpenChange, deskFocused, onClose, readOnly = false, copyLabel = "Copy", onCopy, onAutoExpanded, onActivity, onAskManager, onInterrupt, profileLabel, profileColor, profileModel }: Props) {
+export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExpand, openAnchor, workspacePath, taskContent, taskImages, verbose = true, reasoningEffort, apiMode, onPreview, panelZIndex, onPanelActivate, onSelect, onFocus, onOpen, onOpenChange, deskFocused, onClose, readOnly = false, copyLabel = "Copy", onCopy, onPublicShareChange, onAutoExpanded, onActivity, onAskManager, onInterrupt, profileLabel, profileColor, profileModel }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [tab, setTab] = useState<DeskTab>("activity");
   const [consoleView, setConsoleView] = useState<ConsoleView>("debug");
@@ -675,6 +676,7 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
   const [wsEpoch, setWsEpoch] = useState(0);
   const [resuming, setResuming] = useState(false);
   const [copying, setCopying] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const deskRef = useRef<HTMLDivElement>(null);
   const deskClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { root: panelRoot, height: teamRowHeight } = useTeamRowPanel();
@@ -1204,6 +1206,16 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
       await onCopy();
     } finally {
       setCopying(false);
+    }
+  }
+
+  async function handlePublicShareChange(shared: boolean) {
+    if (!onPublicShareChange || sharing) return;
+    setSharing(true);
+    try {
+      await onPublicShareChange(shared);
+    } finally {
+      setSharing(false);
     }
   }
 
@@ -1850,6 +1862,44 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
               >
                 ⏸ Stop
               </button>
+            )}
+            {!readOnly && onPublicShareChange && (
+              <label
+                title={session.shared_public ? "Remove this Home agent from Public" : "Share this Home agent to Public"}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  margin: "7px auto 0",
+                  minHeight: 24,
+                  width: "min(176px, 100%)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  padding: "3px 8px",
+                  borderRadius: 6,
+                  border: "1px solid var(--card-border)",
+                  background: session.shared_public ? "rgba(34,211,238,0.16)" : "rgba(255,255,255,0.04)",
+                  color: session.shared_public ? "var(--accent2)" : "var(--text-dim)",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  cursor: sharing ? "wait" : "pointer",
+                  boxSizing: "border-box",
+                }}
+              >
+                <span>{sharing ? "Saving" : session.shared_public ? "Public" : "Private"}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ color: "var(--text-dim)", fontWeight: 600 }}>
+                    {Math.max(0, Number(session.copy_count || 0))} copies
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(session.shared_public)}
+                    disabled={sharing}
+                    onChange={(e) => void handlePublicShareChange(e.currentTarget.checked)}
+                    style={{ width: 14, height: 14, margin: 0, accentColor: "var(--accent2)" }}
+                  />
+                </span>
+              </label>
             )}
           </div>
           {!readOnly && (

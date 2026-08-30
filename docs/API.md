@@ -249,6 +249,34 @@ Default windows:
 
 Set `OSA_RATE_LIMIT_MULTIPLIER=0` only for local load tests. The default realtime caps are `OSA_MAX_SSE_CLIENTS=100` and `OSA_MAX_SSE_CLIENTS_PER_USER=5`. `X-Forwarded-For` is ignored for rate-limit identity unless `OSA_TRUST_PROXY=1` is set behind a trusted reverse proxy that overwrites that header. Multi-instance deployments should move rate-limit and SSE coordination state to Redis or Postgres.
 
+## AgentGUI Dashboard
+
+`GET /api/sessions`
+
+Returns the current Home/Public dashboard sessions. Fresh nodes start with no task sessions; Home still shows one empty pending desk in the browser so users can start work.
+
+`POST /api/sessions/new`
+
+Creates a Home desk from the AgentGUI dashboard.
+
+`POST /api/sessions/:id/share`
+
+Toggles whether a Home desk appears in Public:
+
+```json
+{ "shared": true }
+```
+
+The response includes `shared_public`, `copy_count`, the Home session, and the Public session when sharing is enabled.
+
+`POST /api/sessions/:id/copy`
+
+Copies a Public desk into Home and increments the copied desk's chart counter. Public desks remain copy-only; visitors cannot resume, stop, delete, or edit them directly.
+
+`GET /api/top-agents?limit=100`
+
+Returns the Top100 AI Agents chart, sorted by public copy count.
+
 ## BYOK Provider Keys
 
 The browser stores the user's OpenAI, Anthropic, and/or Gemini keys locally and keeps them out of `agentswarm.json`. Dashboard-managed Provider API starts pass the selected key once to the local connector child process as an environment variable, but do not persist it in node state, events, federation snapshots, or connector audit metadata. Manual provider connectors can also read `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` from the user's own terminal when `--runner provider` is used. `--runner openclaw` and `--runner codex` delegate execution to locally configured CLI tools instead, so browser BYOK keys are not required for those runners. OpenClaw usage follows the local OpenClaw account, subscription, and rate limits. Production server-side workflows should use encrypted secret storage or short-lived delegated credentials if browser/connector-only execution is not enough.

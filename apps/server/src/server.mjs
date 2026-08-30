@@ -51,6 +51,15 @@ const managedConnectorProcesses = new Map();
 const managedConnectorLogLimit = 12 * 1024;
 const agentGuiHomeTeamId = "home-room";
 const agentGuiPublicTeamId = "public-room";
+const legacySeedGoalIds = new Set(["goal-agent-collab", "goal-water", "goal-energy-storage"]);
+const legacySeedTaskIds = new Set([
+  "task-architecture-map",
+  "task-trust-model",
+  "task-claim-schema",
+  "task-water-baseline",
+  "task-storage-baseline"
+]);
+const legacySeedProposalIds = new Set(["proposal-agent-security", "proposal-open-water-map"]);
 const providerEnvNames = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
@@ -105,9 +114,12 @@ async function loadStore() {
   await mkdir(dataDir, { recursive: true });
   try {
     const loaded = normalizeStore(JSON.parse(await readFile(storePath, "utf8")));
+    const pruned = removeLegacySeedExamples(loaded);
     if (!loaded.proposals.length) {
       const seed = JSON.parse(await readFile(seedPath, "utf8"));
       loaded.proposals = seed.proposals || [];
+      await saveStore(loaded);
+    } else if (pruned) {
       await saveStore(loaded);
     }
     return loaded;
@@ -134,7 +146,7 @@ async function loadStore() {
 
 function normalizeStore(input) {
   const goals = input.goals || [];
-  const tasks = input.tasks || [];
+  const tasks = normalizeTasks(input.tasks || []);
   const results = input.results || [];
   const reviews = input.reviews || [];
   return {
@@ -155,6 +167,30 @@ function normalizeStore(input) {
     oauthStates: input.oauthStates || [],
     events: input.events || []
   };
+}
+
+function normalizeTasks(tasks) {
+  return tasks.map((task) => ({
+    ...task,
+    sharedPublic: Boolean(task.sharedPublic),
+    sharedPublicAt: task.sharedPublicAt || null,
+    copyCount: Math.max(0, Number(task.copyCount || 0)),
+    lastCopiedAt: task.lastCopiedAt || null
+  }));
+}
+
+function removeLegacySeedExamples(target) {
+  const before = {
+    goals: target.goals.length,
+    tasks: target.tasks.length,
+    proposals: target.proposals.length
+  };
+  target.tasks = target.tasks.filter((task) => !legacySeedTaskIds.has(task.id));
+  target.goals = target.goals.filter((goal) => !legacySeedGoalIds.has(goal.id));
+  target.proposals = target.proposals.filter((proposal) => !legacySeedProposalIds.has(proposal.id));
+  return before.goals !== target.goals.length
+    || before.tasks !== target.tasks.length
+    || before.proposals !== target.proposals.length;
 }
 
 function normalizeTrustLedger(entries) {
@@ -327,9 +363,12 @@ async function loadPostgresStore() {
   const result = await postgresQuery("select payload from osa_app_state where id = $1", ["default"]);
   if (result.rows[0]?.payload) {
     const loaded = normalizeStore(result.rows[0].payload);
+    const pruned = removeLegacySeedExamples(loaded);
     if (!loaded.proposals.length) {
       const seed = JSON.parse(await readFile(seedPath, "utf8"));
       loaded.proposals = seed.proposals || [];
+      await savePostgresStore(loaded);
+    } else if (pruned) {
       await savePostgresStore(loaded);
     }
     return loaded;
@@ -2587,9 +2626,20 @@ function taskCollaborationContext(task) {
 }
 
 function agentGuiSessions() {
-  const taskSessions = store.tasks
-    .filter((task) => !["done", "rejected", "deleted"].includes(task.status) && !task.agentGuiDeletedAt)
-    .map(agentGuiTaskSession);
+  const taskSessions = [];
+  for (const task of store.tasks) {
+    if (["done", "rejected", "deleted"].includes(task.status) || task.agentGuiDeletedAt) continue;
+    const isDashboardHomeTask = task.agentGuiRoom === "home"
+      || task.source === "agent-gui-home"
+      || (task.agentGuiConnectorId && task.source === "agent-gui");
+    const isExplicitPublicTask = task.agentGuiRoom === "public" || task.source === "agent-gui-public";
+    if (isDashboardHomeTask) {
+      taskSessions.push(agentGuiTaskSession(task, "home"));
+    }
+    if (task.sharedPublic || isExplicitPublicTask) {
+      taskSessions.push(agentGuiTaskSession(task, "public"));
+    }
+  }
   return taskSessions
     .sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));
 }
@@ -2598,13 +2648,13 @@ function agentGuiSessionById(id) {
   return agentGuiSessions().find((session) => session.id === id) || null;
 }
 
-function agentGuiTaskSession(task) {
+function agentGuiTaskSession(task, roomOverride = null) {
   const goal = store.goals.find((item) => item.id === task.goalId);
   const agent = task.assignedAgentId ? findAgent(task.assignedAgentId) : null;
   const result = store.results.find((item) => item.taskId === task.id);
   const managed = task.agentGuiConnectorId ? managedConnectorStatus(task.agentGuiConnectorId) : null;
   const fallbackAgent = task.agentGuiAgent || "openclaw-codex";
-  const room = agentGuiTaskRoom(task);
+  const room = roomOverride || agentGuiTaskRoom(task);
   const lastAt = task.updatedAt || result?.createdAt || task.createdAt;
   return {
     id: `${room}-${task.id}`,
@@ -2628,14 +2678,49 @@ function agentGuiTaskSession(task) {
     agent_model: agent?.models?.join(", ") || task.agentGuiModel || "Waiting for network agent",
     agent_base_url: "",
     desk_tools: task.requiredCapabilities || [task.type || "task"],
-    team_id: room === "home" ? agentGuiHomeTeamId : agentGuiPublicTeamId
+    team_id: room === "home" ? agentGuiHomeTeamId : agentGuiPublicTeamId,
+    shared_public: Boolean(task.sharedPublic),
+    shared_public_at: task.sharedPublicAt || null,
+    copy_count: Math.max(0, Number(task.copyCount || 0)),
+    last_copied_at: task.lastCopiedAt || null
   };
 }
 
 function agentGuiTaskRoom(task) {
+  if (task.agentGuiRoom === "public" || task.source === "agent-gui-public") return "public";
   if (task.agentGuiRoom === "home" || task.source === "agent-gui-home") return "home";
   if (task.agentGuiConnectorId && task.source === "agent-gui") return "home";
   return "public";
+}
+
+function agentGuiSessionRoom(sessionId, task = null) {
+  if (sessionId.startsWith("home-")) return "home";
+  if (sessionId.startsWith("public-")) return "public";
+  return task ? agentGuiTaskRoom(task) : "public";
+}
+
+function agentGuiTopAgents(limit = 100) {
+  return store.tasks
+    .filter((task) => task.sharedPublic && !["deleted", "rejected"].includes(task.status))
+    .map((task) => {
+      const goal = store.goals.find((item) => item.id === task.goalId);
+      const agent = task.assignedAgentId ? findAgent(task.assignedAgentId) : null;
+      return {
+        id: `public-${task.id}`,
+        task_id: task.id,
+        title: task.title,
+        summary: task.description,
+        agent: agent?.name || task.agentGuiAgent || "OSA Agent",
+        model: agent?.models?.join(", ") || task.agentGuiModel || "OpenClaw local agent",
+        goal: goal?.title || "Home",
+        copy_count: Math.max(0, Number(task.copyCount || 0)),
+        shared_at: task.sharedPublicAt || task.createdAt,
+        last_copied_at: task.lastCopiedAt || null
+      };
+    })
+    .sort((a, b) => b.copy_count - a.copy_count || String(b.shared_at).localeCompare(String(a.shared_at)))
+    .slice(0, Math.max(1, Math.min(100, limit)))
+    .map((entry, index) => ({ ...entry, rank: index + 1 }));
 }
 
 function agentGuiAgents() {
@@ -2763,13 +2848,14 @@ function agentGuiTodos(sessionId) {
   const taskId = agentGuiTaskIdFromSessionId(sessionId);
   if (taskId) {
     const task = store.tasks.find((item) => item.id === taskId);
+    const room = agentGuiSessionRoom(sessionId, task);
     return {
       tasks: [
         { id: `${taskId}-claim`, title: "Claim task", status: task?.assignedAgentId ? "completed" : "pending" },
         { id: `${taskId}-work`, title: task?.title || "Execute task", status: task?.status === "leased" ? "in_progress" : task?.status === "open" ? "pending" : "completed" },
         { id: `${taskId}-review`, title: "Review and publish", status: ["in_consensus", "needs_review"].includes(task?.status) ? "in_progress" : task?.status === "done" ? "completed" : "pending" }
       ],
-      summary: agentGuiTaskRoom(task || {}) === "home" ? "Home agent work" : "Public OSA task"
+      summary: room === "home" ? "Home agent work" : "Public OSA task"
     };
   }
   return { tasks: [], summary: "No task selected" };
@@ -2780,7 +2866,7 @@ function agentGuiTaskFile(sessionId) {
   if (taskId) {
     const task = store.tasks.find((item) => item.id === taskId);
     const goal = task ? store.goals.find((item) => item.id === task.goalId) : null;
-    const room = task ? agentGuiTaskRoom(task) : "public";
+    const room = agentGuiSessionRoom(sessionId, task);
     return `# ${room === "home" ? "Home" : "Public"}\n\n## ${task?.title || "Task"}\n\nProject: ${goal?.title || "Unknown"}\n\n${task?.description || ""}\n`;
   }
   return "# OSA\n\nNo task selected.\n";
@@ -2865,7 +2951,7 @@ function resumeAgentGuiSession(req, sessionId, body = {}) {
     error.statusCode = 409;
     throw error;
   }
-  if (agentGuiTaskRoom(task) === "public") {
+  if (agentGuiSessionRoom(sessionId, task) === "public") {
     const error = new Error("Copy Public tasks into Home before connecting a local agent.");
     error.statusCode = 409;
     throw error;
@@ -2895,12 +2981,14 @@ async function copyAgentGuiSessionToHome(sessionId) {
     error.statusCode = 404;
     throw error;
   }
-  if (agentGuiTaskRoom(sourceTask) !== "public") {
+  if (agentGuiSessionRoom(sessionId, sourceTask) !== "public") {
     const error = new Error("Only Public tasks can be copied into Home.");
     error.statusCode = 409;
     throw error;
   }
 
+  sourceTask.copyCount = Math.max(0, Number(sourceTask.copyCount || 0)) + 1;
+  sourceTask.lastCopiedAt = now();
   const sourceGoal = store.goals.find((item) => item.id === sourceTask.goalId);
   const copiedAt = now();
   const goal = {
@@ -2939,7 +3027,8 @@ async function copyAgentGuiSessionToHome(sessionId) {
   event("agentgui_public_copied", `Copied Public task into Home`, {
     sourceTaskId: sourceTask.id,
     taskId: task.id,
-    goalId: goal.id
+    goalId: goal.id,
+    sourceCopyCount: sourceTask.copyCount
   });
   await saveStore();
   const session = agentGuiTaskSession(task);
@@ -2953,6 +3042,42 @@ async function copyAgentGuiSessionToHome(sessionId) {
   };
 }
 
+async function setAgentGuiSessionPublicShare(sessionId, shared) {
+  const taskId = agentGuiTaskIdFromSessionId(sessionId);
+  const task = store.tasks.find((item) => item.id === taskId);
+  if (!task) {
+    const error = new Error("OSA desk not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+  if (agentGuiSessionRoom(sessionId, task) !== "home") {
+    const error = new Error("Only Home agents can be shared or unshared.");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const nextShared = Boolean(shared);
+  const changed = Boolean(task.sharedPublic) !== nextShared;
+  task.sharedPublic = nextShared;
+  task.sharedPublicAt = nextShared ? (task.sharedPublicAt || now()) : null;
+  task.updatedAt = now();
+  if (changed) {
+    event(nextShared ? "agentgui_session_shared" : "agentgui_session_unshared", nextShared ? "Home agent shared to Public" : "Home agent removed from Public", {
+      taskId: task.id,
+      goalId: task.goalId,
+      copyCount: Math.max(0, Number(task.copyCount || 0))
+    });
+  }
+  await saveStore();
+  return {
+    ok: true,
+    shared_public: Boolean(task.sharedPublic),
+    copy_count: Math.max(0, Number(task.copyCount || 0)),
+    session: agentGuiTaskSession(task, "home"),
+    public_session: task.sharedPublic ? agentGuiTaskSession(task, "public") : null
+  };
+}
+
 async function deleteAgentGuiSession(sessionId) {
   const taskId = agentGuiTaskIdFromSessionId(sessionId);
   const task = store.tasks.find((item) => item.id === taskId);
@@ -2961,7 +3086,7 @@ async function deleteAgentGuiSession(sessionId) {
     error.statusCode = 404;
     throw error;
   }
-  if (agentGuiTaskRoom(task) === "public") {
+  if (agentGuiSessionRoom(sessionId, task) === "public") {
     const error = new Error("Public tasks are copy-only. Copy them into Home before changing them.");
     error.statusCode = 409;
     throw error;
@@ -3162,6 +3287,14 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
         return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to copy Public task into Home" });
       }
     }
+    if (method === "POST" && child === "share") {
+      try {
+        const body = await readJson(req);
+        return sendJson(res, 200, await setAgentGuiSessionPublicShare(sessionId, body.shared));
+      } catch (error) {
+        return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to update Public sharing" });
+      }
+    }
     if (method === "POST" && child === "resume") {
       try {
         return sendJson(res, 200, resumeAgentGuiSession(req, sessionId, await readJson(req)));
@@ -3257,6 +3390,10 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
   if (method === "GET" && path === "/api/search") {
     const q = String(url.searchParams.get("q") || "").toLowerCase();
     return sendJson(res, 200, agentGuiSessions().filter((session) => `${session.title} ${session.title_summary}`.toLowerCase().includes(q)));
+  }
+  if (method === "GET" && path === "/api/top-agents") {
+    const limit = Number(url.searchParams.get("limit") || 100);
+    return sendJson(res, 200, { agents: agentGuiTopAgents(limit), generated_at: now() });
   }
   if (method === "GET" && path === "/api/sessions/saved") return sendJson(res, 200, { dir: "", archives: [] });
 

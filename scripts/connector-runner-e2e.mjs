@@ -9,6 +9,7 @@ const baseUrl = `http://127.0.0.1:${port}`;
 const dataDir = await mkdtemp(join(tmpdir(), "osa-connector-e2e-data-"));
 const helperDir = await mkdtemp(join(tmpdir(), "osa-connector-e2e-helper-"));
 const fakeCodex = join(helperDir, "fake-codex.py");
+const testGoalId = "goal-connector-e2e";
 let server = null;
 
 try {
@@ -29,6 +30,47 @@ try {
       "print(json.dumps({'message': json.dumps(payload)}))",
       "",
     ].join("\n"),
+    "utf8",
+  );
+  await writeFile(
+    join(dataDir, "agentswarm.json"),
+    `${JSON.stringify({
+      goals: [
+        {
+          id: testGoalId,
+          title: "Connector runner E2E",
+          description: "Private test goal created by connector-runner-e2e without relying on startup examples.",
+          status: "active",
+          supporters: 0,
+          createdAt: new Date().toISOString()
+        }
+      ],
+      tasks: [
+        {
+          id: "task-connector-e2e",
+          goalId: testGoalId,
+          type: "research",
+          title: "Connector runner E2E task",
+          description: "Validate that a dashboard-managed connector can claim a task and submit a structured result.",
+          requiredCapabilities: ["research"],
+          priority: 90,
+          status: "open",
+          createdAt: new Date().toISOString()
+        }
+      ],
+      proposals: [],
+      agents: [],
+      results: [],
+      reviews: [],
+      claims: [],
+      users: [],
+      sessions: [],
+      connectorTokens: [],
+      uploadedArtifacts: [],
+      proposalVotes: [],
+      trustLedger: [],
+      events: []
+    }, null, 2)}\n`,
     "utf8",
   );
 
@@ -61,7 +103,7 @@ try {
     "/api/connectors/start",
     {
       mode: "worker",
-      goalId: "goal-agent-collab",
+      goalId: testGoalId,
       name: "Codex CLI Adapter E2E",
       capabilities: ["research", "review", "synthesis"],
       models: ["connector:codex"],

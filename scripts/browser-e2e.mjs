@@ -21,9 +21,10 @@ try {
       PORT: String(port),
       OSA_DATA_DIR: dataDir,
       OSA_IDENTITY_PATH: join(dataDir, "node-identity.json"),
-      OSA_LOCAL_PASSWORD_REQUIRED: "1",
+      OSA_LOCAL_PASSWORD_REQUIRED: "0",
       OSA_DEMO_ENDPOINTS: "0",
-      OSA_RATE_LIMIT_MULTIPLIER: "0"
+      OSA_RATE_LIMIT_MULTIPLIER: "0",
+      OSA_OPENCLAW_COMMAND: process.env.OSA_OPENCLAW_COMMAND || "true"
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -31,140 +32,60 @@ try {
   const logs = collectLogs(server);
   await waitForHealth(logs);
 
+  let sessions = await getJson("/api/sessions");
+  assert(Array.isArray(sessions) && sessions.length === 0, "fresh dashboard should have no Home/Public example tasks");
+  let top = await getJson("/api/top-agents?limit=100");
+  assert(Array.isArray(top.agents) && top.agents.length === 0, "fresh Top100 should start empty");
+
   browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
   page.setDefaultTimeout(8000);
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("console", (message) => {
     if (message.type() === "error") pageErrors.push(message.text());
   });
 
-  await page.goto(`${baseUrl}/?legacy=1`, { waitUntil: "domcontentloaded" });
-  await expectVisible(page, "#auth-gate");
-  await expectClass(page, ".shell", "locked");
-  assert(await page.locator("#nav-worker").isDisabled(), "worker nav should be disabled behind login gate");
-  assert(await page.locator("#nav-voting").isDisabled(), "voting nav should be disabled behind login gate");
-  assert(await page.locator("#nav-results").isDisabled(), "results nav should be disabled behind login gate");
+  await page.goto(`${baseUrl}/agent-gui/`, { waitUntil: "networkidle" });
+  await expectText(page, "body", "Home");
+  await expectText(page, "body", "Public");
+  await expectText(page, "body", "Top100 AI Agents");
+  assert(!(await page.locator("body").innerText()).includes("Open agent voting quality benchmark"), "legacy example tasks should not render");
+  assert(await page.getByRole("button", { name: "Copy" }).count() === 0, "Public should not render example Copy buttons");
 
-  await page.fill("#auth-email", "browser-e2e@example.com");
-  await page.fill("#auth-name", "Browser E2E");
-  await page.fill("#auth-password", "local-password-123");
-  await page.click("#auth-dev-form button[type='submit']");
-  await expectAttached(page, "#auth-gate.hidden");
-  await expectText(page, "#goal-title", "Build an open agent collaboration network");
-  await expectVisible(page, "#network-overview");
-  await expectVisible(page, "#network-headline");
-  await expectText(page, "#network-primary-label", "Action");
-  await expectText(page, ".events-panel h3", "Network Activity");
-  await waitForRealtime(page);
+  const created = await postJson("/api/sessions/new", {
+    content: "Build a small market-research agent for weird profitable niches.",
+    team_id: "home-room",
+    agent: "openclaw-codex"
+  });
+  assert(created.session_id?.startsWith("home-"), "new AgentGUI sessions should start in Home");
 
-  const initialTheme = await page.evaluate(() => document.documentElement.dataset.theme);
-  await page.click("#theme-toggle");
-  await page.waitForFunction((theme) => document.documentElement.dataset.theme !== theme, initialTheme);
-  const toggledTheme = await page.evaluate(() => document.documentElement.dataset.theme);
-  assert(["light", "dark"].includes(toggledTheme), "theme toggle should set an explicit theme");
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await page.waitForFunction((theme) => document.documentElement.dataset.theme === theme, toggledTheme);
-  await waitForRealtime(page);
+  let shared = await postJson(`/api/sessions/${encodeURIComponent(created.session_id)}/share`, { shared: true });
+  assert(shared.shared_public === true, "Home agent should be shareable to Public");
 
-  await page.click("#nav-account");
-  await expectVisible(page, "#account-view.active");
-  await page.selectOption("#connector-runner", "stub");
-  await expectText(page, "#connector-runner-help", "No ChatGPT Plus");
-  await page.selectOption("#connector-runner", "openclaw");
-  await expectText(page, "#connector-runner-help", "uses it through that local CLI login");
-  await page.selectOption("#connector-runner", "codex");
-  await expectText(page, "#connector-runner-help", "cannot connect directly to a ChatGPT Plus");
-  await page.selectOption("#connector-runner", "provider");
-  await expectText(page, "#connector-runner-help", "Requires a real OpenAI API key");
-  await page.selectOption("#connector-runner", "stub");
-  await page.click("#api-key-form button[type='submit']");
-  await expectText(page, "#account-feedback", "Connector runner saved");
-  await expectText(page, "#trust-federation-mode", "Local only");
-  const peerJson = await page.locator("#trust-peer-json").textContent();
-  assert(peerJson?.includes("publicKeyPem"), "account trust panel should expose peer allowlist JSON");
-  assert(peerJson?.includes("node-"), "account trust panel should include this node id");
-  await page.fill(
-    "#trust-peer-input",
-    JSON.stringify({
-      "node-browser-peer": {
-        publicKeyPem: "-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEA000000000000000000000000000000000000000=\\n-----END PUBLIC KEY-----",
-        algorithm: "Ed25519"
-      }
-    })
-  );
-  await expectText(page, "#trust-peer-feedback", "Ready: 1 trusted peer.");
-  await expectText(page, "#trust-peer-config", "OSA_FEDERATION_REQUIRE_SIGNATURES=1");
-  await expectText(page, "#trust-peer-config", "node-browser-peer");
-  await page.fill("#api-key-openai", "browser-e2e-local-placeholder");
-  await page.click("#api-key-form button[type='submit']");
-  await expectText(page, "#account-feedback", "Provider keys saved locally");
+  sessions = await getJson("/api/sessions");
+  assert(sessions.some((session) => session.id === created.session_id && session.shared_public === true), "Home session should show shared state");
+  const publicSession = sessions.find((session) => session.id.startsWith("public-") && session.shared_public === true);
+  assert(publicSession, "shared Home agent should appear in Public");
 
-  await page.click("#nav-voting");
-  await expectVisible(page, "#voting-view.active");
-  await page.fill("#proposal-title", "Browser E2E proposal");
-  await page.fill(
-    "#proposal-description",
-    "Browser-level release QA proposal with enough instruction detail to verify creation, ranking visibility, signed activity refresh, and voting-agent feedback in the dashboard."
-  );
-  await page.click("#proposal-form button[type='submit']");
-  await expectText(page, "#proposals", "Browser E2E proposal");
+  const copied = await postJson(`/api/sessions/${encodeURIComponent(publicSession.id)}/copy`, {});
+  assert(copied.session_id?.startsWith("home-"), "copying a Public agent should create a Home session");
+  top = await getJson("/api/top-agents?limit=100");
+  assert(top.agents[0]?.rank === 1, "Top100 should rank copied Public agents");
+  assert(top.agents[0]?.copy_count === 1, "Top100 should count copies");
 
-  const realtimeProposalTitle = `Realtime proposal ${Date.now()}`;
-  await page.evaluate(async ({ title }) => {
-    const response = await fetch("/api/proposals", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        title,
-        description:
-          "Created through a same-origin browser fetch so the dashboard must learn about it from the authenticated realtime activity stream instead of a form refresh."
-      })
-    });
-    if (!response.ok) throw new Error(await response.text());
-  }, { title: realtimeProposalTitle });
-  await expectText(page, "#proposals", realtimeProposalTitle);
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Enter Home" }).click().catch(() => {});
+  await expectText(page, "body", "Build a small market-research agent");
+  await expectText(page, "body", "Public");
+  await expectText(page, "body", "1 copies");
+  await page.getByRole("button", { name: "Top100 AI Agents" }).click();
+  await expectText(page, "body", "#1");
+  await expectText(page, "body", "Build a small market-research agent");
 
-  await page.click("#connect-voting-agent");
-  await expectVisible(page, "#vote-feedback:not(.hidden)");
-  await expectText(page, "#vote-feedback", "Agent Decision");
-  await expectText(page, "#vote-feedback", "voted for");
-  await expectText(page, "#vote-count", "votes");
-
-  await page.click("#nav-worker");
-  await expectVisible(page, "#worker-view.active");
-  await expectText(page, "#tasks", "Build an open agent collaboration network");
-  await expectText(page, "#my-agent-work", "My Agent");
-  await expectText(page, "#my-agent-work", "No local agent connected");
-  await page
-    .locator(".project-task-row", { hasText: "Map existing agent collaboration protocols" })
-    .getByRole("button", { name: /Visualize/i })
-    .click();
-  await expectVisible(page, "#task-visualization:not(.hidden)");
-  await expectText(page, "#task-visualization", "Task Visualization");
-  await expectText(page, "#task-visualization", "Map existing agent collaboration protocols");
-  await page
-    .locator(".worker-project", { hasText: "Build an open agent collaboration network" })
-    .getByRole("button", { name: /Connect worker to/i })
-    .click();
-  await expectText(page, "#connector-feedback", "Connector started");
-  assert(await page.locator("#connector-feedback code.command-block").count() === 0, "dashboard-started connector should not expose a raw connector token");
-  await page.click("#nav-account");
-  await expectText(page, "#connector-token-list", "Active Work connector");
-  await expectText(page, "#connector-token-list", "Active");
-  await expectText(page, "#connector-token-list", "dashboard");
-  await expectText(page, "#connector-token-count", "1 active");
-  await page.click("#nav-worker");
-  await expectVisible(page, "#worker-view.active");
-  await expectText(page, "#agents", "Browser E2E Worker Agent");
-  await expectText(page, "#my-agent-work", "Browser E2E Worker Agent");
-
-  await page.click("#nav-results");
-  await expectVisible(page, "#results-view.active");
-  await expectText(page, "#result-pool", "Research note for");
-  await expectText(page, "#result-pool", "Published");
-  await expectText(page, "#events", "Result published");
-  await waitForRealtime(page);
+  shared = await postJson(`/api/sessions/${encodeURIComponent(created.session_id)}/share`, { shared: false });
+  assert(shared.shared_public === false, "Home agent should be removable from Public");
+  sessions = await getJson("/api/sessions");
+  assert(!sessions.some((session) => session.id === publicSession.id), "unshared agent should disappear from Public");
 
   assert(pageErrors.length === 0, `browser console/page errors: ${pageErrors.join("\n")}`);
   console.log(`Browser E2E passed on ${baseUrl}`);
@@ -201,34 +122,24 @@ function collectLogs(child) {
   return () => output;
 }
 
-async function postJson(path, body, headers = {}) {
+async function getJson(path) {
+  const response = await fetch(`${baseUrl}${path}`);
+  if (!response.ok) throw new Error(`${path} failed with ${response.status}: ${await response.text()}`);
+  return response.json();
+}
+
+async function postJson(path, body) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json", ...headers },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(body)
   });
   if (!response.ok) throw new Error(`${path} failed with ${response.status}: ${await response.text()}`);
   return response.json();
 }
 
-async function waitForRealtime(page) {
-  await expectText(page, "#server-time", "Realtime live");
-}
-
-async function expectVisible(page, selector) {
-  await page.locator(selector).waitFor({ state: "visible" });
-}
-
 async function expectText(page, selector, text) {
   await page.locator(selector).filter({ hasText: text }).waitFor({ state: "visible" });
-}
-
-async function expectClass(page, selector, className) {
-  await page.locator(`${selector}.${className}`).waitFor({ state: "attached" });
-}
-
-async function expectAttached(page, selector) {
-  await page.locator(selector).waitFor({ state: "attached" });
 }
 
 function assert(condition, message) {

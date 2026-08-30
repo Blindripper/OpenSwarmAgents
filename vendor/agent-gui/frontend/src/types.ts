@@ -30,6 +30,25 @@ export interface Session {
   /** Team this desk belongs to.
    *  Lets the office reconstruct teams created outside the browser (API/script). */
   team_id?: string | null;
+  /** OSA: whether this Home desk is visible in Public. */
+  shared_public?: boolean;
+  shared_public_at?: string | null;
+  copy_count?: number;
+  last_copied_at?: string | null;
+}
+
+export interface TopAgent {
+  id: string;
+  task_id: string;
+  rank: number;
+  title: string;
+  summary: string;
+  agent: string;
+  model: string;
+  goal: string;
+  copy_count: number;
+  shared_at: string;
+  last_copied_at?: string | null;
 }
 
 export interface ToolsetMeta {

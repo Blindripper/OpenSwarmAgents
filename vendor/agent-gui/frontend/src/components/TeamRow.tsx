@@ -525,6 +525,7 @@ export interface TeamRowProps {
   readOnly?: boolean;
   canAddDesk?: boolean;
   onCopyDesk?: (sessionId: string) => void;
+  onPublicShareChange?: (sessionId: string, shared: boolean) => void;
   onAddDesk: () => void;
   onSessionInterrupt?: (id: string) => void;
   onPendingMsgChange?: (id: string, msg: string) => void;
@@ -559,7 +560,7 @@ export function TeamRow({
   onAvatarClick,
   onAskManagerDone, onPreview, onDeskStart, onDeskClose,
   deskPanelZ, onDeskPanelActivate,
-  readOnly = false, canAddDesk = true, onCopyDesk, onAddDesk, onSessionInterrupt, onPendingMsgChange, onPendingAssignmentPatch, onDeskAskManager, onAgentDragStart,
+  readOnly = false, canAddDesk = true, onCopyDesk, onPublicShareChange, onAddDesk, onSessionInterrupt, onPendingMsgChange, onPendingAssignmentPatch, onDeskAskManager, onAgentDragStart,
   searchMatchIds,
   toolsets, reasoningValue, reasoningOptions,
   onDeskConfigProfileChange, onDeskConfigModelChange, onDeskConfigToolsChange, onDeskConfigReasoningChange,
@@ -1343,6 +1344,7 @@ export function TeamRow({
                     readOnly={readOnly}
                     copyLabel="Copy"
                     onCopy={onCopyDesk ? () => onCopyDesk(session!.id) : undefined}
+                    onPublicShareChange={!readOnly && onPublicShareChange ? (shared) => onPublicShareChange(session!.id, shared) : undefined}
                     onAutoExpanded={onJustStartedConsumed}
                     onActivity={() => handleDeskActivityRef.current(i)}
                     onInterrupt={readOnly ? undefined : onSessionInterrupt}
