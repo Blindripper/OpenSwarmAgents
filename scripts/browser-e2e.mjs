@@ -43,7 +43,7 @@ try {
   await waitForHealth(logs);
 
   let sessions = await getJson("/api/sessions");
-  assert(Array.isArray(sessions) && sessions.length === 0, "fresh dashboard should have no Home/Public example tasks");
+  assert(Array.isArray(sessions) && sessions.length === 0, "fresh dashboard should have no Home/Latest example tasks");
   let top = await getJson("/api/top-projects?limit=100");
   assert(Array.isArray(top.agents) && top.agents.length === 0, "fresh Top100 should start empty");
   let config = await getJson("/api/gui-config");
@@ -59,6 +59,7 @@ try {
   assert(config.agents.some((agent) => agent.id === "profit-scout"), "custom profile should appear in Agent Profiles");
   await deleteJson("/api/agents/profit-scout");
   config = await getJson("/api/gui-config");
+  assert(config.rooms.map((room) => room.name).join(",") === "Home,Latest Projects", "dashboard should expose only Home and Latest Projects from start");
   assert(!config.agents.some((agent) => agent.id === "profit-scout"), "custom profile should be deletable");
 
   browser = await chromium.launch({ headless: true });
@@ -69,18 +70,39 @@ try {
     if (message.type() === "error") pageErrors.push(message.text());
   });
   await page.addInitScript(() => {
+    window.ethereum = {
+      request: async ({ method }) => {
+        if (method === "eth_requestAccounts") return ["0x0000000000000000000000000000000000000abc"];
+        if (method === "eth_chainId") return "0x1";
+        return null;
+      }
+    };
     localStorage.setItem("osa-openclaw-onboarding-dismissed", "1");
+    localStorage.setItem("osa-workbench-v2", JSON.stringify({
+      version: 2,
+      teams: [
+        { id: "home-room", color: "blue", name: "Home", items: [] },
+        { id: "public-room", color: "purple", name: "Public", items: [] },
+        { id: "public-rooms-room", color: "orange", name: "Public Rooms", items: [] },
+        { id: "public-projects-room", color: "orange", name: "Latest Projects", items: [] }
+      ]
+    }));
   });
 
   await page.goto(`${baseUrl}/agent-gui/`, { waitUntil: "networkidle" });
+  await expectText(page, "body", "Connect Wallet");
+  await expectText(page, "body", "$OSA wallet identity required");
+  await page.getByRole("button", { name: "Connect Wallet" }).click();
   await expectText(page, "body", "Home");
   await expectText(page, "body", "Latest Projects");
   await expectText(page, "body", "Top100 Projects");
-  assert(!(await page.locator("body").innerText()).includes("Top100 AI Agents"), "agent charts should not render");
-  assert(!(await page.locator("body").innerText()).includes("Top100 Rooms"), "room charts should not render");
+  let bodyText = await page.locator("body").innerText();
+  assert(!bodyText.includes("Top100 AI Agents"), "agent charts should not render");
+  assert(!bodyText.includes("Top100 Rooms"), "room charts should not render");
+  assert(!bodyText.includes("Public Rooms"), "legacy Public Rooms should not render");
   assert(!(await page.locator("body").innerText()).includes("Open agent voting quality benchmark"), "legacy example tasks should not render");
   assert(await page.getByRole("button", { name: "Copy" }).count() === 0, "Public should not render example Copy buttons");
-  assert(await page.locator('button[title="Delete this room"]').count() === 0, "Home/Public should not be removable");
+  assert(await page.locator('button[title="Delete this room"]').count() === 0, "Home/Latest Projects should not be removable");
   await page.getByRole("button", { name: "+ Room" }).click();
   await expectText(page, "body", "Room 1");
   assert(await page.locator('button[title="Delete this room"]').count() === 1, "custom rooms should expose a remove control");
@@ -138,6 +160,8 @@ try {
   assert(topProjects.agents[0]?.donation_total_usdc === 0, "Top100 Projects should expose donation totals");
   await postJson("/api/donations", {
     session_id: projectShare.project.id,
+    target_type: "project",
+    target_id: "project-local",
     amount: 1,
     wallet_address: walletAddress,
     chain_id: "0x1"

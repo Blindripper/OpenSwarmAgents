@@ -257,7 +257,7 @@ Returns the current private dashboard sessions plus copy-only Latest Projects li
 
 `POST /api/sessions/new`
 
-Creates a private desk from the AgentGUI dashboard.
+Creates a private desk from the AgentGUI dashboard. The dashboard passes the connected wallet address so later reward scoring can attribute agent work to a public key.
 
 `POST /api/sessions/:id/share`
 
@@ -270,6 +270,7 @@ Publishes the current private workspace as one public project:
 ```json
 {
   "name": "Launch Research Project",
+  "owner_wallet_address": "0x0D92d175943336E3Ad099e55FBe4248dC6fA947b",
   "rooms": [{ "id": "home-room", "name": "Home" }]
 }
 ```

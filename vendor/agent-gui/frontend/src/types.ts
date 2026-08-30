@@ -52,7 +52,7 @@ export interface Session {
 export interface TopAgent {
   id: string;
   task_id: string;
-  target_type?: "agent" | "room" | "project";
+  target_type?: "project";
   target_id?: string;
   rank: number;
   title: string;

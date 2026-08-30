@@ -5,17 +5,17 @@
 </p>
 
 <p align="center">
-  <strong>OSA is a local AI think tank where people build, share, copy, rank, review, and fund useful agent projects.</strong>
+  <strong>OSA is an experimental blockchain-powered network for wallet-owned AI agent projects.</strong>
 </p>
 
 <p align="center">
-  Build privately in Home, organize work into rooms, publish the whole thing with Share Project, then watch the public project market move in real time.
+  Build privately, connect a wallet, let agents work, share complete projects, copy what is useful, review what works, donate USDC, and prepare for future $OSA participation rewards.
 </p>
 
 <p align="center">
   <img alt="Node.js" src="https://img.shields.io/badge/Node.js-22%2B-339933" />
-  <img alt="Local First" src="https://img.shields.io/badge/local--first-yes-0f766e" />
-  <img alt="Wallet Ready" src="https://img.shields.io/badge/wallet--ready-USDC-22d3ee" />
+  <img alt="Wallet Required" src="https://img.shields.io/badge/wallet-required-22d3ee" />
+  <img alt="$OSA Experimental" src="https://img.shields.io/badge/%24OSA-experimental-facc15" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
 </p>
 
@@ -23,30 +23,47 @@
   <img src="docs/assets/osa-dashboard-preview.png" alt="OpenSwarmAgents dashboard preview" width="920" />
 </p>
 
-## What OSA Does
+## Important Warning
 
-OpenSwarmAgents, short **OSA**, gives every user a private agent workspace and a public project marketplace.
+OSA is experimental software. `$OSA` is currently an unlisted, worthless project token concept. There is no guarantee that `$OSA` will ever have monetary value, liquidity, exchange support, or production utility.
 
-- **Home** is your private starting room.
-- **+ Room** creates extra private rooms for separate ideas, teams, or experiments.
-- **Share Project** publishes the full project: Home, all custom rooms, and all agents inside them.
+Nothing in this repository is financial advice, an investment offer, or a promise of profit. Treat OSA as an experimental agent-network and tokenomics prototype until the smart contracts, reward scoring, audits, and production settlement are complete.
+
+## What OSA Is
+
+OpenSwarmAgents, short **OSA**, is a local dashboard for building and publishing complete AI agent projects.
+
+- **Home** is your private workspace.
+- **+ Room** creates extra private rooms inside the same project.
+- **Share Project** publishes the complete project: Home, custom rooms, and all agents inside them.
 - **Latest Projects** shows the newest shared projects entering the public network.
-- **Top100 Projects** ranks shared projects by copy count.
-- **Copy** imports a shared project into your own private workspace.
-- **Donate** lets people pledge USDC to project builders.
-- **Reviews** let wallet-connected users rate public projects with stars and short feedback.
+- **Top100 Projects** ranks public projects by copy count.
+- **Copy** imports a public project into your own private workspace.
+- **Donate** records a USDC donation intent for a public project.
+- **Review** lets wallet-connected users rate public projects with stars and feedback.
+- **Wallet login is mandatory** because wallet public keys anchor project ownership, reviews, donations, and future `$OSA` work rewards.
 
-The core idea is brutally simple: useful projects get copied. Copied projects climb. Projects that make people happy can earn donations. The scoreboard is the product truth serum.
+OSA no longer splits the public marketplace into separate Agents, Rooms, and Projects. A project is the product unit. That keeps the network understandable: users copy a complete working setup, not a loose card with missing context.
+
+## Demo
+
+<p align="center">
+  <video src="docs/assets/osa-demo.webm" controls width="920"></video>
+</p>
 
 ## Screenshots
 
-| Dashboard | Latest Projects |
+| Wallet Login | Home And Latest Projects |
 | --- | --- |
-| ![OSA dashboard](docs/assets/osa-dashboard-preview.png) | ![OSA latest projects](docs/assets/osa-public.png) |
+| ![OSA wallet login](docs/assets/osa-wallet-login.png) | ![OSA dashboard](docs/assets/osa-dashboard-preview.png) |
 
-| Top100 Projects | Project Reviews |
+| Latest Projects | Top100 Projects |
 | --- | --- |
-| ![OSA Top100 Projects](docs/assets/osa-top100-projects.png) | ![OSA project reviews](docs/assets/osa-top100.png) |
+| ![OSA latest projects](docs/assets/osa-latest-projects.png) | ![OSA Top100 Projects](docs/assets/osa-top100-projects.png) |
+
+| Project Donation And Review |
+| --- |
+| ![OSA project donation and review](docs/assets/osa-project-review.png) |
 
 ## Install Step By Step
 
@@ -56,6 +73,7 @@ You need:
 - Node.js 22 or newer
 - npm
 - Python 3
+- an EVM wallet browser extension such as MetaMask
 
 Install OSA:
 
@@ -76,17 +94,7 @@ Open the dashboard:
 http://127.0.0.1:8789
 ```
 
-Home and Latest Projects start clean. No fake demo tasks, no staged productivity theater.
-
-## Fast Install
-
-Install and start in one command:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Blindripper/OpenSwarmAgents/main/scripts/install-node.sh | bash -s -- --run
-```
-
-Stop the server with `Ctrl+C`.
+Connect your wallet. OSA will not open the dashboard without a wallet identity.
 
 ## Run From Source
 
@@ -110,94 +118,97 @@ If port `8789` is busy:
 PORT=8790 npm run dev
 ```
 
-Then open:
+## How To Use OSA
 
-```text
-http://127.0.0.1:8790
-```
-
-## How To Use It
-
-1. Open **Home / Latest**.
-2. Type a task into a desk in **Home**.
-3. Choose an Agent Profile or keep the default OpenClaw agent.
+1. Open OSA and connect an EVM wallet.
+2. In **Home**, type what your agent should work on.
+3. Pick an Agent Profile or keep the default OpenClaw agent.
 4. Start the agent.
-5. Create extra private rooms with **+ Room** when a project needs structure.
-6. Delete custom rooms when they are no longer useful.
-7. Click **Share Project** when the whole setup is worth publishing.
-8. Watch new public projects appear in **Latest Projects**.
-9. Open **Top100 Projects** to see what the network is copying, funding, and reviewing.
+5. Add private rooms with **+ Room** when the project needs structure.
+6. Click **Share Project** when the whole setup is worth publishing.
+7. Watch new entries appear in **Latest Projects**.
+8. Open **Top100 Projects** to see which public projects are being copied.
+9. Copy, donate, and review public projects from your wallet identity.
 
-## Home, Rooms, And Projects
+## Project Sharing
 
-**Home** is your default private room. It is where new agents start.
+OSA shares only complete projects.
 
-Rooms are private work areas inside your project. Use them to separate research, implementation, marketing, trading, content, support, or any other workflow.
+A project includes:
 
-A project is the complete private workspace: Home plus every custom room and every agent inside those rooms.
+- Home
+- every custom private room
+- all agents inside those rooms
+- project metadata
+- copy and donation counters
+- review stats
+- wallet owner identity when available
 
-OSA shares only at the project level. That keeps the product understandable. A copied project arrives with context instead of as one lonely agent card floating around without a plan.
+When you click **Share Project**, OSA publishes one copy-only public listing. The public listing does not let other users control your local machine. It works like a network template.
 
 ## Latest Projects
 
 **Latest Projects** is the live public feed. It shows the newest shared projects first.
 
-When a new project enters the network, OSA refreshes the feed immediately and shows a small live notice. If bell sounds are enabled, the dashboard can ring the selected OSA bell sound. Subtle enough for humans, loud enough for "wait, something joined the network."
+When a project enters the network, OSA refreshes the feed immediately and shows a small notice. If bell sounds are enabled, the selected OSA bell can play. Tiny celebration, practical signal.
 
-Peer syncs also refresh the feed. A federated OSA node can import public projects, project reviews, copy counts, donation totals, and recent network events from trusted peers.
-
-## Topbar
-
-The topbar is designed for useful network awareness:
-
-- **Network Live** shows that your browser is connected to the live OSA event stream.
-- **Projects** shows how many public projects are visible.
-- **Online** shows agents currently running on this node.
-- **Copies** shows total project copies visible in this dashboard.
-- **Donations** shows total USDC donation intents visible in this dashboard.
-- **Wallet** shows whether this browser has a connected wallet identity.
+Federated nodes can import public project listings, copy counts, reviews, donation totals, and recent public network events from trusted peers.
 
 ## Top100 Projects
 
-**Top100 Projects** ranks public projects by copy count. Rank `#1` means that project has been copied more than the others in this network view.
+**Top100 Projects** ranks public projects by copy count.
 
-Tie-breaker: if copy counts are equal, newer public shares appear above older ones.
+Each row shows:
 
-Rankings update automatically when someone shares, copies, donates, reviews, or imports public project data from a peer node. No reload needed. The chart should feel alive because the network is alive.
-
-Each Top100 row shows:
-
-- rank
+- current rank
 - project name
-- room/agent count
-- copy count
-- total USDC earned
-- average star rating and review count
+- number of copied agents/rooms inside the project
+- public copy count
+- total USDC donation intents earned
+- average project rating
+- review count
 - **Copy**
 - **Donate**
 - **Review**
 
+Rankings update live when projects are shared, copied, donated to, reviewed, or imported from a peer node.
+
 ## Copy Mechanics
 
-Copying a project does not take ownership of someone else's running agents. It creates your own private copy.
+Copying a project creates your own private copy.
 
-When you click **Copy**, OSA shows a short confirmation popup. After confirmation, OSA imports the shared project into your private workspace with its rooms and copied agents. The public original stays untouched.
+Before import, OSA shows a confirmation popup. After confirmation, the copied project appears in your private workspace with its rooms and agents. The public original stays untouched.
 
-That matters: public projects are templates and inspiration, not remote-control handles into someone else's machine.
+This keeps the network safe and sane: copying means "give me my own version", not "remote-control someone else's agents."
 
-## Wallet Login And Donations
+## Wallet Login
 
-Donations need a wallet identity. OSA currently supports EVM wallet connection in the dashboard.
+Wallet login is mandatory.
 
-Donate opens a USDC modal with:
+OSA uses the connected EVM public key for:
+
+- project owner identity
+- copy provenance
+- donation identity
+- project reviews
+- future `$OSA` work rewards
+- decentralized reputation and anti-spam signals
+
+The current dashboard login asks the wallet for an account address and chain id. It does not request a private key and does not send a transaction.
+
+Production deployments should add signed nonce login before treating wallet identity as strong authentication.
+
+## Donations
+
+Public projects can receive USDC donation intents.
+
+The dashboard offers:
 
 - `1 USDC`
 - `5 USDC`
-- custom amount
+- custom USDC amount
 
-The current donation flow records a USDC donation intent in OSA. Production deployments should connect that intent to a real USDC transaction and verify the transaction hash before treating a donation as settled.
-
-OSA keeps **5%** of donations for development and operating costs. Think of it as the tiny infrastructure coffee tax: not glamorous, but servers, builds, and late-night debugging do not pay themselves.
+OSA keeps **5%** of donations for development and operating costs. Think of it as the infrastructure snack budget: tiny compared with the builder's 95%, but still what keeps servers, audits, and late-night fixes from being funded by vibes.
 
 Fee wallet:
 
@@ -205,25 +216,67 @@ Fee wallet:
 0x0D92d175943336E3Ad099e55FBe4248dC6fA947b
 ```
 
-The remaining 95% belongs to the project builder once real settlement is wired in.
+The current implementation records donation intents. Before production settlement, OSA must wire in real USDC transfers and transaction-hash verification.
 
-Wallet pubkeys are also useful beyond donations. They can anchor decentralized owner identity, project reputation, copy history, active agent presence, and later stronger trust signals with signed nonces.
+## $OSA Tokenomics
+
+Planned fixed supply:
+
+```text
+10,000,000,000 OSA
+```
+
+Planned participation rewards:
+
+```text
+5,000,000,000 OSA over 3 years
+```
+
+The reward idea is simple: connected accounts should earn `$OSA` when they let useful agents work in the network.
+
+The reward pool should not pay for idle fake agents. A production scoring system should consider active agent work, accepted results, project usefulness, copy activity, reviews, peer validation, uptime with real work, and anti-spam caps.
+
+See [docs/TOKENOMICS.md](docs/TOKENOMICS.md) for the current allocation and reward-distribution draft.
+
+## Smart Contracts
+
+The repository includes a draft Solidity implementation:
+
+- [contracts/OSAToken.sol](contracts/OSAToken.sol)
+
+It contains:
+
+- `OSAToken`: fixed-supply ERC-20 token.
+- `OSAWorkRewardsDistributor`: Merkle-based reward distributor capped by a three-year linear unlock.
+
+This is a draft. Do not deploy it as production financial infrastructure before tests, deployment planning, multisig setup, timelocks/vesting, and an independent audit.
+
+Recommended next steps before deployment:
+
+- choose chain
+- choose deployment tooling
+- use a multisig for treasury and contract ownership
+- define vesting/timelocks for non-reward allocations
+- write Solidity tests and invariant tests
+- build reward epoch generation and Merkle proof tooling
+- run an independent security audit
+- verify contracts on the chain explorer
 
 ## Project Reviews
 
-Wallet-connected users can review public projects:
+Wallet-connected users can review public projects with:
 
 - 1 to 5 stars
 - short headline
-- written feedback
+- feedback text
 
-The Top100 Projects chart shows average stars and review count. A wallet can update its own review for the same project, which keeps feedback useful and reduces drive-by noise. This is not full Sybil resistance yet, but it is the right base layer for reputation.
+One wallet can update its own review for a project. This keeps feedback useful and gives OSA a base layer for reputation.
 
 ## Agent Profiles
 
-Agent Profiles are reusable worker presets.
+Agent Profiles are reusable worker presets. They define names, behavior, model defaults, and tool defaults for agents you run in Home.
 
-Use them when you want agents with different names, behaviors, models, or defaults. You can add and delete custom profiles from the dashboard. Built-in OpenClaw/Codex prototypes stay available as templates.
+You can create and delete custom profiles from the dashboard. Built-in OpenClaw/Codex profiles stay available as templates.
 
 ## Local Data
 
@@ -234,18 +287,9 @@ OSA keeps runtime data local by default:
 - node identity in `data/node-identity.json`
 - browser layout and UI preferences in localStorage
 
-These files are intentionally not committed:
-
-- `.env`
-- `node_modules/`
-- `data/*.json` except `data/seed.json`
-- `data/uploads`
-- logs
-- Python caches
+Private keys are not part of OSA data and should never be committed.
 
 ## Docker
-
-Local Compose:
 
 ```bash
 docker compose up --build
@@ -284,18 +328,30 @@ If local agents cannot start, make sure OpenClaw is available on the host:
 openclaw --version
 ```
 
-## Current Production Notes
+If wallet login does not appear, open OSA in a browser with an EVM wallet extension.
 
-OSA already has live dashboard events, project sharing, project copying, rankings, wallet identity, donation intents, and project reviews.
+## Security Notes
 
-Before treating donations as real settlement in production, wire in:
+Security matters because OSA now touches wallets, donations, rewards, and public network data.
 
-- wallet signature nonce login
-- USDC transfer flow
-- transaction hash verification
-- chain and token contract validation
+Current safety posture:
 
-That is the difference between "nice dashboard intent" and "money actually moved."
+- dashboard wallet login is required
+- donation flow is intent-only until on-chain settlement is added
+- `$OSA` contract is draft-only
+- reward distribution is designed around capped Merkle claims
+- public projects are copy-only templates, not remote execution handles
+- local runtime data stays local by default
+
+Before production money moves, add:
+
+- signed nonce wallet login
+- USDC transfer execution and verification
+- chain and contract allowlists
+- reward scoring audit trail
+- smart contract tests and independent audit
+- multisig ownership
+- incident response plan
 
 ## License
 

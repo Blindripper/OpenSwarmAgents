@@ -16,8 +16,6 @@ interface Props {
   sessionCount: number;
   activeCount: number;
   networkStats?: {
-    publicAgents: number;
-    publicRooms: number;
     publicProjects: number;
     copies: number;
     donationsUsdc: number;
@@ -121,8 +119,6 @@ export function Header({
     deskConfig && !reasoningDisabled && reasoningOptions.length > 0,
   );
   const stats = networkStats ?? {
-    publicAgents: 0,
-    publicRooms: 0,
     publicProjects: 0,
     copies: 0,
     donationsUsdc: 0,
@@ -152,14 +148,14 @@ export function Header({
               onError={() => setLogoOk(false)} />
             <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.05 }}>
               <span style={{ fontSize: 16, fontWeight: 800, color: "var(--text)", letterSpacing: 0 }}>OSA</span>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent2)", letterSpacing: 0 }}>AI Think Tank</span>
+              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent2)", letterSpacing: 0 }}>Agent Chain</span>
             </div>
           </div>
         : <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <span style={{ fontSize: 20, fontWeight: 900, color: "var(--accent2)" }}>O</span>
             <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.05 }}>
               <span style={{ fontSize: 15, fontWeight: 800 }}>OSA</span>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent2)", letterSpacing: 0 }}>AI Think Tank</span>
+              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent2)", letterSpacing: 0 }}>Agent Chain</span>
             </div>
           </div>}
 
@@ -187,15 +183,16 @@ export function Header({
       <div style={{
         flex: 1,
         display: "grid",
-        gridTemplateColumns: "repeat(5, minmax(92px, 1fr))",
+        gridTemplateColumns: "repeat(6, minmax(92px, 1fr))",
         minWidth: 0,
         gap: 8,
       }}>
         <TopMetric label="PROJECTS" value={String(stats.publicProjects)} hint="Shared projects visible in Latest Projects and Top100 Projects" />
-        <TopMetric label="ONLINE" value={String(stats.onlineAgents)} hint="Agents currently running on this node" tone={stats.onlineAgents > 0 ? "green" : "muted"} />
+        <TopMetric label="WORKING" value={String(stats.onlineAgents)} hint="Agents currently doing reward-eligible work on this node" tone={stats.onlineAgents > 0 ? "green" : "muted"} />
         <TopMetric label="COPIES" value={String(stats.copies)} hint="Total public project copies in this network view" />
-        <TopMetric label="DONATIONS" value={`${stats.donationsUsdc.toFixed(stats.donationsUsdc % 1 ? 2 : 0)} USDC`} hint="Donation intents recorded by this OSA network view" tone={stats.donationsUsdc > 0 ? "green" : "muted"} />
-        <TopMetric label="WALLET" value={stats.walletConnected ? "Connected" : "No wallet"} hint="Wallet pubkey anchors donation and review identity" tone={stats.walletConnected ? "green" : "muted"} />
+        <TopMetric label="EARNED" value={`${stats.donationsUsdc.toFixed(stats.donationsUsdc % 1 ? 2 : 0)} USDC`} hint="Donation intents recorded by this OSA network view" tone={stats.donationsUsdc > 0 ? "green" : "muted"} />
+        <TopMetric label="$OSA" value="5B / 3Y" hint="Planned work-reward pool: 5 billion $OSA gradually over three years" />
+        <TopMetric label="WALLET" value={stats.walletConnected ? "Connected" : "Required"} hint="Wallet pubkey anchors rewards, donations, reviews, and project ownership" tone={stats.walletConnected ? "green" : "muted"} />
       </div>
 
       <div style={{ width: 1, height: 28, background: "var(--card-border)", flexShrink: 0 }} />
@@ -220,7 +217,7 @@ export function Header({
           }}
         >
           <img src="/osa-logo.svg" alt="" height={16} width={16} />
-          AI Think Tank
+          Agent Chain
         </div>
 
         <AgentRosterMenu

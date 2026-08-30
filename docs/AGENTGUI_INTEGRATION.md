@@ -10,9 +10,9 @@ Upstream:
 
 ## Why Not An Iframe
 
-AgentGUI is not a standalone widget. It is a full Vite/React frontend. OSA now replaces the upstream worker/server assumptions with an OpenClaw-aligned adapter, OSA session state, WebSocket activity streams, and Home/Public room semantics.
+AgentGUI is not a standalone widget. It is a full Vite/React frontend. OSA now replaces the upstream worker/server assumptions with an OpenClaw-aligned adapter, OSA session state, WebSocket activity streams, wallet identity, and Home/Latest Projects semantics.
 
-OSA already has its own Node server, auth/session model, connector tokens, local tasks, shared Public listings, copy counts, reviews, and published artifacts. Embedding the hosted AgentGUI page would only show a demo and would not observe OSA agents.
+OSA already has its own Node server, auth/session model, connector tokens, local tasks, shared project listings, copy counts, reviews, donation intents, wallet sessions, and published artifacts. Embedding the hosted AgentGUI page would only show a demo and would not observe OSA agents.
 
 ## Integration Shape
 
@@ -27,7 +27,7 @@ The current architecture is:
 Mapping:
 
 - OSA Home room -> AgentGUI `Home` team
-- OSA Public room -> AgentGUI `Public` team
+- OSA Latest Projects feed -> AgentGUI read-only public project team
 - OSA `task` -> AgentGUI `desk/session`
 - OSA `agent` / connector -> AgentGUI `agent profile` / desk occupant
 - OSA `event` -> AgentGUI `activity event`

@@ -132,10 +132,10 @@ export const api = {
         ...(reasoning_effort !== undefined ? { reasoning_effort } : {}),
         ...(api_mode !== undefined ? { api_mode } : {}),
       }),
-    copy: (id: string) =>
+    copy: (id: string, body: { wallet_address?: string } = {}) =>
       post<{ ok: boolean; session_id: string; session_ids?: string[]; workspace_path?: string | null; response: string; session?: Session; agent?: string | null }>(
         `/sessions/${encodeURIComponent(id)}/copy`,
-        {},
+        body,
       ),
     redirect: (id: string, content: string, attachments?: { name: string; data: string }[], reasoning_effort?: string, api_mode?: string) =>
       post<{ ok: boolean }>(`/sessions/${id}/redirect`, {
@@ -204,6 +204,7 @@ export const api = {
       agent?: string,
       team_id?: string,
       team_name?: string,
+      wallet_address?: string,
     ) =>
       post<{ session_id: string; workspace_path?: string; response: string; session?: Session; agent?: string | null }>(
         "/sessions/new",
@@ -217,6 +218,7 @@ export const api = {
           ...(agent                     ? { agent }                             : {}),
           ...(team_id                   ? { team_id }                           : {}),
           ...(team_name                 ? { team_name }                         : {}),
+          ...(wallet_address            ? { wallet_address }                    : {}),
         },
       ),
     sendMessage: async (
@@ -311,7 +313,7 @@ export const api = {
       post<{ ok: boolean; wallet: WalletSession }>("/wallet/login", body),
   },
   donations: {
-    create: (body: { session_id?: string; target_type?: "agent" | "room" | "project"; target_id?: string; amount: number; wallet_address: string; chain_id?: string | null }) =>
+    create: (body: { session_id?: string; target_type?: "project"; target_id?: string; amount: number; wallet_address: string; chain_id?: string | null }) =>
       post<{
         ok: boolean;
         donation: { id: string; amount: number; currency: "USDC"; status: "pledged"; createdAt: string; feeAmount?: number; creatorAmount?: number };
@@ -321,7 +323,7 @@ export const api = {
       }>("/donations", body),
   },
   publicProjects: {
-    share: (body: { name?: string; rooms?: { id: string; name?: string }[] }) =>
+    share: (body: { name?: string; owner_wallet_address?: string; rooms?: { id: string; name?: string }[] }) =>
       post<{ ok: boolean; shared_public: boolean; project?: Session }>("/public/projects/share", body),
     reviews: (projectId: string) =>
       get<{

@@ -26,8 +26,10 @@ import "./styles/globals.css";
 
 const POLL_INTERVAL = 5000;
 const HOME_TEAM_ID = "home-room";
+const LEGACY_PUBLIC_TEAM_ID = "public-room";
+const LEGACY_PUBLIC_ROOMS_TEAM_ID = "public-rooms-room";
 const PUBLIC_PROJECTS_TEAM_ID = "public-projects-room";
-const PUBLIC_TEAM_IDS = new Set([PUBLIC_PROJECTS_TEAM_ID]);
+const PUBLIC_TEAM_IDS = new Set([LEGACY_PUBLIC_TEAM_ID, LEGACY_PUBLIC_ROOMS_TEAM_ID, PUBLIC_PROJECTS_TEAM_ID]);
 // Shown until the backend reports the selected model's real capability.
 const EMPTY_REASONING_OPTIONS: { value: ReasoningEffort; label: string }[] = [];
 
@@ -81,6 +83,15 @@ const WORKBENCH_LEGACY_KEY_V1 = legacyStorageKey("workbench-v1");
 const ONBOARDING_DISMISSED_KEY = "osa-openclaw-onboarding-dismissed";
 const WALLET_STORAGE_KEY = "osa-wallet-session";
 type DashboardTab = "workbench" | "top-projects";
+interface WalletSession {
+  address: string;
+  chain_id?: string | null;
+  connected_at?: string;
+  last_seen_at?: string;
+}
+interface WalletProvider {
+  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+}
 const STORAGE_KEYS = {
   codeTheme: { key: "osa-code-theme", legacy: [legacyStorageKey("code-theme")] },
   verbose: { key: "osa-verbose", legacy: [legacyStorageKey("verbose")] },
@@ -159,15 +170,19 @@ function makePending(): DeskItem {
   return { id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`, isPending: true as const };
 }
 
-function readWalletConnected(): boolean {
+function readWalletSession(): WalletSession | null {
   try {
     const raw = localStorage.getItem(WALLET_STORAGE_KEY);
-    if (!raw) return false;
-    const parsed = JSON.parse(raw) as { address?: string };
-    return /^0x[a-fA-F0-9]{40}$/.test(parsed.address || "");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as WalletSession;
+    return /^0x[a-fA-F0-9]{40}$/.test(parsed.address || "") ? parsed : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function readWalletConnected(): boolean {
+  return Boolean(readWalletSession());
 }
 
 function networkEventLabel(event: NetworkEvent): string | null {
@@ -278,7 +293,101 @@ function mergeServerTeams(current: Team[], sessions: Session[]): Team[] {
 function serverTeamName(teamId: string, sessions: Session[]): string {
   if (teamId === HOME_TEAM_ID) return "Home";
   if (teamId === PUBLIC_PROJECTS_TEAM_ID) return "Latest Projects";
-  return sessions.some(isPublicSession) ? "Public" : "Home";
+  if (PUBLIC_TEAM_IDS.has(teamId)) return "Latest Projects";
+  const session = sessions.find((item) => item.team_id === teamId);
+  return session?.team_name?.trim() || "Home";
+}
+
+function WalletGate({
+  onConnect,
+  error,
+  pending,
+}: {
+  onConnect: () => void;
+  error: string | null;
+  pending: boolean;
+}) {
+  return (
+    <div style={{
+      minHeight: "100vh",
+      display: "grid",
+      gridTemplateColumns: "minmax(0, 1fr)",
+      alignItems: "center",
+      justifyItems: "center",
+      padding: 24,
+      background: "var(--bg)",
+      color: "var(--text)",
+      fontFamily: "system-ui, sans-serif",
+      boxSizing: "border-box",
+    }}>
+      <div style={{
+        width: "min(680px, 100%)",
+        border: "1px solid #2a3558",
+        borderRadius: 8,
+        background: "#101827",
+        padding: 28,
+        boxShadow: "0 24px 80px rgba(0, 0, 0, 0.36)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+          <img src="/osa-logo.svg" alt="OSA" width={44} height={44} />
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: 0 }}>OpenSwarmAgents</div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#7ee0c2", letterSpacing: 0 }}>$OSA wallet identity required</div>
+          </div>
+        </div>
+        <div style={{ fontSize: 38, lineHeight: 1.05, fontWeight: 950, maxWidth: 620, letterSpacing: 0, marginBottom: 14 }}>
+          Connect a wallet before agents enter the network.
+        </div>
+        <div style={{ fontSize: 14, lineHeight: 1.65, color: "var(--text-dim)", marginBottom: 20 }}>
+          OSA uses your EVM public key as the project owner identity for sharing, reviews, donations, and future $OSA work rewards. Login does not ask for a private key and does not send a transaction.
+        </div>
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 10,
+          marginBottom: 22,
+        }}>
+          {[
+            ["10B", "$OSA fixed supply"],
+            ["5B", "agent-work rewards"],
+            ["3Y", "gradual distribution"],
+          ].map(([value, label]) => (
+            <div key={label} style={{
+              border: "1px solid #2a3558",
+              borderRadius: 6,
+              background: "#121828",
+              padding: 12,
+            }}>
+              <div style={{ fontSize: 22, fontWeight: 950, color: "var(--accent2)", letterSpacing: 0 }}>{value}</div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "var(--text-dim)" }}>{label}</div>
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={onConnect}
+          disabled={pending}
+          style={{
+            height: 40,
+            padding: "0 18px",
+            borderRadius: 6,
+            border: "1px solid #2a8c72",
+            background: pending ? "#17251f" : "#16a37b",
+            color: "white",
+            fontSize: 14,
+            fontWeight: 900,
+            cursor: pending ? "default" : "pointer",
+          }}
+        >
+          {pending ? "Connecting" : "Connect Wallet"}
+        </button>
+        {error && <div style={{ marginTop: 12, color: "#ff8a8a", fontSize: 13 }}>{error}</div>}
+        <div style={{ marginTop: 18, color: "var(--text-dim)", fontSize: 12, lineHeight: 1.55 }}>
+          Experimental warning: $OSA is currently an unlisted, worthless test token concept. Nothing here promises that it will ever have market value.
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -293,6 +402,8 @@ export default function App() {
   const [networkLive, setNetworkLive] = useState(false);
   const [networkNotice, setNetworkNotice] = useState<string | null>(null);
   const [walletConnected, setWalletConnected] = useState(readWalletConnected);
+  const [walletConnectError, setWalletConnectError] = useState<string | null>(null);
+  const [walletConnectPending, setWalletConnectPending] = useState(false);
   const [preview, setPreview] = useState<FilePreviewData | null>(null);
   const panelZCounter = useRef(DESK_PANEL_Z_BASE);
   const [deskPanelZ, setDeskPanelZ] = useState<Record<string, number>>({});
@@ -429,6 +540,7 @@ export default function App() {
           }
 
           for (const teamData of saved.teams) {
+            if (PUBLIC_TEAM_IDS.has(teamData.id)) continue;
             const restoredDesks: DeskItem[] = [];
             for (const item of teamData.items) {
               if (item.type === "session") {
@@ -869,6 +981,12 @@ export default function App() {
     let started;
     try {
       const team = teams.find((t) => t.id === teamId);
+      const wallet = readWalletSession();
+      if (!wallet) {
+        setWalletConnected(false);
+        setWalletConnectError("Connect your wallet before starting network-rewarded agents.");
+        return;
+      }
       started = await api.sessions.new(
         msg, apiReasoningEffort, apiMode,
         start.model,
@@ -876,6 +994,7 @@ export default function App() {
         start.agent,
         teamId,
         team?.name,
+        wallet.address,
       );
     } catch (e) {
       // Surface a failed start (e.g. backend unreachable, bad profile) instead of
@@ -1170,7 +1289,8 @@ export default function App() {
       if (!ok) return;
     }
     try {
-      const copied = await api.sessions.copy(sessionId);
+      const wallet = readWalletSession();
+      const copied = await api.sessions.copy(sessionId, wallet ? { wallet_address: wallet.address } : {});
       const sessionIds = copied.session_ids?.length ? copied.session_ids : [copied.session_id];
       const loaded = await Promise.all(sessionIds.map(async (id) => (
         id === copied.session?.id && copied.session ? copied.session : api.sessions.get(id)
@@ -1197,6 +1317,12 @@ export default function App() {
   }
 
   async function shareProject() {
+    const wallet = readWalletSession();
+    if (!wallet) {
+      setWalletConnected(false);
+      setWalletConnectError("Connect your wallet before sharing a project.");
+      return;
+    }
     const privateTeams = teams.filter((team) => !PUBLIC_TEAM_IDS.has(team.id));
     const privateSessions = privateTeams.flatMap((team) => team.desks).filter((desk) => !("isPending" in desk));
     if (!privateSessions.length) {
@@ -1211,6 +1337,7 @@ export default function App() {
     try {
       await api.publicProjects.share({
         name: projectName.trim() || "OSA Project",
+        owner_wallet_address: wallet.address,
         rooms: privateTeams.map((team) => ({ id: team.id, name: team.name || serverTeamName(team.id, sessionsRef.current) })),
       });
       const latest = await api.sessions.list(50);
@@ -1346,8 +1473,6 @@ export default function App() {
   const activeCount = realDesks.filter((s) => s.is_running === true).length;
   const deskCount = realDesks.length;
   const networkStats = {
-    publicAgents: 0,
-    publicRooms: 0,
     publicProjects: sessions.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID).length,
     copies: topProjects.reduce((sum, item) => sum + Number(item.copy_count || 0), 0),
     donationsUsdc: topProjects.reduce((sum, item) => sum + Number(item.donation_total_usdc || 0), 0),
@@ -1355,6 +1480,31 @@ export default function App() {
     walletConnected,
     live: networkLive,
   };
+
+  async function connectDashboardWallet() {
+    setWalletConnectPending(true);
+    setWalletConnectError(null);
+    try {
+      const provider = (window as unknown as { ethereum?: WalletProvider }).ethereum;
+      if (!provider?.request) throw new Error("No EVM wallet found. Install MetaMask or open OSA in a wallet-enabled browser.");
+      const accounts = await provider.request({ method: "eth_requestAccounts" });
+      const address = Array.isArray(accounts) ? String(accounts[0] || "") : "";
+      if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error("No wallet account selected.");
+      let chainId: string | null = null;
+      try {
+        const rawChainId = await provider.request({ method: "eth_chainId" });
+        chainId = typeof rawChainId === "string" ? rawChainId : null;
+      } catch { /* chain id is helpful but not required */ }
+      const result = await api.wallet.login({ address, chain_id: chainId });
+      localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(result.wallet));
+      setWalletConnected(true);
+    } catch (error) {
+      setWalletConnectError((error as Error).message || "Could not connect wallet.");
+      setWalletConnected(false);
+    } finally {
+      setWalletConnectPending(false);
+    }
+  }
 
   if (backendError) {
     return (
@@ -1374,6 +1524,16 @@ export default function App() {
           Retry
         </button>
       </div>
+    );
+  }
+
+  if (!walletConnected) {
+    return (
+      <WalletGate
+        onConnect={() => void connectDashboardWallet()}
+        error={walletConnectError}
+        pending={walletConnectPending}
+      />
     );
   }
 

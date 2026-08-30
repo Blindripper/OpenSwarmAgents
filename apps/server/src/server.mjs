@@ -78,6 +78,7 @@ const contentTypes = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".gif": "image/gif",
+  ".webm": "video/webm",
   ".ico": "image/x-icon",
   ".woff": "font/woff",
   ".woff2": "font/woff2",
@@ -3045,7 +3046,7 @@ function agentGuiRankedPublicCollections(type, limit = 100) {
         summary: publicCollectionSummary(item),
         agent: type === "room" ? "OSA Room" : "OSA Project",
         model: `${item.taskIds.length} public ${item.taskIds.length === 1 ? "agent" : "agents"}`,
-        goal: type === "room" ? "Public Rooms" : "Public Projects",
+        goal: type === "room" ? "Retired Room Sharing" : "Latest Projects",
         copy_count: Math.max(0, Number(item.copyCount || 0)),
         item_count: item.taskIds.length,
         shared_at: item.sharedAt,
@@ -3441,6 +3442,9 @@ async function startAgentGuiSession(req, body = {}) {
     throw error;
   }
 
+  const ownerWalletAddress = body.wallet_address || body.walletAddress
+    ? normalizeWalletAddress(body.wallet_address || body.walletAddress)
+    : null;
   const title = agentGuiSessionTitle(content);
   const goal = agentGuiGoalForStart(body, title, content);
   const agentId = String(body.agent || "openclaw-codex");
@@ -3464,7 +3468,8 @@ async function startAgentGuiSession(req, body = {}) {
     agentGuiTeamId: teamId,
     agentGuiTeamName: teamName || null,
     agentGuiAgent: runner === "codex" ? "codex-cli" : "openclaw-codex",
-    agentGuiModel: runner === "codex" ? "Codex CLI" : "OpenClaw local agent"
+    agentGuiModel: runner === "codex" ? "Codex CLI" : "OpenClaw local agent",
+    ownerWalletAddress
   };
   store.tasks.unshift(task);
 
@@ -3473,7 +3478,8 @@ async function startAgentGuiSession(req, body = {}) {
     taskId: task.id,
     goalId: goal.id,
     connectorId: connector.id,
-    runner
+    runner,
+    ownerWalletAddress
   });
   await saveStore();
 
@@ -3522,7 +3528,7 @@ function resumeAgentGuiSession(req, sessionId, body = {}) {
   };
 }
 
-function copySourceTaskToPrivateRoom(sourceTask, roomId, roomName, copiedAt) {
+function copySourceTaskToPrivateRoom(sourceTask, roomId, roomName, copiedAt, ownerWalletAddress = null) {
   const sourceGoal = store.goals.find((item) => item.id === sourceTask.goalId);
   const goal = {
     id: `goal-agentgui-copy-${slugify(sourceTask.title)}-${randomUUID().slice(0, 8)}`,
@@ -3555,14 +3561,15 @@ function copySourceTaskToPrivateRoom(sourceTask, roomId, roomName, copiedAt) {
     agentGuiTeamId: roomId,
     agentGuiTeamName: roomName || null,
     agentGuiAgent: sourceTask.agentGuiAgent || "openclaw-codex",
-    agentGuiModel: sourceTask.agentGuiModel || "OpenClaw local agent"
+    agentGuiModel: sourceTask.agentGuiModel || "OpenClaw local agent",
+    ownerWalletAddress
   };
   store.goals.unshift(goal);
   store.tasks.unshift(task);
   return task;
 }
 
-async function copyPublicCollectionToHome(sessionId, type) {
+async function copyPublicCollectionToHome(sessionId, type, body = {}) {
   const prefix = type === "room" ? "public-room-" : "public-project-";
   const collectionId = sessionId.startsWith(prefix) ? sessionId.slice(prefix.length) : "";
   const collection = (type === "room" ? store.publicRooms : store.publicProjects).find((item) => item.id === collectionId);
@@ -3581,11 +3588,14 @@ async function copyPublicCollectionToHome(sessionId, type) {
   }
 
   const copiedAt = now();
+  const ownerWalletAddress = body.wallet_address || body.walletAddress
+    ? normalizeWalletAddress(body.wallet_address || body.walletAddress)
+    : null;
   const copiedTasks = [];
   if (type === "room") {
     const roomId = normalizeAgentGuiPrivateTeamId(`room-copy-${slugify(collection.name)}-${randomUUID().slice(0, 6)}`);
     const roomName = `Copy of ${collection.name}`.slice(0, 80);
-    for (const sourceTask of sourceTasks) copiedTasks.push(copySourceTaskToPrivateRoom(sourceTask, roomId, roomName, copiedAt));
+    for (const sourceTask of sourceTasks) copiedTasks.push(copySourceTaskToPrivateRoom(sourceTask, roomId, roomName, copiedAt, ownerWalletAddress));
   } else {
     const roomMap = new Map();
     const sourceRooms = collection.rooms.length ? collection.rooms : [{ id: agentGuiHomeTeamId, name: "Home", taskIds: collection.taskIds }];
@@ -3597,7 +3607,7 @@ async function copyPublicCollectionToHome(sessionId, type) {
     }
     for (const sourceTask of sourceTasks) {
       const targetRoom = roomMap.get(normalizeAgentGuiPrivateTeamId(sourceTask.agentGuiTeamId)) || [...roomMap.values()][0];
-      copiedTasks.push(copySourceTaskToPrivateRoom(sourceTask, targetRoom.id, targetRoom.name, copiedAt));
+      copiedTasks.push(copySourceTaskToPrivateRoom(sourceTask, targetRoom.id, targetRoom.name, copiedAt, ownerWalletAddress));
     }
   }
 
@@ -3607,7 +3617,8 @@ async function copyPublicCollectionToHome(sessionId, type) {
   event(type === "room" ? "agentgui_public_room_copied" : "agentgui_public_project_copied", `Copied Public ${type} into Home`, {
     publicId: collection.id,
     copiedTaskIds: copiedTasks.map((task) => task.id),
-    copyCount: collection.copyCount
+    copyCount: collection.copyCount,
+    ownerWalletAddress
   });
   await saveStore();
   const sessions = copiedTasks.map((task) => agentGuiTaskSession(task, "home"));
@@ -3622,8 +3633,8 @@ async function copyPublicCollectionToHome(sessionId, type) {
   };
 }
 
-async function copyAgentGuiSessionToHome(sessionId) {
-  if (sessionId.startsWith("public-project-")) return copyPublicCollectionToHome(sessionId, "project");
+async function copyAgentGuiSessionToHome(sessionId, body = {}) {
+  if (sessionId.startsWith("public-project-")) return copyPublicCollectionToHome(sessionId, "project", body);
   const taskId = agentGuiTaskIdFromSessionId(sessionId);
   const sourceTask = store.tasks.find((item) => item.id === taskId);
   if (!sourceTask) {
@@ -3640,12 +3651,16 @@ async function copyAgentGuiSessionToHome(sessionId) {
   sourceTask.copyCount = Math.max(0, Number(sourceTask.copyCount || 0)) + 1;
   sourceTask.lastCopiedAt = now();
   const copiedAt = now();
-  const task = copySourceTaskToPrivateRoom(sourceTask, agentGuiHomeTeamId, "Home", copiedAt);
+  const ownerWalletAddress = body.wallet_address || body.walletAddress
+    ? normalizeWalletAddress(body.wallet_address || body.walletAddress)
+    : null;
+  const task = copySourceTaskToPrivateRoom(sourceTask, agentGuiHomeTeamId, "Home", copiedAt, ownerWalletAddress);
   event("agentgui_public_copied", `Copied Public task into Home`, {
     sourceTaskId: sourceTask.id,
     taskId: task.id,
     goalId: task.goalId,
-    sourceCopyCount: sourceTask.copyCount
+    sourceCopyCount: sourceTask.copyCount,
+    ownerWalletAddress
   });
   await saveStore();
   const session = agentGuiTaskSession(task);
@@ -3693,6 +3708,9 @@ async function shareAgentGuiRoom(body = {}) {
 }
 
 async function shareAgentGuiProject(body = {}) {
+  const ownerWalletAddress = body.owner_wallet_address || body.ownerWalletAddress
+    ? normalizeWalletAddress(body.owner_wallet_address || body.ownerWalletAddress)
+    : null;
   const tasks = agentGuiAllPrivateProjectTasks();
   if (!tasks.length) {
     const error = new Error("Add at least one private agent before sharing a project.");
@@ -3724,14 +3742,15 @@ async function shareAgentGuiProject(body = {}) {
     updatedAt: sharedAt,
     copyCount: existingIndex >= 0 ? Math.max(0, Number(store.publicProjects[existingIndex].copyCount || 0)) : 0,
     lastCopiedAt: existingIndex >= 0 ? store.publicProjects[existingIndex].lastCopiedAt || null : null,
-    ownerWalletAddress: null
+    ownerWalletAddress: ownerWalletAddress || store.publicProjects[existingIndex]?.ownerWalletAddress || tasks.find((task) => task.ownerWalletAddress)?.ownerWalletAddress || null
   };
   if (existingIndex >= 0) store.publicProjects[existingIndex] = next;
   else store.publicProjects.unshift(next);
   event("agentgui_project_shared", "Project shared to Public Projects", {
     publicProjectId: next.id,
     taskIds: next.taskIds,
-    rooms: next.rooms.map((room) => room.id)
+    rooms: next.rooms.map((room) => room.id),
+    ownerWalletAddress: next.ownerWalletAddress
   });
   await saveStore();
   return { ok: true, shared_public: true, project: agentGuiPublicCollectionSession(next, "project") };
@@ -3852,7 +3871,7 @@ async function createAgentGuiDonation(body = {}) {
     donation,
     stats: agentGuiDonationStats(target.targetType, target.targetId),
     fee: { percent: osaDonationFeePercent, wallet: osaDonationFeeWallet, amount: feeAmount },
-    agent: target.targetType === "agent" ? agentGuiTopAgents(100).find((item) => item.task_id === target.targetId) || null : null
+    agent: agentGuiRankedPublicCollections("project", 100).find((item) => item.target_id === target.targetId) || null
   };
 }
 
@@ -4142,7 +4161,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     if (method === "GET" && child === "progress") return sendJson(res, 200, { content: agentGuiTaskFile(sessionId), exists: true });
     if (method === "POST" && child === "copy") {
       try {
-        return sendJson(res, 201, await copyAgentGuiSessionToHome(sessionId));
+        return sendJson(res, 201, await copyAgentGuiSessionToHome(sessionId, await readJson(req)));
       } catch (error) {
         return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to copy Public task into Home" });
       }

@@ -3,11 +3,11 @@
   "version": "0.1.0-rc.1",
   "private": true,
   "type": "module",
-  "description": "OpenSwarmAgents is a local-first decentralized coordination network for user-owned AI agents working on shared goals.",
+  "description": "OpenSwarmAgents is an experimental wallet-owned AI agent project network with live sharing, rankings, donations, reviews, and planned $OSA work rewards.",
   "scripts": {
     "dev": "node apps/server/src/server.mjs",
     "start": "node apps/server/src/server.mjs",
-    "check": "node --check apps/server/src/server.mjs && node --check apps/web/public/theme-init.js && node --check apps/web/public/app.js && node --check scripts/print-schema-path.mjs && node --check scripts/export-json-to-sql.mjs && node --check scripts/rc-smoke.mjs && node --check scripts/browser-e2e.mjs && node --check scripts/consensus-sim.mjs && node --check scripts/federation-sim.mjs && node --check scripts/postgres-smoke.mjs && node --check scripts/connector-runner-e2e.mjs && bash -n scripts/install-node.sh && python3 -m py_compile apps/connector/connector.py scripts/connector-cli-smoke.py && python3 scripts/connector-cli-smoke.py",
+    "check": "node --check apps/server/src/server.mjs && node --check apps/web/public/theme-init.js && node --check apps/web/public/app.js && node --check scripts/print-schema-path.mjs && node --check scripts/export-json-to-sql.mjs && node --check scripts/rc-smoke.mjs && node --check scripts/browser-e2e.mjs && node --check scripts/consensus-sim.mjs && node --check scripts/federation-sim.mjs && node --check scripts/postgres-smoke.mjs && node --check scripts/connector-runner-e2e.mjs && node --check scripts/check-tokenomics.mjs && node scripts/check-tokenomics.mjs && bash -n scripts/install-node.sh && python3 -m py_compile apps/connector/connector.py scripts/connector-cli-smoke.py && python3 scripts/connector-cli-smoke.py",
     "check:connector": "node scripts/connector-runner-e2e.mjs",
     "check:browser": "node scripts/browser-e2e.mjs",
     "check:rc": "npm run check && node scripts/rc-smoke.mjs && npm run check:browser && npm run check:connector && node scripts/consensus-sim.mjs && node scripts/federation-sim.mjs",
@@ -26,6 +26,7 @@
     "node": ">=22"
   },
   "devDependencies": {
+    "@openzeppelin/contracts": "^5.6.1",
     "playwright": "^1.62.1"
   }
 }

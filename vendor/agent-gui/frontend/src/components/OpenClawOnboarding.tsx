@@ -19,13 +19,13 @@ export function OpenClawOnboarding({ status, onRefresh, onClose }: Props) {
           <img src="/osa-logo.svg" alt="OSA" width={38} height={38} style={{ flexShrink: 0 }} />
           <div style={{ minWidth: 0 }}>
             <div style={titleStyle}>OSA</div>
-            <div style={subtitleStyle}>AI Think Tank</div>
+            <div style={subtitleStyle}>Agent Chain</div>
           </div>
         </div>
 
         <div style={headlineStyle}>Connect OpenClaw</div>
         <div style={copyStyle}>
-          The local AgentGUI frontend is linked to OSA in the background. Connect OpenClaw once, then use Home for your agents and Public for copy-only network ideas.
+          The local AgentGUI frontend is linked to OSA in the background. Connect OpenClaw once, then use Home for private agent work and Latest Projects for copy-only public projects.
         </div>
 
         <div style={stepsStyle}>
@@ -35,7 +35,7 @@ export function OpenClawOnboarding({ status, onRefresh, onClose }: Props) {
             label="OpenClaw connector"
             value={available ? (status?.version || status?.command || "ready") : "not detected"}
           />
-          <StatusLine ok={complete} label="Home/Public rooms" value={complete ? "ready" : "waiting"} />
+          <StatusLine ok={complete} label="Home/Latest Projects" value={complete ? "ready" : "waiting"} />
         </div>
 
         {!available && (
