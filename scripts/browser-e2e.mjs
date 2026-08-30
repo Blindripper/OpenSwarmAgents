@@ -44,7 +44,7 @@ try {
 
   let sessions = await getJson("/api/sessions");
   assert(Array.isArray(sessions) && sessions.length === 0, "fresh dashboard should have no Home/Public example tasks");
-  let top = await getJson("/api/top-agents?limit=100");
+  let top = await getJson("/api/top-projects?limit=100");
   assert(Array.isArray(top.agents) && top.agents.length === 0, "fresh Top100 should start empty");
   let config = await getJson("/api/gui-config");
   assert(config.agents.map((agent) => agent.id).join(",") === "openclaw-codex,codex-cli", "Agent Profiles should start with OpenClaw/Codex templates only");
@@ -74,10 +74,10 @@ try {
 
   await page.goto(`${baseUrl}/agent-gui/`, { waitUntil: "networkidle" });
   await expectText(page, "body", "Home");
-  await expectText(page, "body", "Public");
-  await expectText(page, "body", "Top100 AI Agents");
-  await expectText(page, "body", "Top100 Rooms");
+  await expectText(page, "body", "Latest Projects");
   await expectText(page, "body", "Top100 Projects");
+  assert(!(await page.locator("body").innerText()).includes("Top100 AI Agents"), "agent charts should not render");
+  assert(!(await page.locator("body").innerText()).includes("Top100 Rooms"), "room charts should not render");
   assert(!(await page.locator("body").innerText()).includes("Open agent voting quality benchmark"), "legacy example tasks should not render");
   assert(await page.getByRole("button", { name: "Copy" }).count() === 0, "Public should not render example Copy buttons");
   assert(await page.locator('button[title="Delete this room"]').count() === 0, "Home/Public should not be removable");
@@ -108,48 +108,18 @@ try {
   });
   assert(roomCreated.session?.team_id === "room-launch", "private room sessions should keep their team id");
 
-  let shared = await postJson(`/api/sessions/${encodeURIComponent(created.session_id)}/share`, { shared: true });
-  assert(shared.shared_public === true, "Home agent should be shareable to Public");
-
-  sessions = await getJson("/api/sessions");
-  assert(sessions.some((session) => session.id === created.session_id && session.shared_public === true), "Home session should show shared state");
-  const publicSession = sessions.find((session) => session.id.startsWith("public-") && session.shared_public === true);
-  assert(publicSession, "shared Home agent should appear in Public");
-
-  const copied = await postJson(`/api/sessions/${encodeURIComponent(publicSession.id)}/copy`, {});
-  assert(copied.session_id?.startsWith("home-"), "copying a Public agent should create a Home session");
-  top = await getJson("/api/top-agents?limit=100");
-  assert(top.agents[0]?.rank === 1, "Top100 should rank copied Public agents");
-  assert(top.agents[0]?.copy_count === 1, "Top100 should count copies");
-  assert(top.agents[0]?.donation_total_usdc === 0, "Top100 should expose donation totals");
+  const legacyShare = await postJsonAllowError(`/api/sessions/${encodeURIComponent(created.session_id)}/share`, { shared: true });
+  assert(legacyShare.status === 410, "individual agent sharing should be retired");
 
   const walletAddress = "0x0000000000000000000000000000000000000abc";
   const wallet = await postJson("/api/wallet/login", { address: walletAddress, chain_id: "0x1" });
   assert(wallet.wallet?.address === walletAddress, "wallet login should store the connected pubkey");
-  const donation = await postJson("/api/donations", {
-    session_id: publicSession.id,
-    amount: 5,
-    wallet_address: walletAddress,
-    chain_id: "0x1"
-  });
-  assert(donation.donation?.currency === "USDC", "donations should be denominated in USDC");
-  top = await getJson("/api/top-agents?limit=100");
-  assert(top.agents[0]?.donation_count === 1, "Top100 should count donations");
-  assert(top.agents[0]?.donation_total_usdc === 5, "Top100 should sum USDC donations");
-  assert(top.agents[0]?.osa_fee_total_usdc === 0.25, "Top100 should expose the OSA donation fee total");
-
-  const roomShare = await postJson("/api/public/rooms/share", {
+  const legacyRoomShare = await postJsonAllowError("/api/public/rooms/share", {
     team_id: "room-launch",
     team_name: "Launch",
     shared: true
   });
-  assert(roomShare.room?.id?.startsWith("public-room-"), "rooms should be shareable to Public Rooms");
-  let topRooms = await getJson("/api/top-rooms?limit=100");
-  assert(topRooms.agents[0]?.rank === 1, "Top100 Rooms should rank shared rooms");
-  const roomCopy = await postJson(`/api/sessions/${encodeURIComponent(roomShare.room.id)}/copy`, {});
-  assert(roomCopy.session_ids?.length === 1, "copying a Public Room should copy its agents into a private room");
-  topRooms = await getJson("/api/top-rooms?limit=100");
-  assert(topRooms.agents[0]?.copy_count === 1, "Top100 Rooms should count room copies");
+  assert(legacyRoomShare.status === 410, "room sharing should be retired");
 
   const projectShare = await postJson("/api/public/projects/share", {
     name: "Browser E2E Project",
@@ -158,11 +128,14 @@ try {
       { id: "room-launch", name: "Launch" }
     ]
   });
-  assert(projectShare.project?.id?.startsWith("public-project-"), "projects should be shareable to Public Projects");
+  assert(projectShare.project?.id?.startsWith("public-project-"), "projects should be shareable");
   let topProjects = await getJson("/api/top-projects?limit=100");
   assert(topProjects.agents[0]?.rank === 1, "Top100 Projects should rank shared projects");
   const projectCopy = await postJson(`/api/sessions/${encodeURIComponent(projectShare.project.id)}/copy`, {});
   assert(projectCopy.session_ids?.length >= 2, "copying a Public Project should copy multiple agents");
+  topProjects = await getJson("/api/top-projects?limit=100");
+  assert(topProjects.agents[0]?.copy_count === 1, "Top100 Projects should count project copies");
+  assert(topProjects.agents[0]?.donation_total_usdc === 0, "Top100 Projects should expose donation totals");
   await postJson("/api/donations", {
     session_id: projectShare.project.id,
     amount: 1,
@@ -186,33 +159,16 @@ try {
   await page.reload({ waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Enter Home" }).click().catch(() => {});
   await expectText(page, "body", "Network Live");
-  await expectText(page, "body", "Build a small market-research agent");
-  await expectText(page, "body", "Public");
-  await expectText(page, "body", "Public Rooms");
-  await expectText(page, "body", "Public Projects");
-  await expectText(page, "body", "Latest public agents.");
-  await expectText(page, "body", "Latest public rooms.");
+  await expectText(page, "body", "Latest Projects");
+  await expectText(page, "body", "Browser E2E Project");
   await expectText(page, "body", "Latest public projects.");
   await expectText(page, "body", "1 copies");
-  await page.getByRole("button", { name: "Top100 AI Agents" }).click();
-  await expectText(page, "body", "#1");
-  await expectText(page, "body", "Build a small market-research agent");
-  await expectText(page, "body", "Donate");
-  await expectText(page, "body", "5 USDC");
-  await page.getByRole("button", { name: "Top100 Rooms" }).click();
-  await expectText(page, "body", "Top100 Rooms");
-  await expectText(page, "body", "Launch");
   await page.getByRole("button", { name: "Top100 Projects" }).click();
   await expectText(page, "body", "Top100 Projects");
   await expectText(page, "body", "Browser E2E Project");
   await expectText(page, "body", "1 USDC earned");
   await expectText(page, "body", "5.0 stars");
   await expectText(page, "body", "Review");
-
-  shared = await postJson(`/api/sessions/${encodeURIComponent(created.session_id)}/share`, { shared: false });
-  assert(shared.shared_public === false, "Home agent should be removable from Public");
-  sessions = await getJson("/api/sessions");
-  assert(!sessions.some((session) => session.id === publicSession.id), "unshared agent should disappear from Public");
 
   assert(pageErrors.length === 0, `browser console/page errors: ${pageErrors.join("\n")}`);
   console.log(`Browser E2E passed on ${baseUrl}`);
@@ -263,6 +219,21 @@ async function postJson(path, body) {
   });
   if (!response.ok) throw new Error(`${path} failed with ${response.status}: ${await response.text()}`);
   return response.json();
+}
+
+async function postJsonAllowError(path, body) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = {};
+  }
+  return { status: response.status, ok: response.ok, payload };
 }
 
 async function deleteJson(path) {

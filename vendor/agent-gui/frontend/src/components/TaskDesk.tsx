@@ -1723,7 +1723,7 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
           }}
           onClick={handleClick}
           onDoubleClick={handleDeskDoubleClick}
-          title={readOnly ? "Copy this Public agent into Home" : expanded ? "Click to close" : "Click to open"}
+          title={readOnly ? "Copy this public project into Home" : expanded ? "Click to close" : "Click to open"}
         >
           {/* Monitor */}
           <div style={{
@@ -1853,7 +1853,7 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
                 <button
                   onClick={(e) => { e.stopPropagation(); void handleCopy(); }}
                   disabled={!onCopy || copying}
-                  title="Copy this Public agent into Home"
+                  title="Copy this public project into Home"
                   style={{
                     padding: "3px 14px", borderRadius: 6, fontSize: 11,
                     background: copying ? "var(--bg)" : "var(--accent2)",

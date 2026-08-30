@@ -1098,11 +1098,7 @@ export function TeamRow({
                   fontSize: 10.5,
                   lineHeight: 1.35,
                 }}>
-                  {team.id === "public-rooms-room"
-                    ? "Latest public rooms."
-                    : team.id === "public-projects-room"
-                      ? "Latest public projects."
-                      : "Latest public agents."}
+                  Latest public projects.
                 </div>
               )}
               <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
@@ -1142,7 +1138,7 @@ export function TeamRow({
                   <button
                     type="button"
                     onClick={onShareTeam}
-                    title="Share this room to Public Rooms"
+                    title="Share this room as part of a project"
                     style={{
                       height: 20,
                       borderRadius: 4,
@@ -1156,7 +1152,7 @@ export function TeamRow({
                       fontWeight: 800,
                     }}
                   >
-                    Share Room
+                    Share Project
                   </button>
                 )}
               </div>

@@ -26,10 +26,8 @@ import "./styles/globals.css";
 
 const POLL_INTERVAL = 5000;
 const HOME_TEAM_ID = "home-room";
-const PUBLIC_TEAM_ID = "public-room";
-const PUBLIC_ROOMS_TEAM_ID = "public-rooms-room";
 const PUBLIC_PROJECTS_TEAM_ID = "public-projects-room";
-const PUBLIC_TEAM_IDS = new Set([PUBLIC_TEAM_ID, PUBLIC_ROOMS_TEAM_ID, PUBLIC_PROJECTS_TEAM_ID]);
+const PUBLIC_TEAM_IDS = new Set([PUBLIC_PROJECTS_TEAM_ID]);
 // Shown until the backend reports the selected model's real capability.
 const EMPTY_REASONING_OPTIONS: { value: ReasoningEffort; label: string }[] = [];
 
@@ -82,7 +80,7 @@ const WORKBENCH_LEGACY_KEY_V2 = legacyStorageKey("workbench-v2");
 const WORKBENCH_LEGACY_KEY_V1 = legacyStorageKey("workbench-v1");
 const ONBOARDING_DISMISSED_KEY = "osa-openclaw-onboarding-dismissed";
 const WALLET_STORAGE_KEY = "osa-wallet-session";
-type DashboardTab = "workbench" | "top-agents" | "top-rooms" | "top-projects";
+type DashboardTab = "workbench" | "top-projects";
 const STORAGE_KEYS = {
   codeTheme: { key: "osa-code-theme", legacy: [legacyStorageKey("code-theme")] },
   verbose: { key: "osa-verbose", legacy: [legacyStorageKey("verbose")] },
@@ -173,8 +171,6 @@ function readWalletConnected(): boolean {
 }
 
 function networkEventLabel(event: NetworkEvent): string | null {
-  if (event.type === "agentgui_session_shared") return "New public agent joined OSA.";
-  if (event.type === "agentgui_room_shared") return "New public room joined OSA.";
   if (event.type === "agentgui_project_shared") return "New public project joined OSA.";
   if (event.type === "agent_registered") return "Network agent came online.";
   if (event.type === "federation_imported") return "A peer node synced new OSA network updates.";
@@ -183,12 +179,7 @@ function networkEventLabel(event: NetworkEvent): string | null {
 
 function rankingEventChanged(event: NetworkEvent): boolean {
   return [
-    "agentgui_session_shared",
-    "agentgui_session_unshared",
-    "agentgui_room_shared",
     "agentgui_project_shared",
-    "agentgui_public_copied",
-    "agentgui_public_room_copied",
     "agentgui_public_project_copied",
     "agentgui_donation_pledged",
     "agentgui_project_review_created",
@@ -201,16 +192,8 @@ function makeHomeTeam(desks: DeskItem[] = [makePending()]): Team {
   return { id: HOME_TEAM_ID, name: "Home", color: "blue", scene: DEFAULT_SCENE, desks };
 }
 
-function makePublicTeam(desks: DeskItem[] = []): Team {
-  return { id: PUBLIC_TEAM_ID, name: "Public", color: "purple", scene: "night", desks };
-}
-
-function makePublicRoomsTeam(desks: DeskItem[] = []): Team {
-  return { id: PUBLIC_ROOMS_TEAM_ID, name: "Public Rooms", color: "green", scene: "night", desks };
-}
-
 function makePublicProjectsTeam(desks: DeskItem[] = []): Team {
-  return { id: PUBLIC_PROJECTS_TEAM_ID, name: "Public Projects", color: "orange", scene: "night", desks };
+  return { id: PUBLIC_PROJECTS_TEAM_ID, name: "Latest Projects", color: "orange", scene: "night", desks };
 }
 
 function isPublicSession(session: Session): boolean {
@@ -237,9 +220,9 @@ function makePrivateTeam(id: string, name?: string | null, desks: DeskItem[] = [
   };
 }
 
-// OSA rooms: Home and custom private rooms can run local agents; Public is a
-// copy-only network view. Older saved AgentGUI layouts are folded into private
-// rooms and refreshed from the server session list.
+// OSA rooms: Home and custom private rooms can run local agents. Latest Projects
+// is the only public marketplace view; a shared project contains all private
+// rooms and agents as one copy-only bundle.
 function mergeServerTeams(current: Team[], sessions: Session[]): Team[] {
   const byId = new Map(sessions.map((session) => [session.id, session]));
   const placedPrivateIds = new Set<string>();
@@ -281,8 +264,6 @@ function mergeServerTeams(current: Team[], sessions: Session[]): Team[] {
     placedPrivateIds.add(session.id);
   }
 
-  const publicAgentDesks = sessions.filter((session) => session.team_id === PUBLIC_TEAM_ID);
-  const publicRoomDesks = sessions.filter((session) => session.team_id === PUBLIC_ROOMS_TEAM_ID);
   const publicProjectDesks = sessions.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID);
   const orderedPrivate = [
     ...privateTeams.filter((team) => team.id === HOME_TEAM_ID),
@@ -290,30 +271,24 @@ function mergeServerTeams(current: Team[], sessions: Session[]): Team[] {
   ];
   return [
     ...orderedPrivate,
-    makePublicTeam(publicAgentDesks),
-    makePublicRoomsTeam(publicRoomDesks),
     makePublicProjectsTeam(publicProjectDesks),
   ];
 }
 
 function serverTeamName(teamId: string, sessions: Session[]): string {
   if (teamId === HOME_TEAM_ID) return "Home";
-  if (teamId === PUBLIC_TEAM_ID) return "Public";
+  if (teamId === PUBLIC_PROJECTS_TEAM_ID) return "Latest Projects";
   return sessions.some(isPublicSession) ? "Public" : "Home";
 }
 
 export default function App() {
-  const [teams, setTeams] = useState<Team[]>([makeHomeTeam(), makePublicTeam(), makePublicRoomsTeam(), makePublicProjectsTeam()]);
+  const [teams, setTeams] = useState<Team[]>([makeHomeTeam(), makePublicProjectsTeam()]);
   const [pendingTexts, setPendingTexts] = useState<Record<string, string>>({});
   const [justStartedId, setJustStartedId] = useState<string | null>(null);
   const [justStartedAnchor, setJustStartedAnchor] = useState<{ top: number; left: number } | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>("workbench");
-  const [topAgents, setTopAgents] = useState<TopAgent[]>([]);
-  const [topRooms, setTopRooms] = useState<TopAgent[]>([]);
   const [topProjects, setTopProjects] = useState<TopAgent[]>([]);
-  const [topAgentsLoading, setTopAgentsLoading] = useState(false);
-  const [topRoomsLoading, setTopRoomsLoading] = useState(false);
   const [topProjectsLoading, setTopProjectsLoading] = useState(false);
   const [networkLive, setNetworkLive] = useState(false);
   const [networkNotice, setNetworkNotice] = useState<string | null>(null);
@@ -527,30 +502,6 @@ export default function App() {
     } catch { /* ignore */ }
   }, []);
 
-  const refreshTopAgents = useCallback(async () => {
-    setTopAgentsLoading(true);
-    try {
-      const r = await api.topAgents(100);
-      setTopAgents(r.agents ?? []);
-    } catch {
-      setTopAgents([]);
-    } finally {
-      setTopAgentsLoading(false);
-    }
-  }, []);
-
-  const refreshTopRooms = useCallback(async () => {
-    setTopRoomsLoading(true);
-    try {
-      const r = await api.topRooms(100);
-      setTopRooms(r.agents ?? []);
-    } catch {
-      setTopRooms([]);
-    } finally {
-      setTopRoomsLoading(false);
-    }
-  }, []);
-
   const refreshTopProjects = useCallback(async () => {
     setTopProjectsLoading(true);
     try {
@@ -565,11 +516,9 @@ export default function App() {
 
   const refreshNetworkViews = useCallback(() => {
     void loadSessions();
-    void refreshTopAgents();
-    void refreshTopRooms();
     void refreshTopProjects();
     setWalletConnected(readWalletConnected());
-  }, [loadSessions, refreshTopAgents, refreshTopRooms, refreshTopProjects]);
+  }, [loadSessions, refreshTopProjects]);
 
   useEffect(() => {
     loadSessions();
@@ -587,19 +536,15 @@ export default function App() {
     api.toolsets().then((r) => { setToolsets(r.toolsets); setToolPresets(r.presets); setToolDefault(r.default); }).catch(() => {});
     // Also re-pull the roster: profiles installed/changed on disk while the GUI
     // is open (e.g. install_profiles.sh) otherwise never appear until a reload.
-    refreshTopAgents();
-    refreshTopRooms();
     refreshTopProjects();
     const poll = setInterval(() => {
       loadSessions();
       refreshAgents();
-      refreshTopAgents();
-      refreshTopRooms();
       refreshTopProjects();
       setWalletConnected(readWalletConnected());
     }, POLL_INTERVAL);
     return () => clearInterval(poll);
-  }, [loadSessions, refreshAgents, refreshTopAgents, refreshTopRooms, refreshTopProjects]);
+  }, [loadSessions, refreshAgents, refreshTopProjects]);
 
   useEffect(() => {
     const source = api.networkStream((event) => {
@@ -1213,19 +1158,15 @@ export default function App() {
   }
 
   function renameTeam(teamId: string, name: string) {
-    if (teamId === PUBLIC_TEAM_ID) return;
+    if (PUBLIC_TEAM_IDS.has(teamId)) return;
     setTeams((prev) => prev.map((team) =>
       team.id === teamId ? { ...team, name: team.id === HOME_TEAM_ID ? "Home" : name } : team
     ));
   }
 
   async function copyDeskToHome(sessionId: string) {
-    if (sessionId.startsWith("public-room-")) {
-      const ok = window.confirm("Copy this Public Room into your private workspace? OSA will create a new room with copies of its agents. The original Public Room stays untouched.");
-      if (!ok) return;
-    }
     if (sessionId.startsWith("public-project-")) {
-      const ok = window.confirm("Copy this Public Project into your private workspace? OSA will create private project rooms with copied agents. The Public Project stays untouched.");
+      const ok = window.confirm("Copy this project into your private OSA workspace? OSA will create private rooms and agent copies from the shared project. The public original stays untouched.");
       if (!ok) return;
     }
     try {
@@ -1249,48 +1190,9 @@ export default function App() {
       setJustStartedAnchor(null);
       setTeams((prev) => mergeServerTeams(prev, nextSessions));
       setDashboardTab("workbench");
-      void refreshTopAgents();
-      void refreshTopRooms();
       void refreshTopProjects();
     } catch (e) {
-      window.alert((e as Error).message || "Couldn't copy this Public agent into Home.");
-    }
-  }
-
-  async function setPublicShare(sessionId: string, shared: boolean) {
-    try {
-      const result = await api.sessions.share(sessionId, shared);
-      const latest = await api.sessions.list(50);
-      sessionsRef.current = latest;
-      setSessions(latest);
-      setTeams((prev) => mergeServerTeams(prev, latest));
-      if (result.session?.id) setFocusedDeskId(result.session.id);
-      await refreshTopAgents();
-    } catch (e) {
-      window.alert((e as Error).message || "Couldn't update Public sharing.");
-    }
-  }
-
-  async function shareRoom(teamId: string) {
-    const team = teams.find((item) => item.id === teamId);
-    const hasSession = team?.desks.some((desk) => !("isPending" in desk));
-    if (!team || !hasSession) {
-      window.alert("Add at least one agent to this room before sharing it.");
-      return;
-    }
-    try {
-      await api.publicRooms.share({
-        team_id: team.id,
-        team_name: team.name || serverTeamName(team.id, sessionsRef.current),
-        shared: true,
-      });
-      const latest = await api.sessions.list(50);
-      sessionsRef.current = latest;
-      setSessions(latest);
-      setTeams((prev) => mergeServerTeams(prev, latest));
-      await refreshTopRooms();
-    } catch (e) {
-      window.alert((e as Error).message || "Couldn't share this room.");
+      window.alert((e as Error).message || "Couldn't copy this project into Home.");
     }
   }
 
@@ -1301,11 +1203,14 @@ export default function App() {
       window.alert("Add at least one private agent before sharing a project.");
       return;
     }
-    const ok = window.confirm("Share the current private workspace as a Public Project? OSA will publish the project structure and its agent tasks for copy-only reuse.");
-    if (!ok) return;
+    const projectName = window.prompt(
+      "Share all private rooms and agents as one public project. Choose a public project name:",
+      "OSA Project",
+    );
+    if (projectName === null) return;
     try {
       await api.publicProjects.share({
-        name: "OSA Project",
+        name: projectName.trim() || "OSA Project",
         rooms: privateTeams.map((team) => ({ id: team.id, name: team.name || serverTeamName(team.id, sessionsRef.current) })),
       });
       const latest = await api.sessions.list(50);
@@ -1345,7 +1250,7 @@ export default function App() {
       return;
     }
     setTeams((prev) => {
-      const targetTeamId = res.team_id === PUBLIC_TEAM_ID ? PUBLIC_TEAM_ID : HOME_TEAM_ID;
+      const targetTeamId = PUBLIC_TEAM_IDS.has(res.team_id || "") ? PUBLIC_PROJECTS_TEAM_ID : HOME_TEAM_ID;
       const idx = prev.findIndex((t) => t.id === targetTeamId);
       const target = idx >= 0 ? idx : 0;
       return prev.map((t, i) => (i === target ? { ...t, desks: [...t.desks, session] } : t));
@@ -1425,7 +1330,7 @@ export default function App() {
     removeStoredItems(WORKBENCH_KEY_V2, [WORKBENCH_LEGACY_KEY_V2]);
     removeStoredItems(WORKBENCH_KEY_V1, [WORKBENCH_LEGACY_KEY_V1]);
     setPendingTexts({});
-    setTeams([makeHomeTeam(), makePublicTeam(), makePublicRoomsTeam(), makePublicProjectsTeam()]);
+    setTeams([makeHomeTeam(), makePublicProjectsTeam()]);
     try {
       const r = await api.docker.cleanup();
       if (r.skipped) {
@@ -1441,11 +1346,11 @@ export default function App() {
   const activeCount = realDesks.filter((s) => s.is_running === true).length;
   const deskCount = realDesks.length;
   const networkStats = {
-    publicAgents: sessions.filter((session) => session.team_id === PUBLIC_TEAM_ID).length,
-    publicRooms: sessions.filter((session) => session.team_id === PUBLIC_ROOMS_TEAM_ID).length,
+    publicAgents: 0,
+    publicRooms: 0,
     publicProjects: sessions.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID).length,
-    copies: [...topAgents, ...topRooms, ...topProjects].reduce((sum, item) => sum + Number(item.copy_count || 0), 0),
-    donationsUsdc: [...topAgents, ...topRooms, ...topProjects].reduce((sum, item) => sum + Number(item.donation_total_usdc || 0), 0),
+    copies: topProjects.reduce((sum, item) => sum + Number(item.copy_count || 0), 0),
+    donationsUsdc: topProjects.reduce((sum, item) => sum + Number(item.donation_total_usdc || 0), 0),
     onlineAgents: activeCount,
     walletConnected,
     live: networkLive,
@@ -1569,9 +1474,7 @@ export default function App() {
         background: "#0f1626",
       }}>
         {([
-          ["workbench", "Home / Public"],
-          ["top-agents", "Top100 AI Agents"],
-          ["top-rooms", "Top100 Rooms"],
+          ["workbench", "Home / Latest"],
           ["top-projects", "Top100 Projects"],
         ] as const).map(([id, label]) => (
           <button
@@ -1579,8 +1482,6 @@ export default function App() {
             type="button"
             onClick={() => {
               setDashboardTab(id);
-              if (id === "top-agents") void refreshTopAgents();
-              if (id === "top-rooms") void refreshTopRooms();
               if (id === "top-projects") void refreshTopProjects();
             }}
             style={{
@@ -1619,7 +1520,7 @@ export default function App() {
         <button
           type="button"
           onClick={() => void shareProject()}
-          title="Share the current private workspace to Public Projects"
+          title="Share the current private workspace as one public project"
           style={{
             height: 30,
             padding: "0 12px",
@@ -1657,36 +1558,12 @@ export default function App() {
           <span>{networkNotice} Latest and Top100 refreshed.</span>
         </div>
       )}
-      {dashboardTab === "top-agents" ? (
-        <TopAgentsPanel
-          agents={topAgents}
-          title="Top100 AI Agents"
-          subtitle="Agents ranked by Public copies. Copy one into Home or donate USDC to its builder."
-          emptyText="Share a Home agent to Public to start the agent chart."
-          entityLabel="agent"
-          loading={topAgentsLoading}
-          onRefresh={refreshTopAgents}
-          onCopy={copyDeskToHome}
-          onDonateRecorded={refreshTopAgents}
-        />
-      ) : dashboardTab === "top-rooms" ? (
-        <TopAgentsPanel
-          agents={topRooms}
-          title="Top100 Rooms"
-          subtitle="Rooms ranked by copies. Copy a room to get its agents in a fresh private room."
-          emptyText="Share a room to Public Rooms to start the room chart."
-          entityLabel="room"
-          loading={topRoomsLoading}
-          onRefresh={refreshTopRooms}
-          onCopy={copyDeskToHome}
-          onDonateRecorded={refreshTopRooms}
-        />
-      ) : dashboardTab === "top-projects" ? (
+      {dashboardTab === "top-projects" ? (
         <TopAgentsPanel
           agents={topProjects}
           title="Top100 Projects"
-          subtitle="Projects ranked by copies. Copy a project to import its rooms and agents."
-          emptyText="Share a project to Public Projects to start the project chart."
+          subtitle="Projects ranked by copies. Copy a project to import its rooms and agents, donate USDC to the builder, or leave a review."
+          emptyText="Share a project to start the chart."
           entityLabel="project"
           loading={topProjectsLoading}
           onRefresh={refreshTopProjects}
@@ -1727,8 +1604,6 @@ export default function App() {
           onDeskClose={closeDesk}
           onAddDesk={addDeskToTeam}
           onCopyDesk={copyDeskToHome}
-          onPublicShareChange={setPublicShare}
-          onShareTeam={shareRoom}
           onDeleteTeam={deleteRoom}
           onTeamSceneChange={setTeamScene}
           onTeamRename={renameTeam}

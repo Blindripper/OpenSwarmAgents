@@ -131,7 +131,7 @@ export function Office({
 
       <div data-floor-scroll style={{ flex: 1, overflowY: "auto", overflowX: "hidden", paddingBottom: FLOOR_BOTTOM_RESERVE }}>
         {teams.map((team, idx) => {
-          const isPublicRoom = team.id === "public-room" || team.id === "public-rooms-room" || team.id === "public-projects-room";
+          const isPublicRoom = team.id === "public-projects-room";
           const isProtectedRoom = team.id === "home-room" || isPublicRoom;
           return (
           <TeamRow
@@ -171,8 +171,8 @@ export function Office({
             readOnly={isPublicRoom}
             canAddDesk={!isPublicRoom}
             onCopyDesk={onCopyDesk}
-            onPublicShareChange={!isPublicRoom ? onPublicShareChange : undefined}
-            onShareTeam={!isPublicRoom ? () => onShareTeam?.(team.id) : undefined}
+            onPublicShareChange={undefined}
+            onShareTeam={undefined}
             onAddDesk={() => onAddDesk(team.id)}
             onSessionInterrupt={onSessionInterrupt}
             onPendingMsgChange={onPendingMsgChange}

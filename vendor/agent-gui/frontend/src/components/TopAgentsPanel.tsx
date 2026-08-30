@@ -35,9 +35,9 @@ function shortAddress(address: string): string {
 
 export function TopAgentsPanel({
   agents,
-  title = "Top100 AI Agents",
-  subtitle = "Ranked by Public copies. Copy agents into Home or donate USDC to their builders.",
-  emptyText = "Share a Home agent to Public to start the chart.",
+  title = "Top100 Projects",
+  subtitle = "Ranked by copies. Copy a project into Home, donate USDC to its builder, or leave a review.",
+  emptyText = "Share a project to start the chart.",
   entityLabel = "agent",
   loading = false,
   onRefresh,
@@ -481,7 +481,7 @@ export function TopAgentsPanel({
             )}
 
             <div style={{ marginTop: 12, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.4 }}>
-              Wallet pubkeys identify OSA donors and can later power decentralized owner/reputation views.
+              Wallet pubkeys identify OSA project donors and can later power decentralized owner/reputation views.
               OSA keeps 5% for development and running costs, also known as the tiny infrastructure coffee tax.
             </div>
             {wallet && (

@@ -137,11 +137,6 @@ export const api = {
         `/sessions/${encodeURIComponent(id)}/copy`,
         {},
       ),
-    share: (id: string, shared: boolean) =>
-      post<{ ok: boolean; shared_public: boolean; copy_count: number; session?: Session; public_session?: Session | null }>(
-        `/sessions/${encodeURIComponent(id)}/share`,
-        { shared },
-      ),
     redirect: (id: string, content: string, attachments?: { name: string; data: string }[], reasoning_effort?: string, api_mode?: string) =>
       post<{ ok: boolean }>(`/sessions/${id}/redirect`, {
         content,
@@ -296,10 +291,6 @@ export const api = {
       return ws;
     },
   },
-  topAgents: (limit = 100) =>
-    get<{ agents: TopAgent[]; generated_at: string }>(`/top-agents?limit=${limit}`),
-  topRooms: (limit = 100) =>
-    get<{ agents: TopAgent[]; generated_at: string }>(`/top-rooms?limit=${limit}`),
   topProjects: (limit = 100) =>
     get<{ agents: TopAgent[]; generated_at: string }>(`/top-projects?limit=${limit}`),
   networkStream: (
@@ -328,10 +319,6 @@ export const api = {
         fee?: { percent: number; wallet: string; amount: number };
         agent?: TopAgent | null;
       }>("/donations", body),
-  },
-  publicRooms: {
-    share: (body: { team_id: string; team_name?: string; shared?: boolean }) =>
-      post<{ ok: boolean; shared_public: boolean; room?: Session }>("/public/rooms/share", body),
   },
   publicProjects: {
     share: (body: { name?: string; rooms?: { id: string; name?: string }[] }) =>

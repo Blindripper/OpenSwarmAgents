@@ -50,8 +50,6 @@ const federationPeerSyncs = new Set();
 const managedConnectorProcesses = new Map();
 const managedConnectorLogLimit = 12 * 1024;
 const agentGuiHomeTeamId = "home-room";
-const agentGuiPublicTeamId = "public-room";
-const agentGuiPublicRoomsTeamId = "public-rooms-room";
 const agentGuiPublicProjectsTeamId = "public-projects-room";
 const osaDonationFeeWallet = "0x0D92d175943336E3Ad099e55FBe4248dC6fA947b";
 const osaDonationFeePercent = 5;
@@ -2944,12 +2942,8 @@ function agentGuiSessions() {
     const isDashboardHomeTask = task.agentGuiRoom === "home"
       || task.source === "agent-gui-home"
       || (task.agentGuiConnectorId && task.source === "agent-gui");
-    const isExplicitPublicTask = task.agentGuiRoom === "public" || task.source === "agent-gui-public";
     if (isDashboardHomeTask) {
       taskSessions.push(agentGuiTaskSession(task, "home"));
-    }
-    if (task.sharedPublic || isExplicitPublicTask) {
-      taskSessions.push(agentGuiTaskSession(task, "public"));
     }
   }
   return [...taskSessions, ...agentGuiPublicCollectionSessions()]
@@ -3069,12 +3063,13 @@ function agentGuiRankedPublicCollections(type, limit = 100) {
 function agentGuiPublicCollectionSession(item, type) {
   const donationStats = agentGuiDonationStats(type, item.id);
   const reviewStats = type === "project" ? agentGuiProjectReviewStats(item.id) : {};
+  const isProject = type === "project";
   return {
-    id: `${type === "room" ? "public-room" : "public-project"}-${item.id}`,
+    id: `${isProject ? "public-project" : "public-room"}-${item.id}`,
     started_at: item.sharedAt,
     ended_at: item.updatedAt || item.sharedAt,
-    source: type === "room" ? "osa-public-room" : "osa-public-project",
-    model: type === "room" ? "OSA Room" : "OSA Project",
+    source: isProject ? "osa-public-project" : "osa-public-room",
+    model: isProject ? "OSA Project" : "OSA Room",
     parent_session_id: null,
     title: item.name,
     message_count: item.taskIds.length,
@@ -3082,17 +3077,17 @@ function agentGuiPublicCollectionSession(item, type) {
     is_running: false,
     first_activity_at: item.sharedAt,
     last_activity_at: item.updatedAt || item.sharedAt,
-    title_summary: type === "room" ? "Public Room" : "Public Project",
+    title_summary: isProject ? item.name : "Public Room",
     auto_continue: false,
     task_solved: true,
     workspace_path: null,
     is_sleeping: false,
-    agent: type === "room" ? "public-room" : "public-project",
+    agent: isProject ? "public-project" : "public-room",
     agent_model: `${item.taskIds.length} ${item.taskIds.length === 1 ? "agent" : "agents"}`,
     agent_base_url: "",
-    desk_tools: type === "room" ? ["room", "copy", "donate"] : ["project", "copy", "donate"],
-    team_id: type === "room" ? agentGuiPublicRoomsTeamId : agentGuiPublicProjectsTeamId,
-    team_name: type === "room" ? "Public Rooms" : "Public Projects",
+    desk_tools: isProject ? ["project", "copy", "donate"] : ["room", "copy", "donate"],
+    team_id: agentGuiPublicProjectsTeamId,
+    team_name: "Latest Projects",
     shared_public: true,
     shared_public_at: item.sharedAt,
     public_kind: type,
@@ -3107,9 +3102,8 @@ function agentGuiPublicCollectionSession(item, type) {
 }
 
 function agentGuiPublicCollectionSessions() {
-  const roomSessions = store.publicRooms.map((item) => agentGuiPublicCollectionSession(item, "room"));
   const projectSessions = store.publicProjects.map((item) => agentGuiPublicCollectionSession(item, "project"));
-  return [...roomSessions, ...projectSessions];
+  return projectSessions;
 }
 
 function agentGuiTaskSession(task, roomOverride = null) {
@@ -3149,8 +3143,8 @@ function agentGuiTaskSession(task, roomOverride = null) {
     agent_model: displayModel,
     agent_base_url: "",
     desk_tools: task.requiredCapabilities || [task.type || "task"],
-    team_id: room === "home" ? normalizeAgentGuiPrivateTeamId(task.agentGuiTeamId) : agentGuiPublicTeamId,
-    team_name: room === "home" ? task.agentGuiTeamName || null : "Public",
+    team_id: normalizeAgentGuiPrivateTeamId(task.agentGuiTeamId),
+    team_name: task.agentGuiTeamName || null,
     shared_public: Boolean(task.sharedPublic),
     shared_public_at: task.sharedPublicAt || null,
     public_rank: publicRank,
@@ -3190,7 +3184,7 @@ function agentGuiTaskRoom(task) {
 
 function normalizeAgentGuiPrivateTeamId(teamId) {
   const value = String(teamId || "").trim();
-  if (!value || [agentGuiHomeTeamId, agentGuiPublicTeamId, agentGuiPublicRoomsTeamId, agentGuiPublicProjectsTeamId].includes(value)) return agentGuiHomeTeamId;
+  if (!value || ["public-room", "public-rooms-room", agentGuiPublicProjectsTeamId, agentGuiHomeTeamId].includes(value)) return agentGuiHomeTeamId;
   const clean = value
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "-")
@@ -3629,7 +3623,6 @@ async function copyPublicCollectionToHome(sessionId, type) {
 }
 
 async function copyAgentGuiSessionToHome(sessionId) {
-  if (sessionId.startsWith("public-room-")) return copyPublicCollectionToHome(sessionId, "room");
   if (sessionId.startsWith("public-project-")) return copyPublicCollectionToHome(sessionId, "project");
   const taskId = agentGuiTaskIdFromSessionId(sessionId);
   const sourceTask = store.tasks.find((item) => item.id === taskId);
@@ -3667,39 +3660,11 @@ async function copyAgentGuiSessionToHome(sessionId) {
 }
 
 async function setAgentGuiSessionPublicShare(sessionId, shared) {
-  const taskId = agentGuiTaskIdFromSessionId(sessionId);
-  const task = store.tasks.find((item) => item.id === taskId);
-  if (!task) {
-    const error = new Error("OSA desk not found.");
-    error.statusCode = 404;
-    throw error;
-  }
-  if (agentGuiSessionRoom(sessionId, task) !== "home") {
-    const error = new Error("Only Home agents can be shared or unshared.");
-    error.statusCode = 409;
-    throw error;
-  }
-
-  const nextShared = Boolean(shared);
-  const changed = Boolean(task.sharedPublic) !== nextShared;
-  task.sharedPublic = nextShared;
-  task.sharedPublicAt = nextShared ? (task.sharedPublicAt || now()) : null;
-  task.updatedAt = now();
-  if (changed) {
-    event(nextShared ? "agentgui_session_shared" : "agentgui_session_unshared", nextShared ? "Home agent shared to Public" : "Home agent removed from Public", {
-      taskId: task.id,
-      goalId: task.goalId,
-      copyCount: Math.max(0, Number(task.copyCount || 0))
-    });
-  }
-  await saveStore();
-  return {
-    ok: true,
-    shared_public: Boolean(task.sharedPublic),
-    copy_count: Math.max(0, Number(task.copyCount || 0)),
-    session: agentGuiTaskSession(task, "home"),
-    public_session: task.sharedPublic ? agentGuiTaskSession(task, "public") : null
-  };
+  void sessionId;
+  void shared;
+  const error = new Error("Individual agents are no longer shared on their own. Use Share Project to publish the whole project.");
+  error.statusCode = 410;
+  throw error;
 }
 
 function agentGuiTasksForPrivateTeam(teamId) {
@@ -3721,46 +3686,10 @@ function agentGuiAllPrivateProjectTasks() {
 }
 
 async function shareAgentGuiRoom(body = {}) {
-  const teamId = normalizeAgentGuiPrivateTeamId(body.team_id || body.teamId || agentGuiHomeTeamId);
-  const shared = body.shared !== false;
-  const existingIndex = store.publicRooms.findIndex((item) => item.sourceTeamId === teamId);
-  if (!shared) {
-    if (existingIndex >= 0) store.publicRooms.splice(existingIndex, 1);
-    await saveStore();
-    return { ok: true, shared_public: false };
-  }
-  const tasks = agentGuiTasksForPrivateTeam(teamId);
-  if (!tasks.length) {
-    const error = new Error("Add at least one agent to this room before sharing it.");
-    error.statusCode = 409;
-    throw error;
-  }
-  const sharedAt = now();
-  const name = String(body.team_name || body.name || (teamId === agentGuiHomeTeamId ? "Home" : "Room")).trim().slice(0, 120) || "Room";
-  const summary = `${name} room with ${tasks.length} ${tasks.length === 1 ? "agent" : "agents"}.`;
-  const next = {
-    id: existingIndex >= 0 ? store.publicRooms[existingIndex].id : `room-${slugify(name)}-${randomUUID().slice(0, 8)}`,
-    type: "room",
-    sourceTeamId: teamId,
-    name,
-    summary,
-    taskIds: tasks.map((task) => task.id),
-    rooms: [{ id: teamId, name, taskIds: tasks.map((task) => task.id) }],
-    sharedAt: existingIndex >= 0 ? store.publicRooms[existingIndex].sharedAt : sharedAt,
-    updatedAt: sharedAt,
-    copyCount: existingIndex >= 0 ? Math.max(0, Number(store.publicRooms[existingIndex].copyCount || 0)) : 0,
-    lastCopiedAt: existingIndex >= 0 ? store.publicRooms[existingIndex].lastCopiedAt || null : null,
-    ownerWalletAddress: null
-  };
-  if (existingIndex >= 0) store.publicRooms[existingIndex] = next;
-  else store.publicRooms.unshift(next);
-  event("agentgui_room_shared", "Room shared to Public Rooms", {
-    publicRoomId: next.id,
-    sourceTeamId: teamId,
-    taskIds: next.taskIds
-  });
-  await saveStore();
-  return { ok: true, shared_public: true, room: agentGuiPublicCollectionSession(next, "room") };
+  void body;
+  const error = new Error("Rooms are no longer shared on their own. Use Share Project to publish rooms and agents together.");
+  error.statusCode = 410;
+  throw error;
 }
 
 async function shareAgentGuiProject(body = {}) {
@@ -3851,32 +3780,18 @@ function agentGuiDonationTargetFromBody(body = {}) {
   if (explicitType && explicitId) {
     const targetType = String(explicitType);
     const targetId = String(explicitId).slice(0, 140);
-    if (targetType === "agent") {
-      const task = store.tasks.find((item) => item.id === targetId && item.sharedPublic);
-      if (task) return { targetType, targetId, sessionId: `public-${task.id}` };
-    }
-    if (targetType === "room" && store.publicRooms.some((item) => item.id === targetId)) {
-      return { targetType, targetId, sessionId: `public-room-${targetId}` };
-    }
     if (targetType === "project" && store.publicProjects.some((item) => item.id === targetId)) {
       return { targetType, targetId, sessionId: `public-project-${targetId}` };
     }
   }
 
   const sessionId = String(body.session_id || body.sessionId || "").slice(0, 140);
-  if (sessionId.startsWith("public-room-")) {
-    const targetId = sessionId.slice("public-room-".length);
-    if (store.publicRooms.some((item) => item.id === targetId)) return { targetType: "room", targetId, sessionId };
-  }
   if (sessionId.startsWith("public-project-")) {
     const targetId = sessionId.slice("public-project-".length);
     if (store.publicProjects.some((item) => item.id === targetId)) return { targetType: "project", targetId, sessionId };
   }
-  const taskId = agentGuiTaskIdFromSessionId(sessionId);
-  const task = store.tasks.find((item) => item.id === taskId && item.sharedPublic);
-  if (task) return { targetType: "agent", targetId: task.id, sessionId: `public-${task.id}` };
 
-  const error = new Error("Public donation target not found.");
+  const error = new Error("Public donation target not found. OSA accepts donations for shared projects.");
   error.statusCode = 404;
   throw error;
 }
@@ -4102,7 +4017,7 @@ function agentGuiGoalForStart(body, title, content) {
     status: "active",
     supporters: 0,
     sourceProposalId: null,
-    source: teamId === agentGuiPublicTeamId ? "agent-gui-public" : "agent-gui-home",
+    source: "agent-gui-home",
     createdAt: now()
   };
   store.goals.unshift(goal);
@@ -4154,7 +4069,7 @@ function openClawSetupStatus() {
     agent_gui_linked: linked,
     setup_complete: linked && available,
     profile: "Codex / OpenClaw",
-    rooms: { home: agentGuiHomeTeamId, public: agentGuiPublicTeamId },
+    rooms: { home: agentGuiHomeTeamId, public: agentGuiPublicProjectsTeamId },
     message: linked && available
       ? "OpenClaw is connected to the OSA AgentGUI adapter."
       : "OpenClaw needs to be installed or available on this host before local agents can run from Home.",
@@ -4288,9 +4203,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       manager: { base_url: "", model: "OSA manager", uses_effective_agent_model: true },
       rooms: [
         { id: agentGuiHomeTeamId, name: "Home" },
-        { id: agentGuiPublicTeamId, name: "Public" },
-        { id: agentGuiPublicRoomsTeamId, name: "Public Rooms" },
-        { id: agentGuiPublicProjectsTeamId, name: "Public Projects" }
+        { id: agentGuiPublicProjectsTeamId, name: "Latest Projects" }
       ]
     });
   }
@@ -4445,12 +4358,10 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     return sendJson(res, 200, agentGuiSessions().filter((session) => `${session.title} ${session.title_summary}`.toLowerCase().includes(q)));
   }
   if (method === "GET" && path === "/api/top-agents") {
-    const limit = Number(url.searchParams.get("limit") || 100);
-    return sendJson(res, 200, { agents: agentGuiTopAgents(limit), generated_at: now() });
+    return sendJson(res, 200, { agents: [], generated_at: now(), deprecated: true, detail: "OSA now ranks shared projects only." });
   }
   if (method === "GET" && path === "/api/top-rooms") {
-    const limit = Number(url.searchParams.get("limit") || 100);
-    return sendJson(res, 200, { agents: agentGuiRankedPublicCollections("room", limit), generated_at: now() });
+    return sendJson(res, 200, { agents: [], generated_at: now(), deprecated: true, detail: "OSA now ranks shared projects only." });
   }
   if (method === "GET" && path === "/api/top-projects") {
     const limit = Number(url.searchParams.get("limit") || 100);

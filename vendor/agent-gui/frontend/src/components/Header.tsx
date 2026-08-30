@@ -191,9 +191,9 @@ export function Header({
         minWidth: 0,
         gap: 8,
       }}>
-        <TopMetric label="PUBLIC ITEMS" value={String(stats.publicAgents + stats.publicRooms + stats.publicProjects)} hint={`${stats.publicAgents} agents, ${stats.publicRooms} rooms, ${stats.publicProjects} projects shared to the public network`} />
+        <TopMetric label="PROJECTS" value={String(stats.publicProjects)} hint="Shared projects visible in Latest Projects and Top100 Projects" />
         <TopMetric label="ONLINE" value={String(stats.onlineAgents)} hint="Agents currently running on this node" tone={stats.onlineAgents > 0 ? "green" : "muted"} />
-        <TopMetric label="COPIES" value={String(stats.copies)} hint="Total public copies across agents, rooms, and projects" />
+        <TopMetric label="COPIES" value={String(stats.copies)} hint="Total public project copies in this network view" />
         <TopMetric label="DONATIONS" value={`${stats.donationsUsdc.toFixed(stats.donationsUsdc % 1 ? 2 : 0)} USDC`} hint="Donation intents recorded by this OSA network view" tone={stats.donationsUsdc > 0 ? "green" : "muted"} />
         <TopMetric label="WALLET" value={stats.walletConnected ? "Connected" : "No wallet"} hint="Wallet pubkey anchors donation and review identity" tone={stats.walletConnected ? "green" : "muted"} />
       </div>

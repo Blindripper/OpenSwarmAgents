@@ -5,11 +5,11 @@
 </p>
 
 <p align="center">
-  <strong>OSA is a local AI agent dashboard with a public copy market.</strong>
+  <strong>OSA is a local AI think tank where people build, share, copy, rank, review, and fund useful agent projects.</strong>
 </p>
 
 <p align="center">
-  Build agents privately, share the useful ones, copy what works, and watch the public network move in real time.
+  Build privately in Home, organize work into rooms, publish the whole thing with Share Project, then watch the public project market move in real time.
 </p>
 
 <p align="center">
@@ -23,32 +23,30 @@
   <img src="docs/assets/osa-dashboard-preview.png" alt="OpenSwarmAgents dashboard preview" width="920" />
 </p>
 
-## What Is OSA?
+## What OSA Does
 
-OpenSwarmAgents, short **OSA**, is an open dashboard for user-owned AI agents.
+OpenSwarmAgents, short **OSA**, gives every user a private agent workspace and a public project marketplace.
 
-The idea is simple:
-
-- **Home** is private. Your agents, your rooms, your work.
-- **Public Agents** shows the latest agents people intentionally shared.
-- **Public Rooms** shows the latest shared rooms.
-- **Public Projects** shows the latest shared projects.
-- **Top100 AI Agents**, **Top100 Rooms**, and **Top100 Projects** rank public items by copy count in real time.
-- **Copy** imports a public agent, room, or project into your own private workspace.
-- **Donate** lets people support the builder with USDC.
+- **Home** is your private starting room.
+- **+ Room** creates extra private rooms for separate ideas, teams, or experiments.
+- **Share Project** publishes the full project: Home, all custom rooms, and all agents inside them.
+- **Latest Projects** shows the newest shared projects entering the public network.
+- **Top100 Projects** ranks shared projects by copy count.
+- **Copy** imports a shared project into your own private workspace.
+- **Donate** lets people pledge USDC to project builders.
 - **Reviews** let wallet-connected users rate public projects with stars and short feedback.
 
-OSA is not trying to be a shiny prompt museum. It is closer to an agent bazaar with a scoreboard: if something is useful, people copy it. If it keeps being useful, it climbs. If it earns donations, everyone sees that too.
+The core idea is brutally simple: useful projects get copied. Copied projects climb. Projects that make people happy can earn donations. The scoreboard is the product truth serum.
 
 ## Screenshots
 
-| Dashboard | Top100 AI Agents |
+| Dashboard | Latest Projects |
 | --- | --- |
-| ![OSA dashboard](docs/assets/osa-dashboard-preview.png) | ![OSA Top100 AI Agents](docs/assets/osa-top100.png) |
+| ![OSA dashboard](docs/assets/osa-dashboard-preview.png) | ![OSA latest projects](docs/assets/osa-public.png) |
 
-| Top100 Rooms | Top100 Projects |
+| Top100 Projects | Project Reviews |
 | --- | --- |
-| ![OSA Top100 Rooms](docs/assets/osa-top100-rooms.png) | ![OSA Top100 Projects](docs/assets/osa-top100-projects.png) |
+| ![OSA Top100 Projects](docs/assets/osa-top100-projects.png) | ![OSA project reviews](docs/assets/osa-top100.png) |
 
 ## Install Step By Step
 
@@ -78,7 +76,7 @@ Open the dashboard:
 http://127.0.0.1:8789
 ```
 
-That is it. Home and Public start empty, because fake demo agents are annoying and nobody asked for a staged office party.
+Home and Latest Projects start clean. No fake demo tasks, no staged productivity theater.
 
 ## Fast Install
 
@@ -118,95 +116,78 @@ Then open:
 http://127.0.0.1:8790
 ```
 
-## How To Use The Dashboard
+## How To Use It
 
-1. Open **Home / Public**.
-2. Create a desk in **Home**.
+1. Open **Home / Latest**.
+2. Type a task into a desk in **Home**.
 3. Choose an Agent Profile or keep the default OpenClaw agent.
-4. Give the agent a task.
-5. Keep it private, or switch the card from **Private** to **Public**.
-6. Create extra rooms with **+ Room** when Home gets too crowded.
-7. Share a whole room with **Share Room**.
-8. Share the current private workspace with **Share Project**.
-9. Open a Top100 tab to see what is being copied, donated to, and reviewed.
+4. Start the agent.
+5. Create extra private rooms with **+ Room** when a project needs structure.
+6. Delete custom rooms when they are no longer useful.
+7. Click **Share Project** when the whole setup is worth publishing.
+8. Watch new public projects appear in **Latest Projects**.
+9. Open **Top100 Projects** to see what the network is copying, funding, and reviewing.
 
 ## Home, Rooms, And Projects
 
 **Home** is your default private room. It is where new agents start.
 
-Rooms are private work areas with their own desks. Use them for separate ideas, teams, experiments, or client work.
+Rooms are private work areas inside your project. Use them to separate research, implementation, marketing, trading, content, support, or any other workflow.
 
-A project is the current private workspace structure: Home plus your custom rooms and the agents inside them.
+A project is the complete private workspace: Home plus every custom room and every agent inside those rooms.
 
-You can share at three levels:
+OSA shares only at the project level. That keeps the product understandable. A copied project arrives with context instead of as one lonely agent card floating around without a plan.
 
-- **Agent:** one useful agent task.
-- **Room:** a bundle of agents from one room.
-- **Project:** a larger bundle with multiple rooms and agents.
+## Latest Projects
 
-Shared items become copy-only public listings. Other users can import them, but they do not control your original agents.
+**Latest Projects** is the live public feed. It shows the newest shared projects first.
 
-## Public Latest Views
+When a new project enters the network, OSA refreshes the feed immediately and shows a small live notice. If bell sounds are enabled, the dashboard can ring the selected OSA bell sound. Subtle enough for humans, loud enough for "wait, something joined the network."
 
-The public dashboard has three latest rows:
-
-- **Public** shows latest public agents.
-- **Public Rooms** shows latest public rooms.
-- **Public Projects** shows latest public projects.
-
-Latest means newest shared item first. These rows are not the ranking board. They are the fresh feed.
-
-When a new public agent, room, or project enters the network, OSA refreshes the feed and shows a small live notice. If bell sounds are enabled in settings, the dashboard can ring the selected OSA bell sound so the new arrival is hard to miss.
-
-Peer syncs also refresh the feed. A federated OSA node can import public agents, rooms, projects, reviews, copy counts, donation totals, and recent network events from trusted peers.
+Peer syncs also refresh the feed. A federated OSA node can import public projects, project reviews, copy counts, donation totals, and recent network events from trusted peers.
 
 ## Topbar
 
-The topbar is built for network awareness:
+The topbar is designed for useful network awareness:
 
-- **Network Live** shows that the browser is connected to the live OSA event stream.
-- **Public Items** shows how many public agents, rooms, and projects are visible.
+- **Network Live** shows that your browser is connected to the live OSA event stream.
+- **Projects** shows how many public projects are visible.
 - **Online** shows agents currently running on this node.
-- **Copies** shows total public copies visible in this dashboard.
+- **Copies** shows total project copies visible in this dashboard.
 - **Donations** shows total USDC donation intents visible in this dashboard.
 - **Wallet** shows whether this browser has a connected wallet identity.
 
-## Top100 Rankings
+## Top100 Projects
 
-OSA has three charts:
+**Top100 Projects** ranks public projects by copy count. Rank `#1` means that project has been copied more than the others in this network view.
 
-- **Top100 AI Agents**
-- **Top100 Rooms**
-- **Top100 Projects**
+Tie-breaker: if copy counts are equal, newer public shares appear above older ones.
 
-Each chart ranks public items by copy count. Rank `#1` means the item has been copied more often than the others in that category.
-
-Tie-breaker: newer public shares appear above older shares when copy counts are equal.
-
-Rankings update automatically when someone copies, donates to, reviews, shares, unshares, or imports public catalog items from a peer node. You do not need to reload the page to watch the board move.
+Rankings update automatically when someone shares, copies, donates, reviews, or imports public project data from a peer node. No reload needed. The chart should feel alive because the network is alive.
 
 Each Top100 row shows:
 
-- current rank
+- rank
+- project name
+- room/agent count
 - copy count
 - total USDC earned
-- **Copy** button
-- **Donate** button
-- project rating and **Review** button on project charts
+- average star rating and review count
+- **Copy**
+- **Donate**
+- **Review**
 
 ## Copy Mechanics
 
-Copy does not take ownership of someone else's running agent. It creates your own private copy.
+Copying a project does not take ownership of someone else's running agents. It creates your own private copy.
 
-- Copying an **agent** creates a new Home desk.
-- Copying a **room** creates a new private room with copies of its agents.
-- Copying a **project** creates private project rooms with copied agents.
+When you click **Copy**, OSA shows a short confirmation popup. After confirmation, OSA imports the shared project into your private workspace with its rooms and copied agents. The public original stays untouched.
 
-For rooms and projects, OSA shows a confirmation popup before importing. That popup is intentionally short: you should know when you are about to add a bundle of agents to your workspace.
+That matters: public projects are templates and inspiration, not remote-control handles into someone else's machine.
 
 ## Wallet Login And Donations
 
-Top100 entries have **Copy** and **Donate** buttons.
+Donations need a wallet identity. OSA currently supports EVM wallet connection in the dashboard.
 
 Donate opens a USDC modal with:
 
@@ -214,47 +195,35 @@ Donate opens a USDC modal with:
 - `5 USDC`
 - custom amount
 
-Users connect an EVM wallet to identify themselves by pubkey. That wallet address is useful beyond donations: it can become the decentralized identity anchor for active agents, owners, reputation, copy history, and network presence.
-
 The current donation flow records a USDC donation intent in OSA. Production deployments should connect that intent to a real USDC transaction and verify the transaction hash before treating a donation as settled.
 
-OSA keeps **5%** of donations for development and operating costs. Think of it as the tiny infrastructure coffee tax. The fee wallet is:
+OSA keeps **5%** of donations for development and operating costs. Think of it as the tiny infrastructure coffee tax: not glamorous, but servers, builds, and late-night debugging do not pay themselves.
+
+Fee wallet:
 
 ```text
 0x0D92d175943336E3Ad099e55FBe4248dC6fA947b
 ```
 
-The remaining 95% belongs to the public item builder once real settlement is wired in.
+The remaining 95% belongs to the project builder once real settlement is wired in.
+
+Wallet pubkeys are also useful beyond donations. They can anchor decentralized owner identity, project reputation, copy history, active agent presence, and later stronger trust signals with signed nonces.
 
 ## Project Reviews
 
-Public projects can receive wallet-linked reviews:
+Wallet-connected users can review public projects:
 
 - 1 to 5 stars
 - short headline
 - written feedback
 
-The Top100 Projects chart shows average stars and review count. A wallet can update its own review for the same project, which keeps feedback useful and reduces throwaway spam. It is not full Sybil resistance yet, but it is the right base layer for reputation.
-
-## Decentralized Network Notes
-
-OSA already has a federation snapshot/import path. The public marketplace data now travels with that network layer:
-
-- public agents
-- public rooms
-- public projects
-- project reviews
-- copy counts
-- donation totals
-- recent network events
-
-Wallet pubkeys are useful beyond donations. They can become the anchor for owner identity, active agent presence, project reputation, copy history, and later stronger trust signals such as signed nonces and verified USDC transaction hashes.
+The Top100 Projects chart shows average stars and review count. A wallet can update its own review for the same project, which keeps feedback useful and reduces drive-by noise. This is not full Sybil resistance yet, but it is the right base layer for reputation.
 
 ## Agent Profiles
 
 Agent Profiles are reusable worker presets.
 
-Use them when you want agents with different behavior, naming, or defaults. You can add and delete custom profiles from the dashboard. Built-in prototypes stay available as templates.
+Use them when you want agents with different names, behaviors, models, or defaults. You can add and delete custom profiles from the dashboard. Built-in OpenClaw/Codex prototypes stay available as templates.
 
 ## Local Data
 
@@ -279,7 +248,7 @@ These files are intentionally not committed:
 Local Compose:
 
 ```bash
-docker compose up
+docker compose up --build
 ```
 
 Open:
@@ -288,66 +257,45 @@ Open:
 http://127.0.0.1:8789
 ```
 
-Production-style local Compose:
-
-```bash
-cp .env.production.example .env.production
-chmod 600 .env.production
-```
-
-Edit `.env.production` and set a real password:
-
-```text
-POSTGRES_PASSWORD=change-this-long-random-password
-```
-
-Start:
-
-```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
-```
-
-Check:
-
-```bash
-curl http://127.0.0.1:8789/api/health
-```
-
-Keep production nodes behind a reverse proxy, VPN, tunnel, or private network you control.
-
 ## Troubleshooting
 
-If the AgentGUI frontend is missing:
+If the dashboard does not open:
 
 ```bash
-npm run build:agent-gui
 npm run dev
 ```
 
-If agents do not start, confirm Python 3 is installed and your local OpenClaw/Codex connector works from the same terminal.
-
-If the dashboard looks stale, rebuild the frontend:
+If dependencies are missing:
 
 ```bash
+npm ci
 npm run build:agent-gui
 ```
 
-## Developer Checks
+If another app is using the port:
 
 ```bash
-npm run check
-npm run build:agent-gui
-npm run check:browser
+PORT=8790 npm run dev
 ```
 
-## Project Map
+If local agents cannot start, make sure OpenClaw is available on the host:
 
-- `apps/server/src/server.mjs` - OSA server, API, public catalog, AgentGUI adapter
-- `apps/connector/connector.py` - local connector process
-- `vendor/agent-gui/frontend` - dashboard UI
-- `scripts/install-node.sh` - local installer
-- `docs/assets` - README screenshots
-- `data/seed.json` - intentionally empty startup seed
+```bash
+openclaw --version
+```
+
+## Current Production Notes
+
+OSA already has live dashboard events, project sharing, project copying, rankings, wallet identity, donation intents, and project reviews.
+
+Before treating donations as real settlement in production, wire in:
+
+- wallet signature nonce login
+- USDC transfer flow
+- transaction hash verification
+- chain and token contract validation
+
+That is the difference between "nice dashboard intent" and "money actually moved."
 
 ## License
 

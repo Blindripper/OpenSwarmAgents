@@ -253,29 +253,36 @@ Set `OSA_RATE_LIMIT_MULTIPLIER=0` only for local load tests. The default realtim
 
 `GET /api/sessions`
 
-Returns the current Home/Public dashboard sessions. Fresh nodes start with no task sessions; Home still shows one empty pending desk in the browser so users can start work.
+Returns the current private dashboard sessions plus copy-only Latest Projects listings. Fresh nodes start with no task sessions; Home still shows one empty pending desk in the browser so users can start work.
 
 `POST /api/sessions/new`
 
-Creates a Home desk from the AgentGUI dashboard.
+Creates a private desk from the AgentGUI dashboard.
 
 `POST /api/sessions/:id/share`
 
-Toggles whether a Home desk appears in Public:
+Deprecated. Individual agents are no longer shared on their own; use project sharing instead.
+
+`POST /api/public/projects/share`
+
+Publishes the current private workspace as one public project:
 
 ```json
-{ "shared": true }
+{
+  "name": "Launch Research Project",
+  "rooms": [{ "id": "home-room", "name": "Home" }]
+}
 ```
 
-The response includes `shared_public`, `copy_count`, the Home session, and the Public session when sharing is enabled.
+The response includes the copy-only Latest Projects session for the shared project.
 
 `POST /api/sessions/:id/copy`
 
-Copies a Public desk into Home and increments the copied desk's chart counter. Public desks remain copy-only; visitors cannot resume, stop, delete, or edit them directly.
+Copies a public project into private rooms and increments the project's chart counter. Public project desks remain copy-only; visitors cannot resume, stop, delete, or edit them directly.
 
-`GET /api/top-agents?limit=100`
+`GET /api/top-projects?limit=100`
 
-Returns the Top100 AI Agents chart, sorted by public copy count.
+Returns the Top100 Projects chart, sorted by public copy count. Rows include copy count, donation totals, review count, and rating average.
 
 ## BYOK Provider Keys
 
