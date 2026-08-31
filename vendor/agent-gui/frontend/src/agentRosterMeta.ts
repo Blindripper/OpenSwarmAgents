@@ -1,7 +1,12 @@
 /** Agent Roster category headers — prototype lineage groups. */
 export const ROSTER_CATEGORIES = [
-  { id: "coder", name: "Coder", blurb: "Ships features and squashes bugs", color: "#4a8eff" },
-  { id: "researcher", name: "Researcher", blurb: "Searches through the internet and chases ideas", color: "#e67e22" },
+  { id: "coder", name: "Coder", blurb: "Ships features and verifies code", color: "#38bdf8" },
+  { id: "bugfixer", name: "Bugfixer", blurb: "Reproduces failures and lands fixes", color: "#fb7185" },
+  { id: "info-guy", name: "Info-Guy", blurb: "Finds sourced facts fast", color: "#22c55e" },
+  { id: "coinexpert", name: "Coinexpert", blurb: "Analyzes crypto risk and upside", color: "#f59e0b" },
+  { id: "graphicsexpert", name: "Graphicsexpert", blurb: "Creates visual direction and assets", color: "#a78bfa" },
+  { id: "moneymaker", name: "Moneymaker", blurb: "Turns work into revenue experiments", color: "#14b8a6" },
+  { id: "security-expert", name: "Security Expert", blurb: "Reviews threats and hardening", color: "#ef4444" },
   { id: "local", name: "Local", blurb: "Your friendly laptop-native chat companion", color: "#2ecc71" },
   { id: "api", name: "API", blurb: "The wise oracle for bigger questions", color: "#a78bfa" },
 ] as const;
@@ -43,6 +48,9 @@ export function rosterCategoryForAgent(agent: {
   // API (e.g. the bare "claude" profile) is an API agent too.
   if (agent.id === "claude-sdk" || agent.id === "claude-agent-sdk" || agent.id === "claude-code") return "api";
   if (agent.id === "claude" || (agent.name ?? "").toLowerCase().includes("claude")) return "api";
+  if (agent.id in CATEGORY_BY_ID) {
+    return agent.id as RosterCategoryId;
+  }
   if (agent.is_prototype && agent.id in CATEGORY_BY_ID) {
     return agent.id as RosterCategoryId;
   }

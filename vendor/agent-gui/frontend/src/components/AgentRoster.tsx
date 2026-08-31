@@ -134,7 +134,7 @@ function AgentRosterSlot({
   const draggable = !unavailable && !!onDragStart;
   const displayName = agent.name || agent.id;
   const effectiveColor = avatarPref?.color || agent.color;
-  const editable = !agent.is_prototype && !!onEdit;
+  const editable = !!onEdit;
 
   return (
     <div
@@ -153,9 +153,7 @@ function AgentRosterSlot({
           ? `${displayName} — profile not installed`
           : inUse
             ? `${displayName} — running on a desk · click to edit · drag onto another desk or section`
-            : agent.is_prototype
-              ? `${displayName} — OpenClaw template · drag onto desk or clone into a new profile`
-              : `${displayName} — click to edit · drag onto desk or section`
+            : `${displayName} — click to edit · drag onto desk or section`
       }
     >
       {editable && !unavailable && hov && (
@@ -493,7 +491,7 @@ export function AgentRoster({
         fontSize: 11,
         lineHeight: 1.45,
       }}>
-        Agent Profiles are reusable OpenClaw worker presets. Built-in examples include market, product, and tokenomics agents with their own Soul/Memory; drag one onto a private desk or create your own profile.
+        Agent Profiles are reusable OSA workers with editable Soul/Memory. Drag one onto a private desk, edit an existing specialist, or create your own profile.
       </div>
       <section style={{ marginBottom: 18 }}>
         <EditableHeader

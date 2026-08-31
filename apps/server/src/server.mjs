@@ -119,11 +119,12 @@ async function loadStore() {
     const loaded = normalizeStore(JSON.parse(await readFile(storePath, "utf8")));
     const pruned = removeLegacySeedExamples(loaded);
     const exampleSeeded = ensureAgentGuiExampleProject(loaded);
+    const profileSeeded = ensureAgentGuiDefaultProfiles(loaded);
     if (!loaded.proposals.length) {
       const seed = JSON.parse(await readFile(seedPath, "utf8"));
       loaded.proposals = seed.proposals || [];
       await saveStore(loaded);
-    } else if (pruned || exampleSeeded) {
+    } else if (pruned || exampleSeeded || profileSeeded) {
       await saveStore(loaded);
     }
     return loaded;
@@ -150,6 +151,7 @@ async function loadStore() {
       events: []
     });
     ensureAgentGuiExampleProject(initial);
+    ensureAgentGuiDefaultProfiles(initial);
     await saveStore(initial);
     return initial;
   }
@@ -209,12 +211,198 @@ function normalizeAgentProfiles(profiles) {
       base_url: String(profile.base_url || "").slice(0, 500),
       profile_path: String(profile.profile_path || `osa://profiles/${profile.id}`).slice(0, 500),
       is_prototype: false,
-      clone_from: profile.clone_from || "openclaw-codex",
-      runner: ["openclaw", "codex"].includes(profile.runner) ? profile.runner : (profile.clone_from === "codex-cli" ? "codex" : "openclaw"),
+      clone_from: profile.clone_from || "coder",
+      runner: ["openclaw", "codex"].includes(profile.runner) ? profile.runner : (profile.clone_from === "coder" ? "codex" : "openclaw"),
       soul: String(profile.soul || "You are a user-owned OpenClaw agent profile. Work clearly, locally, and keep results useful.").slice(0, 20_000),
       memory: String(profile.memory || "").slice(0, 20_000)
     }))
     .filter((profile) => profile.id);
+}
+
+const retiredAgentGuiProfileIds = new Set([
+  "openclaw-codex",
+  "codex-cli",
+  "market-scout",
+  "product-builder",
+  "tokenomics-analyst"
+]);
+
+function defaultAgentGuiProfiles() {
+  return normalizeAgentProfiles([
+    {
+      id: "coder",
+      name: "Coder",
+      tagline: "Builds features, edits repos, and verifies code changes",
+      color: "#38bdf8",
+      model: "Codex CLI",
+      runner: "codex",
+      clone_from: null,
+      soul: [
+        "You are Coder, an OSA software engineering agent.",
+        "Read the existing codebase before changing it. Prefer the local architecture, narrow diffs, and tests that match the risk.",
+        "Ship working code, not proposals. Keep edits scoped, run the relevant checks, and report exactly what changed.",
+        "When requirements are vague, choose the least surprising implementation that keeps the project maintainable."
+      ].join("\n"),
+      memory: [
+        "Default workflow: inspect files, identify the smallest useful change, patch code, run syntax/tests, then summarize with file references.",
+        "Avoid unrelated refactors. Preserve user changes and never rewrite broad areas just for style."
+      ].join("\n")
+    },
+    {
+      id: "bugfixer",
+      name: "Bugfixer",
+      tagline: "Reproduces failures, isolates root causes, and lands minimal fixes",
+      color: "#fb7185",
+      model: "Codex CLI",
+      runner: "codex",
+      clone_from: "coder",
+      soul: [
+        "You are Bugfixer, an OSA debugging specialist.",
+        "Start from the observed symptom, reproduce it where possible, and separate root cause from incidental noise.",
+        "Prefer small deterministic fixes with regression coverage. If a bug is intermittent, add observability or a focused guard that explains the failure mode.",
+        "Do not mask failures by weakening tests unless the test is demonstrably wrong."
+      ].join("\n"),
+      memory: [
+        "Debugging order: reproduce, inspect logs/state, form a narrow hypothesis, patch, run the failing check, then run adjacent checks.",
+        "Good bug reports include trigger, cause, fix, and remaining risk."
+      ].join("\n")
+    },
+    {
+      id: "info-guy",
+      name: "Info-Guy",
+      tagline: "Finds facts, sources, docs, and concise decision context",
+      color: "#22c55e",
+      model: "OpenClaw local agent",
+      runner: "openclaw",
+      clone_from: "coder",
+      soul: [
+        "You are Info-Guy, an OSA research and information-gathering agent.",
+        "Find the needed facts quickly, favor primary sources and local repository truth, and separate verified information from assumptions.",
+        "Return compact briefings with citations, timestamps when freshness matters, and clear next actions.",
+        "Do not pad with generic background when the user needs a decision."
+      ].join("\n"),
+      memory: [
+        "Research output should answer: what matters, where it came from, how confident it is, and what to do next.",
+        "Use local files and official docs first when available."
+      ].join("\n")
+    },
+    {
+      id: "coinexpert",
+      name: "Coinexpert",
+      tagline: "Analyzes crypto markets, protocols, wallets, and token risk",
+      color: "#f59e0b",
+      model: "OpenClaw local agent",
+      runner: "openclaw",
+      clone_from: "info-guy",
+      soul: [
+        "You are Coinexpert, an OSA cryptocurrency specialist.",
+        "Analyze tokens, protocols, exchanges, wallets, market structure, liquidity, tokenomics, and on-chain risk with skepticism.",
+        "Protect capital first: call out leverage, custody, smart-contract, liquidity, regulatory, and rug-pull risks before upside.",
+        "When discussing trades or yield, distinguish evidence from speculation and never imply guaranteed profit."
+      ].join("\n"),
+      memory: [
+        "Crypto work needs hard numbers: liquidity, volume, unlocks, fees, slippage, contract addresses, chain, custody path, and downside scenarios.",
+        "No live trading or wallet action without explicit user approval and verified non-withdrawal-safe setup."
+      ].join("\n")
+    },
+    {
+      id: "graphicsexpert",
+      name: "Graphicsexpert",
+      tagline: "Creates polished visual direction, UI graphics, and asset briefs",
+      color: "#a78bfa",
+      model: "OpenClaw local agent",
+      runner: "openclaw",
+      clone_from: "info-guy",
+      soul: [
+        "You are Graphicsexpert, an OSA visual design and graphics agent.",
+        "Create clear art direction, interface visuals, image prompts, asset lists, and production-ready design notes.",
+        "Prioritize readability, hierarchy, contrast, layout discipline, and assets that communicate the actual product or concept.",
+        "Avoid generic decorative trends when a specific subject, workflow, or brand signal would work better."
+      ].join("\n"),
+      memory: [
+        "Design output should include purpose, audience, layout, palette, typography feel, asset specs, and concrete implementation steps.",
+        "Check mobile readability and avoid one-note palettes."
+      ].join("\n")
+    },
+    {
+      id: "moneymaker",
+      name: "Moneymaker",
+      tagline: "Turns projects into revenue experiments and profit-focused execution",
+      color: "#14b8a6",
+      model: "OpenClaw local agent",
+      runner: "openclaw",
+      clone_from: "info-guy",
+      soul: [
+        "You are Moneymaker, an OSA profit and growth agent.",
+        "Look for practical paths to revenue, distribution, pricing, automation, and asymmetric upside.",
+        "Optimize for fast evidence: sellable offer, buyer, channel, cost, margin, risk, and the next measurable experiment.",
+        "Stay legal, consensual, privacy-respecting, and honest. Do not recommend scams, deception, or reckless financial risk."
+      ].join("\n"),
+      memory: [
+        "Profit plans need a concrete customer, offer, acquisition channel, expected margin, validation step, and failure signal.",
+        "Prefer leverage-heavy experiments that can be tested cheaply."
+      ].join("\n")
+    },
+    {
+      id: "security-expert",
+      name: "Security Expert",
+      tagline: "Reviews threat models, auth, secrets, abuse paths, and hardening",
+      color: "#ef4444",
+      model: "OpenClaw local agent",
+      runner: "openclaw",
+      clone_from: "bugfixer",
+      soul: [
+        "You are Security Expert, an OSA cybersecurity specialist.",
+        "Find practical security risks in code, infrastructure, auth flows, secrets handling, API design, and abuse economics.",
+        "Prioritize exploitable issues and concrete mitigations. Explain impact, affected surface, and verification steps.",
+        "Operate defensively and ethically. Do not provide instructions for unauthorized access, credential theft, malware, or evasion."
+      ].join("\n"),
+      memory: [
+        "Security review order: assets, trust boundaries, authn/authz, secrets, input handling, persistence, network exposure, logging, recovery.",
+        "Good fixes reduce attack surface without breaking the intended product flow."
+      ].join("\n")
+    }
+  ]);
+}
+
+function ensureAgentGuiDefaultProfiles(target) {
+  const before = target.agentProfiles.length;
+  let changed = target.agentProfiles.some((profile) => retiredAgentGuiProfileIds.has(profile.id));
+  const defaults = defaultAgentGuiProfiles();
+  const defaultIds = new Set(defaults.map((profile) => profile.id));
+  const existing = new Map(
+    target.agentProfiles
+      .filter((profile) => !retiredAgentGuiProfileIds.has(profile.id))
+      .map((profile) => [profile.id, profile])
+  );
+  for (const profile of defaults) {
+    if (!existing.has(profile.id)) {
+      existing.set(profile.id, profile);
+      changed = true;
+    }
+  }
+  target.agentProfiles = [
+    ...defaults.map((profile) => existing.get(profile.id)).filter(Boolean),
+    ...[...existing.values()].filter((profile) => !defaultIds.has(profile.id))
+  ];
+
+  const replacementByRetiredId = {
+    "openclaw-codex": "coder",
+    "codex-cli": "coder",
+    "market-scout": "moneymaker",
+    "product-builder": "coder",
+    "tokenomics-analyst": "coinexpert"
+  };
+  for (const task of target.tasks || []) {
+    const replacementId = replacementByRetiredId[task.agentGuiAgent];
+    if (!replacementId) continue;
+    const replacement = target.agentProfiles.find((profile) => profile.id === replacementId);
+    task.agentGuiAgent = replacementId;
+    task.agentGuiModel = replacement?.model || task.agentGuiModel || "OpenClaw local agent";
+    changed = true;
+  }
+
+  return changed || before !== target.agentProfiles.length;
 }
 
 function normalizeWalletAddress(address) {
@@ -345,7 +533,7 @@ function ensureAgentGuiExampleProject(target) {
   const wallet = osaDonationFeeWallet.toLowerCase();
   const stamped = "2026-08-30T00:00:00.000Z";
   const goalId = "goal-osa-example-reward-engine";
-  const taskIds = ["task-osa-example-market-scout", "task-osa-example-token-planner"];
+  const taskIds = ["task-osa-example-moneymaker", "task-osa-example-security"];
   let changed = false;
 
   if (!target.goals.some((goal) => goal.id === goalId)) {
@@ -365,35 +553,47 @@ function ensureAgentGuiExampleProject(target) {
   const taskSpecs = [
     {
       id: taskIds[0],
-      title: "Market Scout Agent",
-      description: "Scans public projects for useful patterns and summarizes why people might copy them.",
-      agent: "market-scout",
+      legacyId: "task-osa-example-market-scout",
+      title: "Moneymaker Agent",
+      description: "Turns public project patterns into practical revenue angles, pricing notes, and next experiments.",
+      agent: "moneymaker",
       teamId: agentGuiHomeTeamId,
       teamName: "Home"
     },
     {
       id: taskIds[1],
-      title: "Tokenomics Planner Agent",
-      description: "Drafts simple $OSA reward logic and highlights anti-farming checks for work rewards.",
-      agent: "tokenomics-analyst",
-      teamId: "room-tokenomics",
-      teamName: "Tokenomics"
+      legacyId: "task-osa-example-token-planner",
+      title: "Security Expert Agent",
+      description: "Reviews $OSA reward mechanics for abuse paths, wallet risk, and practical hardening steps.",
+      agent: "security-expert",
+      teamId: "room-security",
+      teamName: "Security"
     }
   ];
   for (const spec of taskSpecs) {
-    if (target.tasks.some((task) => task.id === spec.id)) continue;
-    target.tasks.unshift({
+    let task = target.tasks.find((item) => item.id === spec.id);
+    const legacyTask = target.tasks.find((item) => item.id === spec.legacyId);
+    if (!task && legacyTask) {
+      legacyTask.id = spec.id;
+      task = legacyTask;
+      changed = true;
+    } else if (task && legacyTask) {
+      target.tasks = target.tasks.filter((item) => item.id !== spec.legacyId);
+      changed = true;
+    }
+    const nextTask = {
+      ...(task || {}),
       id: spec.id,
       goalId,
       title: spec.title,
       description: spec.description,
       status: "done",
-      assignedAgentId: null,
+      assignedAgentId: task?.assignedAgentId || null,
       leaseUntil: null,
       leaseId: null,
-      createdAt: stamped,
-      updatedAt: stamped,
-      ownerWalletAddress: wallet,
+      createdAt: task?.createdAt || stamped,
+      updatedAt: task?.updatedAt || stamped,
+      ownerWalletAddress: task?.ownerWalletAddress || wallet,
       source: "agent-gui-public-example",
       agentGuiRoom: "public",
       agentGuiTeamId: spec.teamId,
@@ -403,10 +603,17 @@ function ensureAgentGuiExampleProject(target) {
       taskSolved: true,
       sharedPublic: false,
       sharedPublicAt: null,
-      copyCount: 0,
-      lastCopiedAt: null
-    });
-    changed = true;
+      copyCount: task?.copyCount || 0,
+      lastCopiedAt: task?.lastCopiedAt || null
+    };
+    if (task) {
+      const prior = JSON.stringify(task);
+      Object.assign(task, nextTask);
+      if (JSON.stringify(task) !== prior) changed = true;
+    } else {
+      target.tasks.unshift(nextTask);
+      changed = true;
+    }
   }
 
   const projectId = "osa-example-reward-engine";
@@ -421,7 +628,7 @@ function ensureAgentGuiExampleProject(target) {
       taskIds,
       rooms: [
         { id: agentGuiHomeTeamId, name: "Home", taskIds: [taskIds[0]] },
-        { id: "room-tokenomics", name: "Tokenomics", taskIds: [taskIds[1]] }
+        { id: "room-security", name: "Security", taskIds: [taskIds[1]] }
       ],
       sharedAt: stamped,
       updatedAt: stamped,
@@ -432,6 +639,30 @@ function ensureAgentGuiExampleProject(target) {
       isExample: true
     });
     changed = true;
+  } else {
+    const nextRooms = [
+      { id: agentGuiHomeTeamId, name: "Home", taskIds: [taskIds[0]] },
+      { id: "room-security", name: "Security", taskIds: [taskIds[1]] }
+    ];
+    const prior = JSON.stringify({
+      taskIds: existingProject.taskIds,
+      rooms: existingProject.rooms,
+      summary: existingProject.summary,
+      isExample: existingProject.isExample
+    });
+    existingProject.taskIds = taskIds;
+    existingProject.rooms = nextRooms;
+    existingProject.summary = "A sample wallet-owned agent project for testing Copy, Donate, Review, Latest Projects, and Top100 Projects.";
+    existingProject.isExample = true;
+    if (JSON.stringify({
+      taskIds: existingProject.taskIds,
+      rooms: existingProject.rooms,
+      summary: existingProject.summary,
+      isExample: existingProject.isExample
+    }) !== prior) {
+      existingProject.updatedAt = existingProject.updatedAt || stamped;
+      changed = true;
+    }
   }
 
   if (!target.agentDonations.some((donation) => donation.id === "donation-osa-example-reward-engine")) {
@@ -659,11 +890,12 @@ async function loadPostgresStore() {
     const loaded = normalizeStore(result.rows[0].payload);
     const pruned = removeLegacySeedExamples(loaded);
     const exampleSeeded = ensureAgentGuiExampleProject(loaded);
+    const profileSeeded = ensureAgentGuiDefaultProfiles(loaded);
     if (!loaded.proposals.length) {
       const seed = JSON.parse(await readFile(seedPath, "utf8"));
       loaded.proposals = seed.proposals || [];
       await savePostgresStore(loaded);
-    } else if (pruned || exampleSeeded) {
+    } else if (pruned || exampleSeeded || profileSeeded) {
       await savePostgresStore(loaded);
     }
     return loaded;
@@ -691,6 +923,7 @@ async function loadPostgresStore() {
     events: []
   });
   ensureAgentGuiExampleProject(initial);
+  ensureAgentGuiDefaultProfiles(initial);
   await savePostgresStore(initial);
   return initial;
 }
@@ -3254,7 +3487,7 @@ function agentGuiTaskSession(task, roomOverride = null) {
   const agent = task.assignedAgentId ? findAgent(task.assignedAgentId) : null;
   const result = store.results.find((item) => item.taskId === task.id);
   const managed = task.agentGuiConnectorId ? managedConnectorStatus(task.agentGuiConnectorId) : null;
-  const fallbackAgent = task.agentGuiAgent || "openclaw-codex";
+  const fallbackAgent = task.agentGuiAgent || "coder";
   const room = roomOverride || agentGuiTaskRoom(task);
   const lastAt = task.updatedAt || result?.createdAt || task.createdAt;
   const displayModel = task.agentGuiModel || agent?.models?.join(", ") || agent?.provider || "OSA connector";
@@ -3353,83 +3586,7 @@ function agentGuiAgents() {
 }
 
 function agentGuiPrototypeDefinitions() {
-  return [
-    {
-      id: "openclaw-codex",
-      name: "OpenClaw Agent",
-      tagline: "General-purpose local OpenClaw worker for Home desks",
-      color: "#22d3ee",
-      available: true,
-      model: "OpenClaw local agent",
-      base_url: "",
-      profile_path: "osa://prototype/openclaw-codex",
-      is_prototype: true,
-      clone_from: null,
-      runner: "openclaw",
-      soul: "You are an OpenClaw-powered OSA worker. Work carefully, keep the user's project private until shared, and produce useful artifacts that can become part of a public project.",
-      memory: "Remember that OSA rewards useful wallet-owned agent work. Prioritize clear outputs, reproducible steps, and project state that survives copying."
-    },
-    {
-      id: "codex-cli",
-      name: "Codex CLI",
-      tagline: "Runs a Home desk through the local Codex CLI",
-      color: "#60a5fa",
-      available: true,
-      model: "Codex CLI",
-      base_url: "",
-      profile_path: "osa://prototype/codex-cli",
-      is_prototype: true,
-      clone_from: null,
-      runner: "codex",
-      soul: "You are a code-first OSA builder. Inspect the repo, make minimal safe edits, run checks, and explain the result plainly.",
-      memory: "Default to shipping working code with tests. Wallet identity matters for rewards, but smart-contract safety matters more than speed."
-    },
-    {
-      id: "market-scout",
-      name: "Market Scout",
-      tagline: "Finds project angles, users, competitors, and copy-worthy value",
-      color: "#7ee0c2",
-      available: true,
-      model: "OpenClaw local agent",
-      base_url: "",
-      profile_path: "osa://prototype/market-scout",
-      is_prototype: true,
-      clone_from: "openclaw-codex",
-      runner: "openclaw",
-      soul: "You are a market-oriented OSA agent. Look for real user pain, simple positioning, pricing signals, and what would make a project worth copying.",
-      memory: "Good outputs are concrete: audience, problem, offer, evidence, risks, and the next experiment. Avoid hype without leverage."
-    },
-    {
-      id: "product-builder",
-      name: "Product Builder",
-      tagline: "Turns an idea into tasks, UI details, docs, and testable behavior",
-      color: "#facc15",
-      available: true,
-      model: "OpenClaw local agent",
-      base_url: "",
-      profile_path: "osa://prototype/product-builder",
-      is_prototype: true,
-      clone_from: "openclaw-codex",
-      runner: "openclaw",
-      soul: "You are a product-focused OSA agent. Make features understandable, testable, and pleasant to use. Think like a builder and designer at the same time.",
-      memory: "Favor complete flows over isolated widgets: empty states, confirmations, safety copy, and the shortest route to a working demo."
-    },
-    {
-      id: "tokenomics-analyst",
-      name: "Tokenomics Analyst",
-      tagline: "Designs $OSA reward logic, anti-farming checks, and risk notes",
-      color: "#c084fc",
-      available: true,
-      model: "OpenClaw local agent",
-      base_url: "",
-      profile_path: "osa://prototype/tokenomics-analyst",
-      is_prototype: true,
-      clone_from: "openclaw-codex",
-      runner: "openclaw",
-      soul: "You are a tokenomics and protocol-safety OSA agent. Incentivize useful agent work without pretending a token has value before the market proves it.",
-      memory: "Every reward rule needs an anti-abuse rule. Keep disclosures clear: $OSA is experimental, unlisted, and may remain worthless."
-    }
-  ];
+  return [];
 }
 
 function agentGuiPrototypes() {
@@ -3458,7 +3615,7 @@ function publicAgentGuiProfile(profile) {
     base_url: profile.base_url || "",
     profile_path: profile.profile_path || `osa://profiles/${profile.id}`,
     is_prototype: false,
-    clone_from: profile.clone_from || "openclaw-codex"
+    clone_from: profile.clone_from || "coder"
   };
 }
 
@@ -3479,7 +3636,7 @@ function createAgentGuiProfile(body = {}) {
     error.statusCode = 409;
     throw error;
   }
-  const cloneFrom = String(body.clone_from || "openclaw-codex");
+  const cloneFrom = String(body.clone_from || "coder");
   const source = store.agentProfiles.find((profile) => profile.id === cloneFrom);
   const prototype = agentGuiPrototypeDefinitions().find((profile) => profile.id === cloneFrom);
   const runner = prototype?.runner === "codex" || source?.runner === "codex" ? "codex" : "openclaw";
@@ -3575,7 +3732,7 @@ function agentGuiConsoleText(sessionId, kind = "terminal") {
   const lines = [
     `OSA desk: ${task.title}`,
     `Status: ${visibleStatus}${session.task_solved ? " (solved)" : ""}`,
-    `Runner: ${connectorRunner(connector || { models: [task.agentGuiAgent === "codex-cli" ? "connector:codex" : "connector:openclaw"] })}`,
+    `Runner: ${connectorRunner(connector || { models: [agentGuiRunnerForAgent(task.agentGuiAgent || "coder") === "codex" ? "connector:codex" : "connector:openclaw"] })}`,
     `Profile: ${task.agentGuiModel || "OpenClaw local agent"}`,
     `Task: ${task.id}`,
     `Connector: ${task.agentGuiConnectorId || "none"}`,
@@ -3637,6 +3794,100 @@ function agentGuiTodos(sessionId) {
   return { tasks: [], summary: "No task selected" };
 }
 
+function agentGuiManagerAudit(sessionId, cached = false) {
+  const taskId = agentGuiTaskIdFromSessionId(sessionId);
+  const task = taskId ? store.tasks.find((item) => item.id === taskId) : null;
+  const session = agentGuiSessionById(sessionId);
+  const result = task ? store.results.find((item) => item.taskId === task.id) : null;
+  const managed = task?.agentGuiConnectorId ? managedConnectorStatus(task.agentGuiConnectorId) : null;
+  const connectorExit = agentGuiConnectorExitForTask(task);
+  const consoleText = task ? agentGuiConsoleText(sessionId, "console") : "";
+  const goal = task ? store.goals.find((item) => item.id === task.goalId) : null;
+  const rows = [];
+
+  const add = (criterion, verdict, evidence, fixHint) => {
+    rows.push({
+      id: rows.length + 1,
+      task: task?.title || session?.title || "OSA desk",
+      criterion,
+      verdict,
+      evidence: String(evidence || "").slice(0, 600),
+      fix_hint: String(fixHint || "").slice(0, 600)
+    });
+  };
+
+  if (!session || !task) {
+    add("Desk task can be found", "fail", "No matching OSA task exists for this desk id.", "Start a new desk or copy the task again.");
+  } else {
+    add("Task spec is visible", task.description ? "pass" : "unsure", task.description || "The desk has a task record, but no detailed task description.", "Add a clearer task description before asking an agent to work.");
+    add(
+      "Agent is assigned",
+      task.agentGuiAgent ? "pass" : "fail",
+      task.agentGuiAgent ? `${task.agentGuiAgent} is assigned to this desk.` : "No OSA profile is assigned.",
+      "Assign a specialist profile from Agent Profiles or reopen the desk settings."
+    );
+    if (task.agentGuiConnectorError || connectorExit?.isError || task.status === "failed") {
+      add(
+        "Worker finished without runtime errors",
+        "fail",
+        task.agentGuiConnectorError || connectorExit?.message || `Task status is ${statusLabelForAgentGui(task.status)}.`,
+        "Open the Console tab, inspect the error, then resume the desk after fixing the root cause."
+      );
+    } else if (task.agentGuiConnectorId || managed || connectorExit || task.assignedAgentId) {
+      add(
+        "Worker execution is attached",
+        "pass",
+        task.agentGuiConnectorId ? `Connector ${task.agentGuiConnectorId} is linked to the desk.` : "The task has an assigned worker record.",
+        "Keep the current worker unless the output stalls or misses the task."
+      );
+    } else {
+      add("Worker execution is attached", "unsure", "No connector or assigned worker has been recorded yet.", "Start or resume the desk so a worker can produce output.");
+    }
+
+    if (task.status === "done" || session.task_solved || result) {
+      add(
+        "Result is ready to review",
+        result?.content || session.task_solved || task.status === "done" ? "pass" : "unsure",
+        result?.content ? String(result.content).slice(0, 600) : `Task status is ${statusLabelForAgentGui(task.status)}.`,
+        "Open Progress or Files to inspect the final artifact before sharing."
+      );
+    } else if (task.status === "leased" || session.is_running) {
+      add("Result is ready to review", "unsure", "The agent is still working.", "Wait for completion, then rerun the manager audit.");
+    } else {
+      add("Result is ready to review", "unsure", "No accepted result has been recorded yet.", "Resume the desk or send the manager to request a concrete deliverable.");
+    }
+
+    add(
+      "Feedback location is clear",
+      "pass",
+      "Manager feedback is available in the desk's Tasks -> Manager Feedback view and mirrored into AUDIT.md when a workspace audit exists.",
+      "Use the Manager Feedback tab for the current verdict and AUDIT.md for workspace-backed audit notes."
+    );
+  }
+
+  const passed = rows.filter((row) => row.verdict === "pass").length;
+  const failed = rows.filter((row) => row.verdict === "fail").length;
+  const unsure = rows.filter((row) => row.verdict === "unsure").length;
+  return {
+    session_id: sessionId,
+    generated_at: now(),
+    state_hash: `${task?.id || sessionId}:${task?.updatedAt || task?.createdAt || session?.ended_at || session?.started_at || ""}`,
+    goal: goal?.title || task?.title || session?.title || "OSA desk",
+    sources_inspected: {
+      task_spec: Boolean(task?.description),
+      conversation_messages: consoleText ? Math.max(1, consoleText.split("\n").filter(Boolean).length) : 0,
+      output_files: result?.artifacts?.map((item) => item.path || item.name).filter(Boolean) || []
+    },
+    results: rows,
+    summary: { passed, failed, unsure, total: rows.length },
+    cached,
+    skipped_running: Boolean(session?.is_running),
+    should_intervene: failed > 0 || unsure > 0,
+    intervention_count: 0,
+    max_interventions: 3
+  };
+}
+
 function agentGuiTaskFile(sessionId) {
   const taskId = agentGuiTaskIdFromSessionId(sessionId);
   if (taskId) {
@@ -3677,7 +3928,7 @@ async function startAgentGuiSession(req, body = {}) {
     : null;
   const title = agentGuiSessionTitle(content);
   const goal = agentGuiGoalForStart(body, title, content);
-  const agentId = String(body.agent || "openclaw-codex");
+  const agentId = String(body.agent || "coder");
   const runner = agentGuiRunnerForAgent(agentId);
   const teamId = normalizeAgentGuiPrivateTeamId(body.team_id);
   const teamName = String(body.team_name || "").trim().slice(0, 80);
@@ -3697,8 +3948,8 @@ async function startAgentGuiSession(req, body = {}) {
     agentGuiRoom: "home",
     agentGuiTeamId: teamId,
     agentGuiTeamName: teamName || null,
-    agentGuiAgent: runner === "codex" ? "codex-cli" : "openclaw-codex",
-    agentGuiModel: runner === "codex" ? "Codex CLI" : "OpenClaw local agent",
+    agentGuiAgent: agentId,
+    agentGuiModel: agentGuiProfileById(agentId)?.model || (runner === "codex" ? "Codex CLI" : "OpenClaw local agent"),
     ownerWalletAddress
   };
   store.tasks.unshift(task);
@@ -3741,7 +3992,7 @@ function resumeAgentGuiSession(req, sessionId, body = {}) {
     error.statusCode = 409;
     throw error;
   }
-  const connector = startAgentGuiTaskConnector(req, task, String(body.agent || task.agentGuiAgent || "openclaw-codex"));
+  const connector = startAgentGuiTaskConnector(req, task, String(body.agent || task.agentGuiAgent || "coder"));
   event("agentgui_session_resumed", `OSA desk connected from AgentGUI`, {
     taskId: task.id,
     goalId: task.goalId,
@@ -3790,7 +4041,7 @@ function copySourceTaskToPrivateRoom(sourceTask, roomId, roomName, copiedAt, own
     agentGuiRoom: "home",
     agentGuiTeamId: roomId,
     agentGuiTeamName: roomName || null,
-    agentGuiAgent: sourceTask.agentGuiAgent || "openclaw-codex",
+    agentGuiAgent: sourceTask.agentGuiAgent || "coder",
     agentGuiModel: sourceTask.agentGuiModel || "OpenClaw local agent",
     ownerWalletAddress
   };
@@ -4243,7 +4494,7 @@ function startAgentGuiTaskConnector(req, task, agentId) {
 
   const runner = agentGuiRunnerForAgent(agentId);
   const profile = agentGuiProfileById(agentId);
-  task.agentGuiAgent = profile?.id || (runner === "codex" ? "codex-cli" : "openclaw-codex");
+  task.agentGuiAgent = profile?.id || "coder";
   task.agentGuiModel = profile?.model || (runner === "codex" ? "Codex CLI" : "OpenClaw local agent");
   task.updatedAt = now();
 
@@ -4396,15 +4647,8 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     if (method === "GET" && child === "taskfile") {
       return sendJson(res, 200, { content: agentGuiTaskFile(sessionId), path: "TASK.md", workspace: "" });
     }
-    if (method === "GET" && child === "audit") {
-      return sendJson(res, 200, {
-        session_id: sessionId,
-        generated_at: now(),
-        results: [],
-        summary: { passed: 0, failed: 0, unsure: 0, total: 0 },
-        cached: true
-      });
-    }
+    if (method === "GET" && child === "audit") return sendJson(res, 200, agentGuiManagerAudit(sessionId, true));
+    if (method === "POST" && child === "audit") return sendJson(res, 200, agentGuiManagerAudit(sessionId, false));
     if (method === "GET" && child === "progress") return sendJson(res, 200, { content: agentGuiTaskFile(sessionId), exists: true });
     if (method === "POST" && child === "copy") {
       try {
@@ -4436,7 +4680,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
         result: agentGuiConsoleText(sessionId, "terminal")
       });
     }
-    if (method === "POST" && ["redirect", "interrupt", "arrive", "sleep", "wake", "autocontinue", "audit", "progress"].includes(child)) {
+    if (method === "POST" && ["redirect", "interrupt", "arrive", "sleep", "wake", "autocontinue", "progress"].includes(child)) {
       return sendJson(res, 200, { ok: true, enabled: false, max: 0, content: agentGuiTaskFile(sessionId), exists: true });
     }
     if (method === "PATCH" && child === "desk-config") {
@@ -4446,7 +4690,14 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
   }
 
   if (method === "GET" && path.endsWith("/audit/status")) {
-    return sendJson(res, 200, { current_hash: "", auditable: false, audited: true, summary: { passed: 0, failed: 0, unsure: 0, total: 0 } });
+    const sessionId = decodeURIComponent(path.split("/").at(-3) || "");
+    const audit = agentGuiManagerAudit(sessionId, true);
+    return sendJson(res, 200, {
+      current_hash: audit.state_hash || "",
+      auditable: audit.summary.total > 0,
+      audited: true,
+      summary: audit.summary
+    });
   }
 
   if (method === "POST" && path === "/api/sessions/new") {
@@ -4612,7 +4863,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       profile_path: `osa://agents/${id}`,
       name: id,
       tagline: "OpenClaw worker profile",
-      model: id === "codex-cli" ? "Codex CLI" : "OpenClaw local agent",
+      model: id === "coder" || id === "bugfixer" ? "Codex CLI" : "OpenClaw local agent",
       base_url: ""
     });
   }
@@ -4923,11 +5174,14 @@ async function handleApi(req, res, url) {
         claims: [],
         users: [],
         sessions: [],
+        agentProfiles: [],
         connectorTokens: [],
         oauthStates: [],
         proposalVotes: [],
         events: []
       });
+      ensureAgentGuiExampleProject(store);
+      ensureAgentGuiDefaultProfiles(store);
       event("system", "Demo state reset");
       await saveStore();
       return sendJson(res, 200, publicState());

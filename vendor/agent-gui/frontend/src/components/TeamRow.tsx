@@ -379,7 +379,7 @@ function ManagerStagingArea({ stagingRef, onPatrol, onClick, chrome, agents }: {
       <div
         ref={stagingRef}
         onClick={onClick}
-        title={onPatrol ? "Manager is checking desks for stuck work and useful next steps" : "Click to ask the manager to review idle desks and leave guidance"}
+        title={onPatrol ? "Manager is auditing desks and writing feedback into the Manager Feedback tab" : "Click to ask the manager to audit idle desks and leave feedback"}
         style={{
           width: "100%",
           display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
@@ -412,7 +412,7 @@ function ManagerStagingArea({ stagingRef, onPatrol, onClick, chrome, agents }: {
           textAlign: "center",
           maxWidth: 72,
         }}>
-          QA + guidance
+          audit feedback
         </div>
       </div>
     </div>

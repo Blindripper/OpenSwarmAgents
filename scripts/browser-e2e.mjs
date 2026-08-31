@@ -50,12 +50,25 @@ try {
   assert(balance.formatted === "0 OSA" && balance.source === "not_deployed", "wallet balance should honestly report undeployed $OSA state");
   let config = await getJson("/api/gui-config");
   const agentIds = config.agents.map((agent) => agent.id);
-  for (const id of ["openclaw-codex", "codex-cli", "market-scout", "product-builder", "tokenomics-analyst"]) {
+  for (const id of ["coder", "bugfixer", "info-guy", "coinexpert", "graphicsexpert", "moneymaker", "security-expert"]) {
     assert(agentIds.includes(id), `Agent Profiles should include ${id}`);
   }
+  assert(config.prototypes.length === 0, "legacy built-in Agent Profile prototypes should be removed");
+  const infoPersona = await getJson("/api/agents/info-guy/persona");
+  assert(infoPersona.soul.includes("information-gathering"), "existing specialist profiles should expose useful Soul.md content");
+  await putJson("/api/agents/info-guy/persona", {
+    ...infoPersona,
+    tagline: "Finds sourced facts for OSA tests",
+    soul: `${infoPersona.soul}\nBrowser E2E edit marker.`,
+    memory: `${infoPersona.memory}\nBrowser E2E memory marker.`
+  });
+  const editedInfoPersona = await getJson("/api/agents/info-guy/persona");
+  assert(editedInfoPersona.tagline === "Finds sourced facts for OSA tests", "existing Agent Profiles should be editable");
+  assert(editedInfoPersona.soul.includes("Browser E2E edit marker."), "editing an existing Agent Profile should persist Soul.md");
+  assert(editedInfoPersona.memory.includes("Browser E2E memory marker."), "editing an existing Agent Profile should persist Memory.md");
   const customProfile = await postJson("/api/agents", {
     id: "profit-scout",
-    clone_from: "openclaw-codex",
+    clone_from: "coder",
     name: "Profit Scout",
     tagline: "Find useful OpenClaw opportunities"
   });
@@ -124,9 +137,12 @@ try {
   const created = await postJson("/api/sessions/new", {
     content: "Build a small market-research agent for weird profitable niches.",
     team_id: "home-room",
-    agent: "openclaw-codex"
+    agent: "moneymaker"
   });
   assert(created.session_id?.startsWith("home-"), "new AgentGUI sessions should start in Home");
+  const audit = await postJson(`/api/sessions/${encodeURIComponent(created.session_id)}/audit`, {});
+  assert(audit.summary?.total > 0, "manager audit should return visible feedback criteria");
+  assert(audit.results?.some((item) => item.criterion === "Feedback location is clear"), "manager audit should explain where feedback is visible");
   const completed = await waitForJson(
     "/api/sessions",
     (items) => items.find((session) => session.id === created.session_id && session.task_solved === true),
@@ -263,6 +279,16 @@ async function getJson(path) {
 async function postJson(path, body) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) throw new Error(`${path} failed with ${response.status}: ${await response.text()}`);
+  return response.json();
+}
+
+async function putJson(path, body) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body)
   });

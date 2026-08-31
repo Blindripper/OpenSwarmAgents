@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { ActivityEvent, ApiMode, DeskHistory, FileNode, FilePreviewData, LiveState, ReasoningEffort, Session, SubagentRecord, WorkerEvent } from "../types";
+import type { ActivityEvent, ApiMode, AuditResult, DeskHistory, FileNode, FilePreviewData, LiveState, ReasoningEffort, Session, SubagentRecord, WorkerEvent } from "../types";
 import { DESK_PANEL_Z_BASE } from "../floatingPanelStack";
 import { usePanelDrag } from "../usePanelDrag";
 import {
@@ -350,7 +350,7 @@ function ProgressView({ sessionId }: { sessionId: string }) {
 
 function TasksView({ sessionId, onTaskSaved, onAskManager }: { sessionId: string; onTaskSaved?: () => void; onAskManager?: () => void }) {
   const [asking, setAsking] = useState(false);
-  const [view, setView] = useState<"task" | "progress">("task");
+  const [view, setView] = useState<"task" | "progress" | "manager">("task");
 
   function handleAskManager() {
     if (asking) return;
@@ -366,7 +366,7 @@ function TasksView({ sessionId, onTaskSaved, onAskManager }: { sessionId: string
         display: "flex", gap: 6, alignItems: "center",
         padding: "6px 10px", borderBottom: "1px solid var(--card-border)",
       }}>
-        {([["task", "📋 Task"], ["progress", "📈 Progress"]] as const).map(([v, label]) => (
+        {([["task", "📋 Task"], ["progress", "📈 Progress"], ["manager", "👩‍💼 Manager Feedback"]] as const).map(([v, label]) => (
           <button
             key={v}
             onClick={() => setView(v)}
@@ -384,6 +384,8 @@ function TasksView({ sessionId, onTaskSaved, onAskManager }: { sessionId: string
 
       {view === "progress" ? (
         <ProgressView sessionId={sessionId} />
+      ) : view === "manager" ? (
+        <ManagerFeedbackView sessionId={sessionId} onAskManager={handleAskManager} asking={asking} />
       ) : (
         <>
           <TaskFileEditor sessionId={sessionId} onSaved={onTaskSaved} />
@@ -413,6 +415,129 @@ function TasksView({ sessionId, onTaskSaved, onAskManager }: { sessionId: string
       )}
     </div>
   );
+}
+
+function ManagerFeedbackView({ sessionId, onAskManager, asking }: { sessionId: string; onAskManager?: () => void; asking: boolean }) {
+  const [audit, setAudit] = useState<AuditResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    api.sessions.auditCached(sessionId)
+      .then((r) => { if (!cancelled) setAudit(r); })
+      .catch((e: Error) => { if (!cancelled) setError(e.message || "Could not load manager feedback"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [sessionId]);
+
+  async function runAudit() {
+    if (running) return;
+    setRunning(true);
+    setError("");
+    try {
+      const r = await api.sessions.audit(sessionId, true);
+      setAudit(r);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const failed = audit?.results.filter((item) => item.verdict === "fail" || item.verdict === "unsure") ?? [];
+  const total = audit?.summary.total ?? 0;
+  const passed = audit?.summary.passed ?? 0;
+  const status = total === 0
+    ? "No audit yet"
+    : failed.length === 0
+      ? "All checks passed"
+      : `${failed.length} issue${failed.length === 1 ? "" : "s"} found`;
+
+  return (
+    <div style={{ padding: "10px 12px" }}>
+      <div style={{
+        display: "grid", gap: 8, marginBottom: 10,
+        padding: "10px 12px", borderRadius: 8,
+        border: "1px solid var(--card-border)", background: "rgba(255,255,255,0.035)",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Team manager
+            </div>
+            <div style={{ fontSize: 13, color: "var(--text)", fontWeight: 700 }}>{status}</div>
+          </div>
+          {audit && total > 0 && (
+            <div style={{ fontSize: 11, color: failed.length ? "var(--yellow)" : "var(--green)", fontWeight: 700 }}>
+              {passed}/{total} passed
+            </div>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5 }}>
+          The manager audits the desk, writes guidance into AUDIT.md, and nudges the agent only when unresolved issues remain.
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" onClick={runAudit} disabled={running} style={managerButtonStyle(running)}>
+            {running ? "Auditing..." : "Run audit now"}
+          </button>
+          {onAskManager && (
+            <button type="button" onClick={onAskManager} disabled={asking} style={managerButtonStyle(asking, true)}>
+              {asking ? "Manager on the way..." : "Send manager to desk"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ fontSize: 11, color: "var(--text-dim)" }}>Loading manager feedback...</div>
+      ) : error ? (
+        <div style={{ fontSize: 11, color: "var(--red)", lineHeight: 1.5 }}>{error}</div>
+      ) : !audit || total === 0 ? (
+        <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.6 }}>
+          No manager feedback is available yet. Run an audit or send the manager to this desk.
+        </div>
+      ) : failed.length === 0 ? (
+        <div style={{ fontSize: 11, color: "var(--green)", lineHeight: 1.6 }}>
+          Last audit passed all checks. Generated {new Date(audit.generated_at).toLocaleString()}.
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 8 }}>
+          {failed.map((item) => (
+            <div key={String(item.id)} style={{
+              padding: "9px 10px", borderRadius: 7,
+              border: "1px solid rgba(255,255,255,0.12)",
+              background: item.verdict === "fail" ? "rgba(255,90,90,0.08)" : "rgba(255,190,80,0.08)",
+            }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                <span style={{ fontSize: 10, fontWeight: 800, color: item.verdict === "fail" ? "var(--red)" : "var(--yellow)", textTransform: "uppercase" }}>
+                  {item.verdict}
+                </span>
+                <strong style={{ fontSize: 12, color: "var(--text)" }}>{item.criterion}</strong>
+              </div>
+              {item.evidence && <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.45 }}>{item.evidence}</div>}
+              {item.fix_hint && <div style={{ marginTop: 5, fontSize: 11, color: "var(--text)", lineHeight: 1.45 }}>{item.fix_hint}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function managerButtonStyle(disabled: boolean, secondary = false): React.CSSProperties {
+  return {
+    fontSize: 10,
+    padding: "4px 10px",
+    borderRadius: 6,
+    background: disabled ? "rgba(100,100,200,0.15)" : secondary ? "rgba(255,255,255,0.04)" : "var(--accent2)",
+    color: disabled ? "var(--accent2)" : secondary ? "var(--text-dim)" : "white",
+    border: secondary ? "1px solid var(--card-border)" : "1px solid transparent",
+    cursor: disabled ? "default" : "pointer",
+  };
 }
 
 // Load the session's real workspace directory tree (dirs + subdirs + all files).

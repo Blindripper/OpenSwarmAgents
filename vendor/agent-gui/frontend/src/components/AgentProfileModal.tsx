@@ -39,7 +39,7 @@ export function AgentProfileModal({ mode, agent, prototypes, agents = [], embedd
   ];
 
   const [profileId, setProfileId] = useState("");
-  const [cloneFrom, setCloneFrom] = useState(cloneSources[0]?.id ?? prototypes[0]?.id ?? "coder");
+  const [cloneFrom, setCloneFrom] = useState(cloneSources[0]?.id ?? "coder");
   const [displayName, setDisplayName] = useState("");
   const [tagline, setTagline] = useState("");
   const [soul, setSoul] = useState("");
