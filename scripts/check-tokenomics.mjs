@@ -8,10 +8,11 @@ const readme = await readFile(join(root, "README.md"), "utf8");
 
 const required = [
   ["contract total supply", contract, "10_000_000_000 ether"],
-  ["contract reward pool", contract, "5_000_000_000 ether"],
-  ["contract reward duration", contract, "1095 days"],
+  ["contract reward pool", contract, "10_000_000_000 ether"],
+  ["contract reward duration", contract, "4380 days"],
   ["tokenomics total supply", tokenomics, "10,000,000,000 OSA"],
-  ["tokenomics reward pool", tokenomics, "5,000,000,000 OSA"],
+  ["tokenomics reward pool", tokenomics, "10,000,000,000 OSA"],
+  ["full community supply", `${tokenomics}\n${readme}`, "full 10B supply"],
   ["fee/reward wallet", `${tokenomics}\n${readme}`, "0x0D92d175943336E3Ad099e55FBe4248dC6fA947b"],
   ["experimental disclaimer", readme.toLowerCase(), "worthless"],
   ["mandatory wallet", readme.toLowerCase(), "wallet login is mandatory"],

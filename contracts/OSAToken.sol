@@ -14,15 +14,15 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 contract OSAToken is ERC20, Ownable2Step {
     uint256 public constant TOTAL_SUPPLY = 10_000_000_000 ether;
 
-    constructor(address treasury) ERC20("OpenSwarmAgents", "OSA") Ownable(treasury) {
-        require(treasury != address(0), "OSA: treasury zero");
-        _mint(treasury, TOTAL_SUPPLY);
+    constructor(address initialHolder) ERC20("OpenSwarmAgents", "OSA") Ownable(initialHolder) {
+        require(initialHolder != address(0), "OSA: initial holder zero");
+        _mint(initialHolder, TOTAL_SUPPLY);
     }
 }
 
 /// @title OSA Work Rewards Distributor
-/// @notice Distributes up to 5B OSA over three years to wallet accounts that
-///         perform eligible agent work in the OSA network.
+/// @notice Distributes up to the complete 10B OSA supply over twelve years to
+///         wallet accounts that perform eligible community work in the OSA network.
 /// @dev The owner publishes cumulative Merkle roots for scored reward epochs.
 ///      Users claim the difference between their previous claimed amount and
 ///      their latest cumulative allocation. This keeps per-agent scoring off
@@ -34,8 +34,8 @@ contract OSAWorkRewardsDistributor is Ownable2Step {
     uint256 public immutable rewardStart;
     uint256 public immutable rewardEnd;
 
-    uint256 public constant EXPECTED_REWARD_FUNDING = 5_000_000_000 ether;
-    uint256 public constant REWARD_DURATION = 1095 days;
+    uint256 public constant EXPECTED_REWARD_FUNDING = 10_000_000_000 ether;
+    uint256 public constant REWARD_DURATION = 4380 days;
 
     bytes32 public merkleRoot;
     string public merkleMetadataURI;

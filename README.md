@@ -244,15 +244,17 @@ Planned fixed supply:
 10,000,000,000 OSA
 ```
 
-Planned participation rewards:
+Planned community distribution:
 
 ```text
-5,000,000,000 OSA over 3 years
+10,000,000,000 OSA over 12 years
 ```
+
+**The entire 10 billion token supply is committed to community distribution. There are no team, investor, advisor, foundation, or private-sale token allocations. Tokens enter circulation gradually through published project, node, review, adoption, liquidity, contribution, and security reward programs.**
 
 The reward idea is simple: connected accounts should earn `$OSA` when they let useful agents work in the network.
 
-The reward pool should not pay for idle fake agents. A production scoring system should consider active agent work, accepted results, project usefulness, copy activity, reviews, peer validation, uptime with real work, and anti-spam caps.
+The recommended distribution model is weekly epochs over 12 years. Use the Top100 Projects chart as the main reward surface, but score a rolling 28-day window instead of paying one instant snapshot. A production scoring system should consider active agent work, accepted results, retained project usefulness, copy activity, reviews, peer validation, federation uptime with real public data, and anti-spam caps.
 
 See [docs/TOKENOMICS.md](docs/TOKENOMICS.md) for the current allocation and reward-distribution draft.
 
@@ -265,16 +267,16 @@ The repository includes a draft Solidity implementation:
 It contains:
 
 - `OSAToken`: fixed-supply ERC-20 token.
-- `OSAWorkRewardsDistributor`: Merkle-based reward distributor capped by a three-year linear unlock.
+- `OSAWorkRewardsDistributor`: Merkle-based reward distributor capped by a twelve-year community unlock.
 
-This is a draft. Do not deploy it as production financial infrastructure before tests, deployment planning, multisig setup, timelocks/vesting, and an independent audit.
+This is a draft. Do not deploy it as production financial infrastructure before tests, deployment planning, multisig setup, timelocks, reward-scoring audits, and an independent audit.
 
 Recommended next steps before deployment:
 
 - choose chain
 - choose deployment tooling
-- use a multisig for treasury and contract ownership
-- define vesting/timelocks for non-reward allocations
+- use a multisig for contract ownership and reward root publication
+- define timelocks and challenge windows for reward roots
 - write Solidity tests and invariant tests
 - build reward epoch generation and Merkle proof tooling
 - run an independent security audit
@@ -292,9 +294,9 @@ One wallet can update its own review for a project. This keeps feedback useful a
 
 ## Agent Profiles
 
-Agent Profiles are reusable worker presets. They define names, behavior, model defaults, and tool defaults for agents you run in Home.
+Agent Profiles are reusable worker presets. They define names, behavior, model defaults, tool defaults, and editable Profile/Soul/Memory files for agents you run in Home.
 
-You can create and delete custom profiles from the dashboard. Built-in OpenClaw/Codex profiles stay available as templates, and OSA includes example profiles such as **Market Scout**, **Product Builder**, and **Tokenomics Analyst** with their own Soul/Memory so users can understand what a useful agent personality looks like.
+You can create, edit, and delete custom profiles from the dashboard. Built-in OpenClaw/Codex profiles stay available as templates, and OSA includes specialist profiles such as **Coder**, **Bugfixer**, **Info-Guy**, **Coinexpert**, **Graphicsexpert**, **Moneymaker**, and **Security Expert** with focused Soul/Memory defaults.
 
 ## Local Data
 

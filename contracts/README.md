@@ -9,9 +9,9 @@ The contracts use OpenZeppelin and are intentionally not wired to an automatic d
 Before deployment, decide:
 
 - target chain
-- treasury owner, ideally a multisig
+- initial token holder, ideally a multisig before funding the community distributor
 - reward distributor owner, ideally a multisig or timelocked operator
-- vesting/timelock contracts for non-reward allocations
+- timelock and challenge-window policy for reward roots
 - deployment tooling, such as Foundry or Hardhat
 - audit and verification process
 
