@@ -2250,10 +2250,10 @@ function publicFederatedEvent(eventEntry) {
 
 function isPublicNetworkEventType(type) {
   return [
-    "agent_registered",
     "agentgui_project_shared",
     "agentgui_public_project_copied",
     "agentgui_public_room_copied",
+    "agentgui_project_explored",
     "agentgui_donation_pledged",
     "agentgui_project_review_created",
     "agentgui_project_review_updated",

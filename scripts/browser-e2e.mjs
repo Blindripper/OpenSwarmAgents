@@ -257,6 +257,7 @@ try {
   assert(chatList.messages?.some((item) => item.message.includes("Network Activity")), "Network chat should list saved messages");
   const activity = await getJson("/api/network/activity?limit=100");
   assert(activity.events?.some((item) => item.type === "network_chat_message"), "Network activity should list chat events");
+  assert(!activity.events?.some((item) => item.type === "agent_registered"), "Network activity should not leak private Home agent registrations");
   topProjects = await getJson("/api/top-projects?limit=100");
   const donatedSharedProject = topProjects.agents.find((agent) => agent.target_id === projectId);
   assert(donatedSharedProject?.donation_total_usdc === 1, "Top100 Projects should sum project donations");
