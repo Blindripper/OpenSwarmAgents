@@ -34,7 +34,9 @@ try {
       OSA_LOCAL_PASSWORD_REQUIRED: "0",
       OSA_DEMO_ENDPOINTS: "0",
       OSA_RATE_LIMIT_MULTIPLIER: "0",
-      OSA_OPENCLAW_COMMAND: process.env.OSA_OPENCLAW_COMMAND || openClawFixturePath
+      OSA_OPENCLAW_COMMAND: openClawFixturePath,
+      OSA_CODEX_BINARY: join(dataDir, "missing-codex"),
+      OSA_CODEX_COMMAND: ""
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -159,6 +161,18 @@ try {
     team_name: "Launch"
   });
   assert(roomCreated.session?.team_id === "room-launch", "private room sessions should keep their team id");
+  const coderFallback = await postJson("/api/sessions/new", {
+    content: "Test the default Coder desk when Codex CLI is not installed.",
+    team_id: "home-room",
+    agent: "coder"
+  });
+  assert(coderFallback.session?.agent === "coder", "Coder profile should remain selected when the runner falls back");
+  assert(coderFallback.session?.agent_model === "OpenClaw local agent", "Coder should fall back to OpenClaw when Codex CLI is unavailable");
+  await waitForJson(
+    "/api/sessions",
+    (items) => items.find((session) => session.id === coderFallback.session_id && session.task_solved === true),
+    "Coder fallback session to complete through OpenClaw"
+  );
 
   const legacyShare = await postJsonAllowError(`/api/sessions/${encodeURIComponent(created.session_id)}/share`, { shared: true });
   assert(legacyShare.status === 410, "individual agent sharing should be retired");

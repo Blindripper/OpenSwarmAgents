@@ -3108,6 +3108,92 @@ function connectorRunner(connector) {
   return ["stub", "provider", "openclaw", "codex"].includes(runner) ? runner : "stub";
 }
 
+function commandAvailability(command, args = ["--version"]) {
+  const label = String(command || "").trim();
+  if (!label) return { available: false, command: label, detail: "No command configured." };
+  const result = spawnSync(label, args, {
+    cwd: rootDir,
+    encoding: "utf8",
+    timeout: 2000
+  });
+  return {
+    available: !result.error && result.status === 0,
+    command: label,
+    detail: result.error?.code === "ENOENT"
+      ? `${label} was not found in PATH.`
+      : result.error?.message || String(result.stderr || result.stdout || "").trim() || null
+  };
+}
+
+function localCliRunnerStatus(runner) {
+  if (runner === "openclaw") {
+    return {
+      runner,
+      source: process.env.OSA_OPENCLAW_COMMAND ? "OSA_OPENCLAW_COMMAND" : "PATH",
+      ...commandAvailability(process.env.OSA_OPENCLAW_COMMAND || "openclaw", ["--version"])
+    };
+  }
+  if (runner === "codex") {
+    const template = String(process.env.OSA_CODEX_COMMAND || "").trim();
+    if (template) {
+      return {
+        runner,
+        source: "OSA_CODEX_COMMAND",
+        command: template,
+        available: true,
+        detail: "Custom Codex command template is configured."
+      };
+    }
+    return {
+      runner,
+      source: process.env.OSA_CODEX_BINARY ? "OSA_CODEX_BINARY" : "PATH",
+      ...commandAvailability(process.env.OSA_CODEX_BINARY || "codex", ["--version"])
+    };
+  }
+  return { runner, source: "builtin", command: runner, available: true, detail: null };
+}
+
+function localCliRunnerUnavailableMessage(runner, status) {
+  if (runner === "codex") {
+    return `Codex CLI runner is not available: ${status.detail || status.command}. Install/authenticate Codex CLI, set OSA_CODEX_BINARY/OSA_CODEX_COMMAND, or use an OpenClaw runner profile.`;
+  }
+  if (runner === "openclaw") {
+    return `OpenClaw CLI runner is not available: ${status.detail || status.command}. Install/authenticate OpenClaw or set OSA_OPENCLAW_COMMAND.`;
+  }
+  return `Connector runner is not available: ${runner}`;
+}
+
+function assertLocalCliRunnerAvailable(runner) {
+  if (!["openclaw", "codex"].includes(runner)) return;
+  const status = localCliRunnerStatus(runner);
+  if (status.available) return;
+  const error = new Error(localCliRunnerUnavailableMessage(runner, status));
+  error.statusCode = 400;
+  throw error;
+}
+
+function resolveAgentGuiRunnerForAgent(agentId) {
+  const desired = agentGuiRunnerForAgent(agentId);
+  const desiredStatus = localCliRunnerStatus(desired);
+  if (desiredStatus.available) return desired;
+  if (desired === "codex") {
+    const openClawStatus = localCliRunnerStatus("openclaw");
+    if (openClawStatus.available) return "openclaw";
+  }
+  if (desired === "openclaw") {
+    const codexStatus = localCliRunnerStatus("codex");
+    if (codexStatus.available) return "codex";
+  }
+  return desired;
+}
+
+function agentGuiModelForRunner(agentId, runner) {
+  const profile = agentGuiProfileById(agentId);
+  if (profile?.runner === runner && profile.model) return profile.model;
+  if (runner === "codex") return "Codex CLI";
+  return "OpenClaw local agent";
+}
+
 function requestOrigin(req) {
   const fallbackHost = `${host}:${port}`;
   const requestHost = String(req.headers.host || fallbackHost);
@@ -3155,6 +3241,10 @@ function validateManagedConnectorStart(body = {}) {
   const runner = String(model || "connector:stub").replace("connector:", "");
   if (!["stub", "provider", "openclaw", "codex"].includes(runner)) {
     throw new Error("Unknown connector runner");
+  }
+  if (["openclaw", "codex"].includes(runner)) {
+    assertLocalCliRunnerAvailable(runner);
+    return;
   }
   if (runner !== "provider") return;
   const provider = normalizeProvider(body.provider);
@@ -4663,10 +4753,11 @@ async function startAgentGuiSession(req, body = {}) {
   const ownerWalletAddress = body.wallet_address || body.walletAddress
     ? normalizeWalletAddress(body.wallet_address || body.walletAddress)
     : null;
+  const agentId = String(body.agent || "coder");
+  const runner = resolveAgentGuiRunnerForAgent(agentId);
+  assertLocalCliRunnerAvailable(runner);
   const title = agentGuiSessionTitle(content);
   const goal = agentGuiGoalForStart(body, title, content);
-  const agentId = String(body.agent || "coder");
-  const runner = agentGuiRunnerForAgent(agentId);
   const teamId = normalizeAgentGuiPrivateTeamId(body.team_id);
   const teamName = String(body.team_name || "").trim().slice(0, 80);
   const startedAt = now();
@@ -4686,7 +4777,7 @@ async function startAgentGuiSession(req, body = {}) {
     agentGuiTeamId: teamId,
     agentGuiTeamName: teamName || null,
     agentGuiAgent: agentId,
-    agentGuiModel: agentGuiProfileById(agentId)?.model || (runner === "codex" ? "Codex CLI" : "OpenClaw local agent"),
+    agentGuiModel: agentGuiModelForRunner(agentId, runner),
     ownerWalletAddress
   };
   store.tasks.unshift(task);
@@ -5458,10 +5549,12 @@ function startAgentGuiTaskConnector(req, task, agentId) {
     return existing;
   }
 
-  const runner = agentGuiRunnerForAgent(agentId);
+  const desiredRunner = agentGuiRunnerForAgent(agentId);
+  const runner = resolveAgentGuiRunnerForAgent(agentId);
+  assertLocalCliRunnerAvailable(runner);
   const profile = agentGuiProfileById(agentId);
   task.agentGuiAgent = profile?.id || "coder";
-  task.agentGuiModel = profile?.model || (runner === "codex" ? "Codex CLI" : "OpenClaw local agent");
+  task.agentGuiModel = agentGuiModelForRunner(agentId, runner);
   task.updatedAt = now();
 
   const auth = agentGuiConnectorAuth(task.id);
@@ -5482,6 +5575,14 @@ function startAgentGuiTaskConnector(req, task, agentId) {
     provider: connector.provider,
     providers: connector.providers
   });
+  if (desiredRunner !== runner) {
+    event("agentgui_runner_fallback", `${profile?.name || "OSA agent"} used ${runner} because ${desiredRunner} is not available`, {
+      taskId: task.id,
+      connectorId: connector.id,
+      desiredRunner,
+      runner
+    });
+  }
   return connector;
 }
 
