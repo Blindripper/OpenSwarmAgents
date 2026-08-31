@@ -7,6 +7,7 @@ import { ReasoningEffortControl } from "./ReasoningEffortControl";
 import { isVllmBackend } from "../backendKind";
 import type { DeskConfigView } from "../deskConfig";
 import type { RosterLayout } from "../rosterLayout";
+import type { RuntimeStatus } from "../api/client";
 import type { AgentProfile, ReasoningEffort, Session, Team, ToolPresetId, ToolsetMeta } from "../types";
 
 interface Props {
@@ -22,6 +23,7 @@ interface Props {
     onlineAgents: number;
     walletConnected: boolean;
     live: boolean;
+    federation?: RuntimeStatus | null;
   };
   bellSound: string;
   scene: string;
@@ -96,6 +98,26 @@ function TopMetric({ label, value, hint, tone = "accent" }: { label: string; val
   );
 }
 
+function federationMetric(runtime?: RuntimeStatus | null) {
+  if (!runtime?.federationEnabled) {
+    return { value: "Local", hint: "Federation is disabled on this node.", tone: "muted" as const };
+  }
+  if (runtime.federationTrustConfigError) {
+    return { value: "Check", hint: runtime.federationTrustConfigError, tone: "muted" as const };
+  }
+  const known = Number(runtime.federationKnownPeerCount || 0);
+  const syncable = Number(runtime.federationDiscoveredPeerCount || 0);
+  const configured = Number(runtime.federationPeerCount || 0);
+  const trusted = Number(runtime.federationTrustedNodeCount || 0);
+  const mode = runtime.federationSignatureVerificationEnabled ? "Verified" : "Token";
+  const discovery = runtime.federationDiscoveryEnabled ? ` · ${syncable}/${known} discovery` : "";
+  return {
+    value: `${mode} ${syncable}/${known}`,
+    hint: `${configured} configured peer${configured === 1 ? "" : "s"} · ${trusted} trusted peer${trusted === 1 ? "" : "s"}${discovery}${runtime.federationAdvertiseUrl ? ` · advertises ${runtime.federationAdvertiseUrl}` : ""}`,
+    tone: syncable > 0 || configured > 0 ? "green" as const : "accent" as const,
+  };
+}
+
 export function Header({
   teams, sessions, sessionCount, activeCount,
   networkStats,
@@ -131,6 +153,7 @@ export function Header({
   const walletButtonLabel = stats.walletConnected
     ? `Disconnect ${walletAddress ? shortAddress(walletAddress) : "Wallet"}`
     : "Connect Wallet";
+  const federation = federationMetric(stats.federation);
 
   return (
     <div style={{
@@ -188,7 +211,7 @@ export function Header({
       <div style={{
         flex: 1,
         display: "grid",
-        gridTemplateColumns: "repeat(5, minmax(112px, 1fr))",
+        gridTemplateColumns: "repeat(6, minmax(96px, 1fr))",
         minWidth: 0,
         gap: 8,
       }}>
@@ -196,6 +219,7 @@ export function Header({
         <TopMetric label="WORKING" value={String(stats.onlineAgents)} hint="Agents currently doing reward-eligible work on this node" tone={stats.onlineAgents > 0 ? "green" : "muted"} />
         <TopMetric label="COPIES" value={String(stats.copies)} hint="Total public project copies in this network view" />
         <TopMetric label="Earned Donations" value={`${stats.donationsUsdc.toFixed(stats.donationsUsdc % 1 ? 2 : 0)} USDC`} hint="Donation intents recorded by this OSA network view" tone={stats.donationsUsdc > 0 ? "green" : "muted"} />
+        <TopMetric label="PEERS" value={federation.value} hint={federation.hint} tone={federation.tone} />
         <TopMetric label="$OSA" value={stats.osaBalanceLabel} hint="Current $OSA balance for the connected wallet. Shows 0 until token deployment and on-chain balance lookup are configured." />
       </div>
 

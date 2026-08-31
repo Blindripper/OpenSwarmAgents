@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type NetworkEvent } from "./api/client";
+import { api, type NetworkEvent, type RuntimeStatus } from "./api/client";
 import { Header } from "./components/Header";
 import type { ApiMode, ReasoningEffort } from "./types";
 import { Office } from "./components/Office";
@@ -401,6 +401,7 @@ export default function App() {
   const [topProjectsLoading, setTopProjectsLoading] = useState(false);
   const [networkLive, setNetworkLive] = useState(false);
   const [networkNotice, setNetworkNotice] = useState<string | null>(null);
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [walletConnected, setWalletConnected] = useState(readWalletConnected);
   const [walletAddress, setWalletAddress] = useState<string | null>(() => readWalletSession()?.address || null);
   const [osaBalanceLabel, setOsaBalanceLabel] = useState("0 OSA");
@@ -643,13 +644,23 @@ export default function App() {
     }
   }, []);
 
+  const refreshRuntimeStatus = useCallback(async () => {
+    try {
+      const health = await api.health();
+      setRuntimeStatus(health.runtime ?? null);
+    } catch {
+      setRuntimeStatus(null);
+    }
+  }, []);
+
   const refreshNetworkViews = useCallback(() => {
     void loadSessions();
     void refreshTopProjects();
+    void refreshRuntimeStatus();
     const connected = readWalletConnected();
     setWalletConnected(connected);
     void refreshWalletBalance();
-  }, [loadSessions, refreshTopProjects, refreshWalletBalance]);
+  }, [loadSessions, refreshRuntimeStatus, refreshTopProjects, refreshWalletBalance]);
 
   useEffect(() => {
     loadSessions();
@@ -668,16 +679,18 @@ export default function App() {
     // Also re-pull the roster: profiles installed/changed on disk while the GUI
     // is open (e.g. install_profiles.sh) otherwise never appear until a reload.
     refreshTopProjects();
+    refreshRuntimeStatus();
     refreshWalletBalance();
     const poll = setInterval(() => {
       loadSessions();
       refreshAgents();
       refreshTopProjects();
+      refreshRuntimeStatus();
       setWalletConnected(readWalletConnected());
       refreshWalletBalance();
     }, POLL_INTERVAL);
     return () => clearInterval(poll);
-  }, [loadSessions, refreshAgents, refreshTopProjects, refreshWalletBalance]);
+  }, [loadSessions, refreshAgents, refreshRuntimeStatus, refreshTopProjects, refreshWalletBalance]);
 
   useEffect(() => {
     const source = api.networkStream((event) => {
@@ -1527,6 +1540,7 @@ export default function App() {
     onlineAgents: activeCount,
     walletConnected,
     live: networkLive,
+    federation: runtimeStatus,
   };
 
   async function connectDashboardWallet() {

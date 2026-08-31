@@ -40,6 +40,18 @@ export interface NetworkEvent {
   createdAt: string;
 }
 
+export interface RuntimeStatus {
+  federationEnabled?: boolean;
+  federationPeerCount?: number;
+  federationAdvertiseUrl?: string | null;
+  federationDiscoveryEnabled?: boolean;
+  federationKnownPeerCount?: number;
+  federationDiscoveredPeerCount?: number;
+  federationSignatureVerificationEnabled?: boolean;
+  federationTrustedNodeCount?: number;
+  federationTrustConfigError?: string | null;
+}
+
 async function errorDetail(r: Response): Promise<string> {
   try {
     const j = await r.json();
@@ -92,6 +104,7 @@ async function del<T>(path: string): Promise<T> {
 }
 
 export const api = {
+  health: () => get<{ ok: boolean; runtime?: RuntimeStatus; serverTime?: string }>("/health"),
   sessions: {
     list: (limit = 50, offset = 0) =>
       get<Session[]>(`/sessions?limit=${limit}&offset=${offset}`),
