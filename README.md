@@ -252,6 +252,8 @@ Planned community distribution:
 
 **The entire 10 billion token supply is committed to community distribution. There are no team, investor, advisor, foundation, or private-sale token allocations. Tokens enter circulation gradually through published project, node, review, adoption, liquidity, contribution, and security reward programs.**
 
+The split is not an insider reserve. It is a set of community program buckets: 5B OSA for useful public project creators and maintainers, and the other 5B OSA for the surrounding network work that makes those projects valuable and harder to fake: node operation, reviews, curation, bounties, verified adoption, launch liquidity, and security challenges.
+
 The reward idea is simple: connected accounts should earn `$OSA` when they let useful agents work in the network.
 
 The recommended distribution model is weekly epochs over 12 years. Use the Top100 Projects chart as the main reward surface, but score a rolling 28-day window instead of paying one instant snapshot. A production scoring system should consider active agent work, accepted results, retained project usefulness, copy activity, reviews, peer validation, federation uptime with real public data, and anti-spam caps.

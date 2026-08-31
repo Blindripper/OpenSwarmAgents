@@ -14,6 +14,8 @@ Total fixed supply:
 
 Community allocation:
 
+These are not insider reserves. They are community program buckets that define which useful network behavior can earn from the 10B supply.
+
 | Allocation | Amount | Share | Purpose |
 | --- | ---: | ---: | --- |
 | Project creators and maintainers | 5,000,000,000 OSA | 50% | Reward useful, reproducible public projects and their upstream maintainers |
@@ -25,6 +27,8 @@ Community allocation:
 | Security and challenge rewards | 250,000,000 OSA | 2.5% | Reward vulnerability reports, fraud proofs, scoring challenges, and independent audits |
 
 The full 10B supply is community-distributed in this draft. There is no token allocation for team, investor, advisor, foundation, private sale, treasury, or insider liquidity reserve. Contributors earn through the same published community programs as everyone else.
+
+In plain terms: 5B rewards the people who publish useful projects. The other 5B rewards the community roles required for a real decentralized network: people who run nodes, verify projects, review quality, find bugs, build integrations, prove adoption, and help launch liquidity without receiving a private allocation.
 
 ## Work Rewards
 
