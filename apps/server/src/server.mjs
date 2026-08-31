@@ -150,6 +150,7 @@ async function loadStore() {
       walletSessions: [],
       agentDonations: [],
       publicProjectReviews: [],
+      publicProjectCopies: [],
       publicRooms: [],
       publicProjects: [],
       connectorTokens: [],
@@ -185,6 +186,7 @@ function normalizeStore(input) {
     walletSessions: normalizeWalletSessions(input.walletSessions || []),
     agentDonations: normalizeAgentDonations(input.agentDonations || []),
     publicProjectReviews: normalizePublicProjectReviews(input.publicProjectReviews || []),
+    publicProjectCopies: normalizePublicProjectCopies(input.publicProjectCopies || []),
     publicRooms: normalizePublicCollections(input.publicRooms || [], "room"),
     publicProjects: normalizePublicCollections(input.publicProjects || [], "project"),
     connectorTokens: normalizeConnectorTokens(input.connectorTokens || []),
@@ -539,6 +541,26 @@ function normalizePublicProjectReviews(reviews) {
           createdAt: review.createdAt || now(),
           updatedAt: review.updatedAt || review.createdAt || now(),
           signature: review.signature || null
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function normalizePublicProjectCopies(copies) {
+  return copies
+    .filter((copy) => copy?.projectId)
+    .map((copy) => {
+      try {
+        return {
+          id: String(copy.id || `project-copy-${randomUUID()}`).slice(0, 100),
+          projectId: String(copy.projectId).slice(0, 140),
+          walletAddress: copy.walletAddress ? normalizeWalletAddress(copy.walletAddress) : null,
+          sourceNodeId: copy.sourceNodeId ? String(copy.sourceNodeId).slice(0, 100) : null,
+          createdAt: copy.createdAt || now(),
+          signature: copy.signature || null
         };
       } catch {
         return null;
@@ -979,6 +1001,7 @@ async function loadPostgresStore() {
     walletSessions: [],
     agentDonations: [],
     publicProjectReviews: [],
+    publicProjectCopies: [],
     publicRooms: [],
     publicProjects: [],
     connectorTokens: [],
@@ -1520,6 +1543,7 @@ function publicState(auth = null) {
     results: store.results,
     reviews: store.reviews,
     publicProjectReviews: store.publicProjectReviews,
+    publicProjectCopies: store.publicProjectCopies,
     claims: store.claims,
     resultPool: store.resultPool,
     proposals: store.proposals,
@@ -1556,6 +1580,7 @@ function publicLockedState() {
     results: [],
     reviews: [],
     publicProjectReviews: [],
+    publicProjectCopies: [],
     claims: [],
     resultPool: [],
     proposals: [],
@@ -1671,6 +1696,7 @@ function publicFederationSnapshot() {
       publicRooms: federationSlice(store.publicRooms).map(publicFederatedPublicCollection),
       publicProjects: federationSlice(store.publicProjects).map(publicFederatedPublicCollection),
       publicProjectReviews: federationSlice(store.publicProjectReviews).map(publicFederatedProjectReview),
+      publicProjectCopies: federationSlice(store.publicProjectCopies).map(publicFederatedProjectCopy),
       agentDonations: federationSlice(store.agentDonations).map(publicFederatedDonation),
       trustLedger: publicTrustLedger(500),
       events: store.events
@@ -1972,6 +1998,17 @@ function publicFederatedProjectReview(review) {
   ]);
 }
 
+function publicFederatedProjectCopy(copy) {
+  return pick(copy, [
+    "id",
+    "projectId",
+    "walletAddress",
+    "sourceNodeId",
+    "createdAt",
+    "signature"
+  ]);
+}
+
 function publicFederatedDonation(donation) {
   return pick(donation, [
     "id",
@@ -2074,6 +2111,7 @@ function verifiedFederationCollections(snapshot) {
     uploadedArtifacts: verifiedSignedCollection("uploadedArtifacts", collections.uploadedArtifacts, trusted),
     publicProjects: verifiedSignedCollection("publicProjects", collections.publicProjects, trusted),
     publicProjectReviews: verifiedSignedCollection("publicProjectReviews", collections.publicProjectReviews, trusted),
+    publicProjectCopies: verifiedSignedCollection("publicProjectCopies", collections.publicProjectCopies, trusted),
     agentDonations: verifiedSignedCollection("agentDonations", collections.agentDonations, trusted),
     trustLedger: verifiedTrustLedgerEntries(collections.trustLedger, trusted)
   };
@@ -2162,6 +2200,7 @@ function federationOriginProjectionHash(originNodeId, collections = {}) {
     "uploadedArtifacts",
     "publicProjects",
     "publicProjectReviews",
+    "publicProjectCopies",
     "agentDonations"
   ];
   const projection = {};
@@ -2244,6 +2283,7 @@ function signedContributionTypeForCollection(name) {
     uploadedArtifacts: "artifact_upload",
     publicProjects: "public_project",
     publicProjectReviews: "public_project_review",
+    publicProjectCopies: "public_project_copy",
     agentDonations: "agent_donation"
   }[name] || null;
 }
@@ -2300,6 +2340,7 @@ function signedPayloadForFederatedItem(name, item) {
   }
   if (name === "publicProjects") return signedPayloadForPublicCollection(item, "project");
   if (name === "publicProjectReviews") return signedPayloadForPublicProjectReview(item);
+  if (name === "publicProjectCopies") return signedPayloadForPublicProjectCopy(item);
   if (name === "agentDonations") return signedPayloadForDonation(item);
   return null;
 }
@@ -2322,8 +2363,6 @@ function signedPayloadForPublicCollection(item, type = "project") {
     rooms,
     sharedAt: item.sharedAt || item.shared_at || null,
     updatedAt: item.updatedAt || item.updated_at || item.sharedAt || item.shared_at || null,
-    copyCount: Math.max(0, Number(item.copyCount || item.copy_count || 0)),
-    lastCopiedAt: item.lastCopiedAt || item.last_copied_at || null,
     ownerWalletAddress: item.ownerWalletAddress || item.owner_wallet_address || null,
     shareFileRepo: Boolean(item.shareFileRepo || item.share_file_repo),
     isExample: Boolean(item.isExample || item.is_example)
@@ -2340,6 +2379,16 @@ function signedPayloadForPublicProjectReview(review) {
     commentHash: hashToken(review.comment || ""),
     createdAt: review.createdAt || null,
     updatedAt: review.updatedAt || review.createdAt || null
+  };
+}
+
+function signedPayloadForPublicProjectCopy(copy) {
+  return {
+    copyId: String(copy.id || "").slice(0, 100),
+    projectId: String(copy.projectId || "").slice(0, 140),
+    walletAddress: copy.walletAddress || null,
+    sourceNodeId: copy.sourceNodeId || null,
+    createdAt: copy.createdAt || null
   };
 }
 
@@ -2447,6 +2496,7 @@ function importFederationSnapshot(snapshot) {
     publicRooms: mergeFederatedPublicCollections("publicRooms", collections.publicRooms, "room"),
     publicProjects: mergeFederatedPublicCollections("publicProjects", collections.publicProjects, "project"),
     publicProjectReviews: mergeFederatedProjectReviews(collections.publicProjectReviews),
+    publicProjectCopies: mergeFederatedProjectCopies(collections.publicProjectCopies),
     agentDonations: mergeFederatedAgentDonations(collections.agentDonations),
     trustLedger: mergeFederatedTrustLedger(collections.trustLedger),
     federationPeerHeads: rememberFederationSnapshotProgress(progress),
@@ -2521,6 +2571,19 @@ function mergeFederatedProjectReviews(incoming) {
     }
   }
   store.publicProjectReviews.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  return merged;
+}
+
+function mergeFederatedProjectCopies(incoming) {
+  if (!Array.isArray(incoming)) return 0;
+  store.publicProjectCopies = normalizePublicProjectCopies(store.publicProjectCopies || []);
+  let merged = 0;
+  for (const copy of normalizePublicProjectCopies(incoming).slice(0, federationCollectionLimit)) {
+    if (store.publicProjectCopies.some((item) => item.id === copy.id)) continue;
+    store.publicProjectCopies.push(copy);
+    merged += 1;
+  }
+  store.publicProjectCopies.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   return merged;
 }
 
@@ -3745,6 +3808,24 @@ function agentGuiProjectReviewStats(projectId) {
   };
 }
 
+function agentGuiProjectCopyStats(project) {
+  const copyEvents = (store.publicProjectCopies || []).filter((copy) => copy.projectId === project.id);
+  const eventCount = copyEvents.length;
+  const legacyCount = Math.max(0, Number(project.copyCount || 0));
+  const copyCount = federationSignatureVerificationEnabled() && project.signature
+    ? eventCount
+    : Math.max(legacyCount, eventCount);
+  const latestEventAt = copyEvents
+    .map((copy) => copy.createdAt)
+    .filter(Boolean)
+    .sort((a, b) => String(b).localeCompare(String(a)))[0] || null;
+  return {
+    copy_count: copyCount,
+    copy_event_count: eventCount,
+    last_copied_at: latestEventAt || project.lastCopiedAt || null
+  };
+}
+
 function agentGuiRankedPublicAgents(limit = 100) {
   return store.tasks
     .filter((task) => task.sharedPublic && !["deleted", "rejected"].includes(task.status) && !task.agentGuiDeletedAt)
@@ -3789,6 +3870,13 @@ function agentGuiRankedPublicCollections(type, limit = 100) {
     .map((item) => {
       const donationStats = agentGuiDonationStats(type, item.id);
       const reviewStats = type === "project" ? agentGuiProjectReviewStats(item.id) : {};
+      const copyStats = type === "project"
+        ? agentGuiProjectCopyStats(item)
+        : {
+            copy_count: Math.max(0, Number(item.copyCount || 0)),
+            copy_event_count: 0,
+            last_copied_at: item.lastCopiedAt || null
+          };
       return {
         id: `${type === "room" ? "public-room" : "public-project"}-${item.id}`,
         target_type: type,
@@ -3799,10 +3887,11 @@ function agentGuiRankedPublicCollections(type, limit = 100) {
         agent: type === "room" ? "OSA Room" : "OSA Project",
         model: `${item.taskIds.length} public ${item.taskIds.length === 1 ? "agent" : "agents"}`,
         goal: type === "room" ? "Retired Room Sharing" : "Latest Projects",
-        copy_count: Math.max(0, Number(item.copyCount || 0)),
+        copy_count: copyStats.copy_count,
+        copy_event_count: copyStats.copy_event_count,
         item_count: item.taskIds.length,
         shared_at: item.sharedAt,
-        last_copied_at: item.lastCopiedAt || null,
+        last_copied_at: copyStats.last_copied_at,
         owner_wallet_address: item.ownerWalletAddress || null,
         ...donationStats,
         ...reviewStats
@@ -4430,6 +4519,23 @@ function copySourceTaskToPrivateRoom(sourceTask, roomId, roomName, copiedAt, own
   return task;
 }
 
+function recordPublicProjectCopy(projectId, walletAddress, createdAt) {
+  store.publicProjectCopies = normalizePublicProjectCopies(store.publicProjectCopies || []);
+  const copy = {
+    id: `project-copy-${randomUUID()}`,
+    projectId,
+    walletAddress,
+    sourceNodeId: nodeIdentity.nodeId,
+    createdAt
+  };
+  copy.signature = recordSignedContribution("public_project_copy", signedPayloadForPublicProjectCopy(copy), {
+    objectType: "public_project_copy",
+    objectId: copy.id
+  });
+  store.publicProjectCopies.unshift(copy);
+  return copy;
+}
+
 async function copyPublicCollectionToHome(sessionId, type, body = {}) {
   const prefix = type === "room" ? "public-room-" : "public-project-";
   const collectionId = sessionId.startsWith(prefix) ? sessionId.slice(prefix.length) : "";
@@ -4474,15 +4580,13 @@ async function copyPublicCollectionToHome(sessionId, type, body = {}) {
 
   collection.copyCount = Math.max(0, Number(collection.copyCount || 0)) + 1;
   collection.lastCopiedAt = copiedAt;
-  collection.updatedAt = copiedAt;
-  if (type === "project") {
-    collection.signature = recordSignedContribution("public_project", signedPayloadForPublicCollection(collection, "project"), {
-      objectType: "public_project",
-      objectId: collection.id
-    });
-  }
+  if (type === "room") collection.updatedAt = copiedAt;
+  const copyRecord = type === "project"
+    ? recordPublicProjectCopy(collection.id, ownerWalletAddress, copiedAt)
+    : null;
   event(type === "room" ? "agentgui_public_room_copied" : "agentgui_public_project_copied", `Copied Public ${type} into Home`, {
     publicId: collection.id,
+    publicProjectCopyId: copyRecord?.id || null,
     copiedTaskIds: copiedTasks.map((task) => task.id),
     copyCount: collection.copyCount,
     ownerWalletAddress
@@ -5578,9 +5682,17 @@ async function handleApi(req, res, url) {
         users: [],
         sessions: [],
         agentProfiles: [],
+        walletSessions: [],
+        agentDonations: [],
+        publicProjectReviews: [],
+        publicProjectCopies: [],
+        publicRooms: [],
+        publicProjects: [],
         connectorTokens: [],
         oauthStates: [],
         proposalVotes: [],
+        trustLedger: [],
+        federationPeerHeads: {},
         events: []
       });
       ensureAgentGuiExampleProject(store);

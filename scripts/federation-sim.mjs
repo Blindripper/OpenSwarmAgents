@@ -356,8 +356,10 @@ async function assertPublicProjectSharing(nodeA, nodeB) {
   await assertNoImportedHomeDesk(nodeA, "B private security project");
 
   await postJson(nodeB, `/api/sessions/${encodeURIComponent(shareA.project.id)}/copy`, {});
+  await assertSignedCopyEventTamperRejected(nodeB, nodeA, idA);
   await sync(nodeB, nodeA);
   await assertTopProject(nodeA, "Node A Alpha Project", (project) => project.copy_count === 1, "copy counts should federate back to the publisher");
+  await assertTopProject(nodeA, "Node A Alpha Project", (project) => project.copy_event_count === 1, "copy event counts should federate back to the publisher");
 
   await createDashboardTask(nodeB, "B private draft not shared");
   const snapshotB = await getJson(nodeB, "/api/federation/snapshot", nodeB.federationHeaders);
@@ -384,7 +386,7 @@ async function assertSignedPublicRecordTamperRejected(from, to, projectId) {
   assert(donation?.signature?.signature, "fresh project donation should carry a federation signature");
 
   const tamperedProjectSnapshot = structuredClone(snapshot);
-  tamperedProjectSnapshot.collections.publicProjects.find((item) => item.id === projectId).copyCount += 10;
+  tamperedProjectSnapshot.collections.publicProjects.find((item) => item.id === projectId).name = "Tampered Project Name";
   await expectPostStatus(to, "/api/federation/import", 400, { snapshot: tamperedProjectSnapshot }, to.federationHeaders);
 
   const tamperedReviewSnapshot = structuredClone(snapshot);
@@ -394,6 +396,15 @@ async function assertSignedPublicRecordTamperRejected(from, to, projectId) {
   const tamperedDonationSnapshot = structuredClone(snapshot);
   tamperedDonationSnapshot.collections.agentDonations.find((item) => item.targetId === projectId).amount = 200;
   await expectPostStatus(to, "/api/federation/import", 400, { snapshot: tamperedDonationSnapshot }, to.federationHeaders);
+}
+
+async function assertSignedCopyEventTamperRejected(from, to, projectId) {
+  const snapshot = await getJson(from, "/api/federation/snapshot", from.federationHeaders);
+  const copy = snapshot.collections.publicProjectCopies.find((item) => item.projectId === projectId);
+  assert(copy?.signature?.signature, "fresh project copy should carry a federation signature");
+  const tamperedCopySnapshot = structuredClone(snapshot);
+  tamperedCopySnapshot.collections.publicProjectCopies.find((item) => item.id === copy.id).projectId = "project-tampered-copy-target";
+  await expectPostStatus(to, "/api/federation/import", 400, { snapshot: tamperedCopySnapshot }, to.federationHeaders);
 }
 
 async function createAndShareDashboardProject(node, name, content) {
