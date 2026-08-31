@@ -58,6 +58,10 @@ try {
   assert(config.agents.find((agent) => agent.id === "coder")?.model === "OpenClaw local agent", "Coder should default to OpenClaw in AgentGUI");
   assert(config.agents.find((agent) => agent.id === "bugfixer")?.model === "OpenClaw local agent", "Bugfixer should default to OpenClaw in AgentGUI");
   assert(config.prototypes.length === 0, "legacy built-in Agent Profile prototypes should be removed");
+  const openclawStatus = await getJson("/api/openclaw/status");
+  assert(openclawStatus.available === true && openclawStatus.install_command, "OpenClaw setup status should expose wizard install diagnostics");
+  const openclawInstall = await postJson("/api/openclaw/install", {});
+  assert(openclawInstall.installed === false && openclawInstall.status?.available === true, "OpenClaw wizard install should be a no-op when OpenClaw is already available");
   const infoPersona = await getJson("/api/agents/info-guy/persona");
   assert(infoPersona.soul.includes("information-gathering"), "existing specialist profiles should expose useful Soul.md content");
   await putJson("/api/agents/info-guy/persona", {
@@ -120,6 +124,15 @@ try {
   await expectText(page, "body", "Top100 Projects");
   await expectText(page, "body", "Network Activity");
   await expectText(page, "body", "Network Chat");
+  await page.locator('button[title="Settings"]').click();
+  assert(await page.locator('input[type="number"]').first().inputValue() === "600", "manager patrol interval should default to 600 seconds");
+  await page.locator('button[title="Settings"]').click();
+  await page.locator('[title="Manager actions"]').first().click();
+  await expectText(page, "body", "Run");
+  await expectText(page, "body", "View");
+  await page.getByRole("button", { name: "View" }).click();
+  await expectText(page, "body", "Manager Audits");
+  await page.locator('button[title="Close manager audits"]').click();
   let bodyText = await page.locator("body").innerText();
   assert(!bodyText.includes("Top100 AI Agents"), "agent charts should not render");
   assert(!bodyText.includes("Top100 Rooms"), "room charts should not render");
@@ -150,6 +163,8 @@ try {
   const audit = await postJson(`/api/sessions/${encodeURIComponent(created.session_id)}/audit`, {});
   assert(audit.summary?.total > 0, "manager audit should return visible feedback criteria");
   assert(audit.results?.some((item) => item.criterion === "Feedback location is clear"), "manager audit should explain where feedback is visible");
+  const managerAudits = await getJson("/api/manager/audits?limit=20");
+  assert(managerAudits.audits?.some((item) => item.session_id === created.session_id), "fresh manager audits should be saved to the manager audit history");
   const completed = await waitForJson(
     "/api/sessions",
     (items) => items.find((session) => session.id === created.session_id && session.task_solved === true),

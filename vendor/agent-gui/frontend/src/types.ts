@@ -140,6 +140,21 @@ export interface ProjectExplorerReport {
   evidence: string[];
 }
 
+export interface ManagerAuditRecord {
+  id: string;
+  session_id: string;
+  task_id?: string | null;
+  team_id?: string | null;
+  team_name?: string | null;
+  desk_title: string;
+  goal?: string | null;
+  generated_at: string;
+  trigger: string;
+  state_hash?: string | null;
+  summary: { passed: number; failed: number; unsure: number; total: number };
+  results: AuditCriterionResult[];
+}
+
 export interface NetworkChatMessage {
   id: string;
   node_id: string;

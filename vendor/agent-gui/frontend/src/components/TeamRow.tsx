@@ -344,18 +344,27 @@ function Bed({ isSleeping, selected, bedRef, onClick, chrome }: {
   );
 }
 
-function ManagerStagingArea({ stagingRef, onPatrol, onClick, chrome, agents }: {
+function ManagerStagingArea({ stagingRef, onPatrol, onRun, onViewAudits, chrome, agents }: {
   stagingRef: React.RefObject<HTMLDivElement>;
   onPatrol: boolean;
-  onClick: () => void;
+  onRun: () => void;
+  onViewAudits: () => void;
   chrome: SceneFloorChrome;
   agents: AgentProfile[];
 }) {
   const [hov, setHov] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const openMenu = () => {
+    if (onPatrol) return;
+    setMenuOpen((open) => !open);
+  };
   return (
     <div
       onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
+      onMouseLeave={() => {
+        setHov(false);
+        setMenuOpen(false);
+      }}
       style={{
         position: "relative",
         width: TEAM_CHROME_TILE_WIDTH,
@@ -378,8 +387,8 @@ function ManagerStagingArea({ stagingRef, onPatrol, onClick, chrome, agents }: {
       <ManagerModelMenu chrome={chrome} agents={agents} />
       <div
         ref={stagingRef}
-        onClick={onClick}
-        title={onPatrol ? "Manager is auditing desks and writing feedback into the Manager Feedback tab" : "Click to ask the manager to audit idle desks and leave feedback"}
+        onClick={openMenu}
+        title={onPatrol ? "Manager is auditing desks and writing feedback into the Manager Feedback tab" : "Manager actions"}
         style={{
           width: "100%",
           display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
@@ -415,8 +424,62 @@ function ManagerStagingArea({ stagingRef, onPatrol, onClick, chrome, agents }: {
           audit feedback
         </div>
       </div>
+      {menuOpen && (
+        <div
+          style={{
+            position: "absolute",
+            top: 76,
+            left: 0,
+            zIndex: 120,
+            width: TEAM_CHROME_TILE_WIDTH,
+            display: "grid",
+            gap: 4,
+            padding: 6,
+            borderRadius: 8,
+            border: `1px solid ${chrome.controlBorder}`,
+            background: "rgba(10,14,28,0.96)",
+            boxShadow: "0 10px 28px rgba(0,0,0,0.45)",
+          }}
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuOpen(false);
+              onRun();
+            }}
+            style={managerActionButtonStyle(chrome)}
+          >
+            Run
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuOpen(false);
+              onViewAudits();
+            }}
+            style={managerActionButtonStyle(chrome)}
+          >
+            View
+          </button>
+        </div>
+      )}
     </div>
   );
+}
+
+function managerActionButtonStyle(chrome: SceneFloorChrome): React.CSSProperties {
+  return {
+    height: 26,
+    borderRadius: 6,
+    border: `1px solid ${chrome.controlBorder}`,
+    background: chrome.controlBg,
+    color: chrome.controlColor,
+    fontSize: 11,
+    fontWeight: 900,
+    cursor: "pointer",
+  };
 }
 
 // ── Team name (click to rename) ─────────────────────────────────────────────
@@ -547,6 +610,7 @@ export interface TeamRowProps {
   deskConfigsById?: Record<string, DeskConfigView>;
   onAvatarClick?: (deskId: string) => void;
   onDeskAskManager?: (sessionId: string) => void;
+  onManagerAuditHistory?: () => void;
   /** Begin dragging a desk's agent avatar (drop on the bench to stop it). */
   onAgentDragStart?: (e: React.MouseEvent, sessionId: string, agentId: string, color?: string, state?: "idle" | "working" | "thinking") => void;
   searchMatchIds?: Set<string>;
@@ -570,7 +634,7 @@ export function TeamRow({
   onAvatarClick,
   onAskManagerDone, onPreview, onDeskStart, onDeskClose,
   deskPanelZ, onDeskPanelActivate,
-  readOnly = false, canAddDesk = true, onCopyDesk, onPublicProjectDetails, onShareTeam, onAddDesk, onSessionInterrupt, onPendingMsgChange, onPendingAssignmentPatch, onDeskAskManager, onAgentDragStart,
+  readOnly = false, canAddDesk = true, onCopyDesk, onPublicProjectDetails, onShareTeam, onAddDesk, onSessionInterrupt, onPendingMsgChange, onPendingAssignmentPatch, onDeskAskManager, onManagerAuditHistory, onAgentDragStart,
   searchMatchIds,
   toolsets, reasoningValue, reasoningOptions,
   onDeskConfigProfileChange, onDeskConfigModelChange, onDeskConfigToolsChange, onDeskConfigReasoningChange,
@@ -1173,7 +1237,8 @@ export function TeamRow({
                   <ManagerStagingArea
                     stagingRef={stagingRef}
                     onPatrol={managerOnPatrol}
-                    onClick={() => { if (!managerOnPatrol) onDeskAskManager?.("__manual__"); }}
+                    onRun={() => { if (!managerOnPatrol) onDeskAskManager?.("__manual__"); }}
+                    onViewAudits={() => onManagerAuditHistory?.()}
                     chrome={chrome}
                     agents={agents ?? []}
                   />
@@ -1435,7 +1500,7 @@ export function TeamRow({
         scrollRef={scrollRef}
         stagingRef={stagingRef}
         enabled={(showManager ?? true) && sleepPhase === "awake"}
-        patrolIntervalSec={managerPatrolIntervalSec ?? 60}
+        patrolIntervalSec={managerPatrolIntervalSec ?? 600}
         idleGraceSec={managerIdleGraceSec ?? 60}
         reasoningEffort={reasoningEffort}
         apiMode={apiMode}

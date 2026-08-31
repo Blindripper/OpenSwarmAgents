@@ -12,6 +12,7 @@ import { TopAgentsPanel } from "./components/TopAgentsPanel";
 import { NetworkActivityPanel } from "./components/NetworkActivityPanel";
 import { NetworkChatWindow } from "./components/NetworkChatWindow";
 import { ProjectDetailsModal } from "./components/ProjectDetailsModal";
+import { ManagerAuditHistoryModal } from "./components/ManagerAuditHistoryModal";
 import { loadSnapshotIndex, loadSnapshotWorkbench, saveCurrentProjectSnapshot, type SnapshotMeta } from "./components/SnapshotMenu";
 import { FilePreview, DEFAULT_CODE_THEME } from "./components/FilePreview";
 import type { CodeThemeId } from "./components/FilePreview";
@@ -521,9 +522,9 @@ export default function App() {
   });
   const [managerPatrolIntervalSec, setManagerPatrolIntervalSec] = useState<number>(() => {
     const v = readStoredItem(STORAGE_KEYS.managerPatrolInterval.key, STORAGE_KEYS.managerPatrolInterval.legacy);
-    if (v) return parseInt(v, 10) || 60;
+    if (v) return parseInt(v, 10) || 600;
     const legacy = readStoredItem(STORAGE_KEYS.managerIdleThreshold.key, STORAGE_KEYS.managerIdleThreshold.legacy);
-    return legacy ? parseInt(legacy, 10) || 60 : 60;
+    return legacy ? parseInt(legacy, 10) || 600 : 600;
   });
   const [managerIdleGraceSec, setManagerIdleGraceSec] = useState<number>(() => {
     const v = readStoredItem(STORAGE_KEYS.managerIdleGrace.key, STORAGE_KEYS.managerIdleGrace.legacy);
@@ -535,6 +536,7 @@ export default function App() {
   const [onboardingOpen, setOnboardingOpen] = useState(
     () => readStoredItem(ONBOARDING_DISMISSED_KEY) !== "1",
   );
+  const [managerAuditHistoryTeamId, setManagerAuditHistoryTeamId] = useState<string | null>(null);
   // Per-team ask-manager: maps team.id → session id to prioritise (null = full patrol)
   const [askManagerByTeamId, setAskManagerByTeamId] = useState<Record<string, string | null>>({});
   const [searchMatchIds, setSearchMatchIds] = useState<Set<string>>(new Set());
@@ -2074,6 +2076,7 @@ export default function App() {
           deskConfigsById={deskConfigsById}
           onAvatarClick={handleAvatarClick}
           onDeskAskManager={(teamId, sid) => setAskManagerByTeamId((prev) => ({ ...prev, [teamId]: sid }))}
+          onManagerAuditHistory={(teamId) => setManagerAuditHistoryTeamId(teamId)}
           toolsets={toolsets}
           reasoningValue={reasoningEffort}
           reasoningOptions={reasoningOptions}
@@ -2092,10 +2095,26 @@ export default function App() {
           onRefresh={() => {
             api.openclaw.status().then(setOpenClawStatus).catch(() => {});
           }}
+          onInstall={async () => {
+            const result = await api.openclaw.install();
+            setOpenClawStatus(result.status);
+            return result;
+          }}
+          onConnect={async () => {
+            const result = await api.openclaw.connect();
+            setOpenClawStatus(result.status);
+            return result;
+          }}
           onClose={() => {
             setOnboardingOpen(false);
             writeStoredItem(ONBOARDING_DISMISSED_KEY, "1");
           }}
+        />
+      )}
+      {managerAuditHistoryTeamId && (
+        <ManagerAuditHistoryModal
+          teamId={managerAuditHistoryTeamId}
+          onClose={() => setManagerAuditHistoryTeamId(null)}
         />
       )}
       {agentDrag && (() => {

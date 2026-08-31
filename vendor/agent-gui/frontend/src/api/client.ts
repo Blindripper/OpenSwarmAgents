@@ -1,4 +1,4 @@
-import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, NetworkChatMessage, ProjectExplorerReport, PublicProjectDetail, PublicProjectReview, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
+import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChatMessage, ProjectExplorerReport, PublicProjectDetail, PublicProjectReview, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
 
 const BASE = "/api";
 const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
@@ -13,6 +13,9 @@ export interface OpenClawStatus {
   rooms: { home: string; public: string };
   message: string;
   install_hint?: string;
+  install_command?: string;
+  connect_command?: string;
+  auth_hint?: string;
 }
 
 export interface WalletSession {
@@ -387,6 +390,8 @@ export const api = {
   },
   openclaw: {
     status: () => get<OpenClawStatus>("/openclaw/status"),
+    install: () => post<{ ok: boolean; installed: boolean; status: OpenClawStatus; output?: string }>("/openclaw/install", {}),
+    connect: () => post<{ ok: boolean; status: OpenClawStatus; message: string; connect_command?: string }>("/openclaw/connect", {}),
     warmup: () => post<{ ok: boolean }>("/warmup", {}),
   },
   llm: {
@@ -413,6 +418,8 @@ export const api = {
       get<{ profile: string; model: string; base_url: string }>("/manager/profile"),
     setProfile: (profile: string) =>
       post<{ profile: string; model: string }>("/manager/profile", { profile }),
+    audits: (limit = 100) =>
+      get<{ audits: ManagerAuditRecord[] }>(`/manager/audits?limit=${limit}`),
   },
   /** @deprecated use api.llm.models */
   ollama: {

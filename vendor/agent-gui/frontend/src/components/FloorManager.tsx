@@ -305,7 +305,7 @@ export function FloorManager({
 
       // Already audited green and unchanged since → just a nod, never re-audit.
       // (Unless the user explicitly asked the manager to revisit this desk.)
-      if (desk.task_solved && deskPriorityId !== desk.id) {
+      if (!manualPatrol && desk.task_solved && deskPriorityId !== desk.id) {
         setBubble("✓ solved");
         setFigState("idle");
         await pause(700);
@@ -316,7 +316,7 @@ export function FloorManager({
       await pause(1000);
       if (!runningRef.current) return;
 
-      const isPriority = deskPriorityId === desk.id;
+      const isPriority = manualPatrol || deskPriorityId === desk.id;
       const result = await inspectDesk(desk, idleGraceRef.current * 1000);
 
       // Still working (or just was) → a quick glance, don't tie up the model.

@@ -1,16 +1,46 @@
-import type React from "react";
+import React from "react";
 import type { OpenClawStatus } from "../api/client";
 
 interface Props {
   status: OpenClawStatus | null;
   onRefresh: () => void;
+  onInstall: () => Promise<{ ok: boolean; installed: boolean; status: OpenClawStatus; output?: string }>;
+  onConnect: () => Promise<{ ok: boolean; status: OpenClawStatus; message: string; connect_command?: string }>;
   onClose: () => void;
 }
 
-export function OpenClawOnboarding({ status, onRefresh, onClose }: Props) {
+export function OpenClawOnboarding({ status, onRefresh, onInstall, onConnect, onClose }: Props) {
+  const [busy, setBusy] = React.useState<"install" | "connect" | null>(null);
+  const [actionMessage, setActionMessage] = React.useState<string | null>(null);
   const linked = status?.agent_gui_linked === true;
   const available = status?.available === true;
   const complete = status?.setup_complete === true;
+
+  async function runInstall() {
+    setBusy("install");
+    setActionMessage(null);
+    try {
+      const result = await onInstall();
+      setActionMessage(result.installed ? "OpenClaw installed. Start OpenClaw auth next." : "OpenClaw is already installed.");
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : "OpenClaw install failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runConnect() {
+    setBusy("connect");
+    setActionMessage(null);
+    try {
+      const result = await onConnect();
+      setActionMessage(result.message || "OpenClaw setup/auth started.");
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : "OpenClaw setup could not be launched.");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   return (
     <div style={overlayStyle} onMouseDown={(e) => { if (e.target === e.currentTarget && complete) onClose(); }}>
@@ -25,7 +55,7 @@ export function OpenClawOnboarding({ status, onRefresh, onClose }: Props) {
 
         <div style={headlineStyle}>Connect OpenClaw</div>
         <div style={copyStyle}>
-          The local AgentGUI frontend is linked to OSA in the background. Connect OpenClaw once, then use Home for private agent work and Latest Projects for copy-only public projects.
+          OSA uses OpenClaw as the local agent runner. This wizard can install OpenClaw and launch its setup/auth flow so Home agents work without manual CLI setup.
         </div>
 
         <div style={stepsStyle}>
@@ -43,8 +73,26 @@ export function OpenClawOnboarding({ status, onRefresh, onClose }: Props) {
             {status?.install_hint || "Install or sign in to OpenClaw on this host, then check again."}
           </div>
         )}
+        <div style={authNoticeStyle}>
+          {status?.auth_hint || "OpenAI subscription authentication stays inside OpenClaw/OpenAI. OSA does not collect or store those credentials."}
+        </div>
+        {actionMessage && (
+          <div style={actionMessageStyle}>
+            {actionMessage}
+          </div>
+        )}
 
         <div style={actionsStyle}>
+          {!available && (
+            <button type="button" onClick={runInstall} disabled={busy !== null} style={secondaryBtnStyle}>
+              {busy === "install" ? "Installing" : "Install OpenClaw"}
+            </button>
+          )}
+          {available && !complete && (
+            <button type="button" onClick={runConnect} disabled={busy !== null} style={secondaryBtnStyle}>
+              {busy === "connect" ? "Starting" : "Open OpenClaw Auth"}
+            </button>
+          )}
           <button type="button" onClick={onRefresh} style={secondaryBtnStyle}>
             Check OpenClaw
           </button>
@@ -168,9 +216,32 @@ const noticeStyle: React.CSSProperties = {
   marginBottom: 12,
 };
 
+const authNoticeStyle: React.CSSProperties = {
+  border: "1px solid rgba(96,165,250,0.26)",
+  background: "rgba(96,165,250,0.08)",
+  color: "#bfdbfe",
+  borderRadius: 6,
+  padding: "8px 10px",
+  fontSize: 11,
+  lineHeight: 1.4,
+  marginBottom: 12,
+};
+
+const actionMessageStyle: React.CSSProperties = {
+  border: "1px solid #2a3558",
+  background: "#0f1626",
+  color: "var(--text-dim)",
+  borderRadius: 6,
+  padding: "8px 10px",
+  fontSize: 11,
+  lineHeight: 1.4,
+  marginBottom: 12,
+};
+
 const actionsStyle: React.CSSProperties = {
   display: "flex",
   justifyContent: "flex-end",
+  flexWrap: "wrap",
   gap: 8,
 };
 

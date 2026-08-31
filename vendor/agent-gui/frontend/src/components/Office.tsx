@@ -61,6 +61,7 @@ interface Props {
   deskConfigsById?: Record<string, DeskConfigView>;
   onAvatarClick?: (deskId: string) => void;
   onDeskAskManager?: (teamId: string, sessionId: string) => void;
+  onManagerAuditHistory?: (teamId: string) => void;
   // Per-desk agent-settings panel (gear next to the avatar).
   toolsets?: ToolsetMeta[];
   reasoningValue?: ReasoningEffort;
@@ -112,7 +113,7 @@ export function Office({
   deskPanelZ, onDeskPanelActivate,
   onAddDesk, onCopyDesk, onPublicProjectDetails, onShareTeam, onDeleteTeam, onSessionInterrupt, onAssignAgentToDesk,
   onPendingMsgChange, onPendingAssignmentPatch, onActivePendingDeskChange, onDeskFocus, focusedDeskId, selectedDeskId,
-  deskConfigsById, onAvatarClick, onDeskAskManager, onAgentDragStart,
+  deskConfigsById, onAvatarClick, onDeskAskManager, onManagerAuditHistory, onAgentDragStart,
   onTeamSceneChange, onTeamRename,
   toolsets, reasoningValue, reasoningOptions,
   onDeskConfigProfileChange, onDeskConfigModelChange, onDeskConfigToolsChange, onDeskConfigReasoningChange,
@@ -184,6 +185,7 @@ export function Office({
             deskConfigsById={deskConfigsById}
             onAvatarClick={onAvatarClick}
             onDeskAskManager={(sid) => onDeskAskManager?.(team.id, sid)}
+            onManagerAuditHistory={() => onManagerAuditHistory?.(team.id)}
             onAgentDragStart={onAgentDragStart}
             toolsets={toolsets}
             reasoningValue={reasoningValue}

@@ -141,7 +141,38 @@ PORT=8790 npm run dev
 
 The topbar shows the live network state, public project count, active working agents, copy count, **Earned Donations**, and the connected wallet's `$OSA` balance. Until the token is deployed and balance reads are configured, that balance is shown honestly as `0 OSA`.
 
-Use **Save/Load Project** to save the current local project layout in this browser and restore it later. Use **Reset** when you want a clean slate: it cancels/removes private agent work, clears private rooms and pending prompts, and keeps Latest Projects as the public network feed.
+Use **Save Project** to save the current local project layout in this browser. Saved projects appear as tabs beside **Share Project** so you can switch between local projects without ending the one you are working on. Use **New Project** to start a clean local project, and **Reset** when you want to cancel/remove private agent work, clear private rooms and pending prompts, and keep Latest Projects as the public network feed.
+
+## First-Run OpenClaw Setup
+
+OSA uses OpenClaw as the default local agent runner. On a fresh machine, the first-run wizard checks whether OpenClaw is installed and whether the AgentGUI adapter is ready.
+
+The wizard can:
+
+- install OpenClaw with `npm install -g openclaw` or the command configured in `OSA_OPENCLAW_INSTALL_COMMAND`
+- launch the OpenClaw setup/auth flow from the dashboard
+- re-check the local runner status after setup
+- connect Home agents to OSA through OpenClaw without asking the user to run connector commands manually
+
+OpenAI subscription authentication stays inside OpenClaw/OpenAI. OSA can launch the OpenClaw auth flow when the local OpenClaw build supports it, but OSA does not collect, proxy, or store OpenAI login credentials. If a host requires a terminal-only OpenClaw auth flow, the wizard shows the command/operator hint and keeps the status visible until OpenClaw is ready.
+
+Operators can override the defaults:
+
+```bash
+OSA_OPENCLAW_COMMAND=/path/to/openclaw \
+OSA_OPENCLAW_INSTALL_COMMAND="npm install -g openclaw" \
+OSA_OPENCLAW_CONNECT_COMMAND="openclaw dashboard" \
+npm run dev
+```
+
+## Manager Audits
+
+Each private room has a Manager tile. Click it to choose:
+
+- **Run** starts the manager audit for that room's desks.
+- **View** opens the saved audit history for that room.
+
+The manager also runs automatic patrols. The default patrol interval is `600` seconds, and it can be changed from Settings. Every fresh audit is saved locally with the desk, room, score, evidence, and fix hints so you can read prior manager feedback later.
 
 ## Project Sharing
 
@@ -316,7 +347,7 @@ One wallet can update its own review for a project. This keeps feedback useful a
 
 Agent Profiles are reusable worker presets. They define names, behavior, model defaults, tool defaults, and editable Profile/Soul/Memory files for agents you run in Home.
 
-You can create, edit, and delete custom profiles from the dashboard. Built-in OpenClaw/Codex profiles stay available as templates, and OSA includes specialist profiles such as **Coder**, **Bugfixer**, **Info-Guy**, **Coinexpert**, **Graphicsexpert**, **Moneymaker**, and **Security Expert** with focused Soul/Memory defaults.
+You can create, edit, and delete custom profiles from the dashboard. OSA includes OpenClaw-first specialist profiles such as **Coder**, **Bugfixer**, **Info-Guy**, **Coinexpert**, **Graphicsexpert**, **Moneymaker**, **Security Expert**, and **Explorer** with focused Soul/Memory defaults.
 
 ## Local Data
 
@@ -362,7 +393,7 @@ If another app is using the port:
 PORT=8790 npm run dev
 ```
 
-If local agents cannot start, make sure OpenClaw is available on the host:
+If local agents cannot start, reopen the first-run OpenClaw wizard from the dashboard and run **Install OpenClaw** or **Open OpenClaw Auth**. Operators can also verify the runner manually:
 
 ```bash
 openclaw --version

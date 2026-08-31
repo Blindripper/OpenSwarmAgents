@@ -154,6 +154,7 @@ async function loadStore() {
       agentDonations: [],
       publicProjectReviews: [],
       publicProjectCopies: [],
+      managerAudits: [],
       networkChatMessages: [],
       federationPeerAnnouncements: [],
       publicRooms: [],
@@ -192,6 +193,7 @@ function normalizeStore(input) {
     agentDonations: normalizeAgentDonations(input.agentDonations || []),
     publicProjectReviews: normalizePublicProjectReviews(input.publicProjectReviews || []),
     publicProjectCopies: normalizePublicProjectCopies(input.publicProjectCopies || []),
+    managerAudits: normalizeManagerAudits(input.managerAudits || []),
     networkChatMessages: normalizeNetworkChatMessages(input.networkChatMessages || []),
     federationPeerAnnouncements: normalizeFederationPeerAnnouncements(input.federationPeerAnnouncements || []),
     publicRooms: normalizePublicCollections(input.publicRooms || [], "room"),
@@ -612,6 +614,53 @@ function normalizePublicProjectCopies(copies) {
       }
     })
     .filter(Boolean);
+}
+
+function normalizeManagerAuditSummary(summary) {
+  return {
+    passed: Math.max(0, Number(summary?.passed || 0)),
+    failed: Math.max(0, Number(summary?.failed || 0)),
+    unsure: Math.max(0, Number(summary?.unsure || 0)),
+    total: Math.max(0, Number(summary?.total || 0))
+  };
+}
+
+function normalizeManagerAuditResults(results) {
+  return Array.isArray(results)
+    ? results
+      .filter((item) => item && item.criterion)
+      .slice(0, 50)
+      .map((item, index) => ({
+        id: Math.max(1, Number(item.id || index + 1)),
+        task: String(item.task || "OSA desk").slice(0, 160),
+        criterion: String(item.criterion || "Audit criterion").slice(0, 200),
+        verdict: ["pass", "fail", "unsure"].includes(item.verdict) ? item.verdict : "unsure",
+        evidence: String(item.evidence || "").slice(0, 600),
+        fix_hint: String(item.fix_hint || item.fixHint || "").slice(0, 600)
+      }))
+    : [];
+}
+
+function normalizeManagerAudits(audits) {
+  return Array.isArray(audits)
+    ? audits
+      .filter((audit) => audit?.id && (audit.sessionId || audit.session_id))
+      .slice(0, 300)
+      .map((audit) => ({
+        id: String(audit.id).slice(0, 100),
+        sessionId: String(audit.sessionId || audit.session_id).slice(0, 140),
+        taskId: audit.taskId || audit.task_id ? String(audit.taskId || audit.task_id).slice(0, 140) : null,
+        teamId: audit.teamId || audit.team_id ? String(audit.teamId || audit.team_id).slice(0, 140) : null,
+        teamName: audit.teamName || audit.team_name ? String(audit.teamName || audit.team_name).slice(0, 120) : null,
+        deskTitle: String(audit.deskTitle || audit.desk_title || audit.goal || "OSA desk").slice(0, 160),
+        goal: audit.goal ? String(audit.goal).slice(0, 200) : null,
+        generatedAt: audit.generatedAt || audit.generated_at || now(),
+        trigger: String(audit.trigger || "manual").slice(0, 40),
+        stateHash: audit.stateHash || audit.state_hash ? String(audit.stateHash || audit.state_hash).slice(0, 240) : null,
+        summary: normalizeManagerAuditSummary(audit.summary),
+        results: normalizeManagerAuditResults(audit.results)
+      }))
+    : [];
 }
 
 function normalizeNetworkChatMessages(messages) {
@@ -4733,6 +4782,69 @@ function agentGuiManagerAudit(sessionId, cached = false) {
   };
 }
 
+function publicManagerAuditRecord(record) {
+  return {
+    id: record.id,
+    session_id: record.sessionId,
+    task_id: record.taskId,
+    team_id: record.teamId,
+    team_name: record.teamName,
+    desk_title: record.deskTitle,
+    goal: record.goal,
+    generated_at: record.generatedAt,
+    trigger: record.trigger,
+    state_hash: record.stateHash,
+    summary: record.summary,
+    results: record.results
+  };
+}
+
+function latestManagerAuditForSession(sessionId) {
+  return store.managerAudits.find((item) => item.sessionId === sessionId) || null;
+}
+
+function publicManagerAudits(limit = 100) {
+  const max = Math.max(1, Math.min(300, Number(limit || 100)));
+  return store.managerAudits
+    .slice(0, max)
+    .map(publicManagerAuditRecord);
+}
+
+function recordManagerAudit(audit, trigger = "manual") {
+  const taskId = agentGuiTaskIdFromSessionId(audit.session_id);
+  const task = taskId ? store.tasks.find((item) => item.id === taskId) : null;
+  const session = agentGuiSessionById(audit.session_id);
+  const goal = task ? store.goals.find((item) => item.id === task.goalId) : null;
+  const teamId = session?.team_id || task?.agentGuiTeamId || null;
+  const record = {
+    id: `manager-audit-${randomUUID()}`,
+    sessionId: audit.session_id,
+    taskId,
+    teamId,
+    teamName: session?.team_name || null,
+    deskTitle: task?.title || session?.title || audit.goal || "OSA desk",
+    goal: audit.goal || goal?.title || null,
+    generatedAt: audit.generated_at || now(),
+    trigger,
+    stateHash: audit.state_hash || null,
+    summary: normalizeManagerAuditSummary(audit.summary),
+    results: normalizeManagerAuditResults(audit.results)
+  };
+  store.managerAudits = [
+    record,
+    ...store.managerAudits.filter((item) => !(item.sessionId === record.sessionId && item.stateHash === record.stateHash && item.trigger === record.trigger))
+  ].slice(0, 300);
+  event("agentgui_manager_audit_recorded", "Manager audit saved", {
+    sessionId: record.sessionId,
+    taskId: record.taskId,
+    teamId: record.teamId,
+    passed: record.summary.passed,
+    failed: record.summary.failed,
+    unsure: record.summary.unsure
+  });
+  return record;
+}
+
 function agentGuiTaskFile(sessionId) {
   const taskId = agentGuiTaskIdFromSessionId(sessionId);
   if (taskId) {
@@ -5664,6 +5776,8 @@ function openClawSetupStatus() {
     ? String(result.stdout || result.stderr || "").trim().split(/\r?\n/)[0] || command
     : null;
   const linked = agentGuiFrontendLinked();
+  const installCommand = process.env.OSA_OPENCLAW_INSTALL_COMMAND || "npm install -g openclaw";
+  const connectCommand = process.env.OSA_OPENCLAW_CONNECT_COMMAND || `${shellQuote(command)} dashboard`;
   return {
     available,
     command,
@@ -5677,7 +5791,64 @@ function openClawSetupStatus() {
       : "OpenClaw needs to be installed or available on this host before local agents can run from Home.",
     install_hint: available
       ? undefined
-      : "Install OpenClaw on this host or set OSA_OPENCLAW_COMMAND to the OpenClaw executable, then refresh this check."
+      : "Install OpenClaw on this host or set OSA_OPENCLAW_COMMAND to the OpenClaw executable, then refresh this check.",
+    install_command: installCommand,
+    connect_command: connectCommand,
+    auth_hint: "OSA can launch OpenClaw setup, but OpenAI subscription authentication stays inside OpenClaw/OpenAI. OSA does not collect or store those credentials."
+  };
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function openClawCommandOutput(result) {
+  return String(`${result.stdout || ""}${result.stderr || ""}`).trim().slice(-8000);
+}
+
+function installOpenClawFromWizard() {
+  const before = openClawSetupStatus();
+  if (before.available) {
+    return { ok: true, installed: false, status: before, output: "OpenClaw is already available." };
+  }
+  const command = before.install_command || "npm install -g openclaw";
+  const result = spawnSync("sh", ["-lc", command], {
+    cwd: rootDir,
+    encoding: "utf8",
+    timeout: Number(process.env.OSA_OPENCLAW_INSTALL_TIMEOUT_MS || 120000),
+    maxBuffer: 2 * 1024 * 1024
+  });
+  const status = openClawSetupStatus();
+  if (result.error || result.status !== 0 || !status.available) {
+    const error = new Error(openClawCommandOutput(result) || result.error?.message || "OpenClaw install command did not make openclaw available.");
+    error.statusCode = 500;
+    throw error;
+  }
+  event("openclaw_installed_from_wizard", "OpenClaw installed from OSA setup wizard", { command });
+  return { ok: true, installed: true, status, output: openClawCommandOutput(result) };
+}
+
+function startOpenClawConnectWizard() {
+  const status = openClawSetupStatus();
+  if (!status.available) {
+    const error = new Error("OpenClaw is not installed yet.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const command = status.connect_command || `${shellQuote(status.command)} dashboard`;
+  const child = spawn("sh", ["-lc", command], {
+    cwd: rootDir,
+    detached: true,
+    stdio: "ignore",
+    env: process.env
+  });
+  child.unref();
+  event("openclaw_connect_started", "OpenClaw setup/auth launched from OSA", { command });
+  return {
+    ok: true,
+    status: openClawSetupStatus(),
+    message: "OpenClaw setup/auth was launched. Complete the OpenClaw browser flow, then return to OSA and check again.",
+    connect_command: command
   };
 }
 
@@ -5748,8 +5919,32 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     if (method === "GET" && child === "taskfile") {
       return sendJson(res, 200, { content: agentGuiTaskFile(sessionId), path: "TASK.md", workspace: "" });
     }
-    if (method === "GET" && child === "audit") return sendJson(res, 200, agentGuiManagerAudit(sessionId, true));
-    if (method === "POST" && child === "audit") return sendJson(res, 200, agentGuiManagerAudit(sessionId, false));
+    if (method === "GET" && child === "audit") {
+      const latest = latestManagerAuditForSession(sessionId);
+      if (latest) {
+        return sendJson(res, 200, {
+          session_id: latest.sessionId,
+          generated_at: latest.generatedAt,
+          state_hash: latest.stateHash,
+          goal: latest.goal || latest.deskTitle,
+          sources_inspected: { task_spec: true, conversation_messages: 0, output_files: [] },
+          results: latest.results,
+          summary: latest.summary,
+          cached: true,
+          skipped_running: false,
+          should_intervene: latest.summary.failed > 0 || latest.summary.unsure > 0,
+          intervention_count: 0,
+          max_interventions: 3
+        });
+      }
+      return sendJson(res, 200, agentGuiManagerAudit(sessionId, true));
+    }
+    if (method === "POST" && child === "audit") {
+      const audit = agentGuiManagerAudit(sessionId, false);
+      recordManagerAudit(audit, url.searchParams.get("force") === "true" ? "manual-force" : "manual");
+      await saveStore();
+      return sendJson(res, 200, audit);
+    }
     if (method === "GET" && child === "progress") return sendJson(res, 200, { content: agentGuiTaskFile(sessionId), exists: true });
     if (method === "POST" && child === "copy") {
       try {
@@ -5799,6 +5994,10 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       audited: true,
       summary: audit.summary
     });
+  }
+
+  if (method === "GET" && path === "/api/manager/audits") {
+    return sendJson(res, 200, { audits: publicManagerAudits(url.searchParams.get("limit") || 100) });
   }
 
   if (method === "POST" && path === "/api/sessions/new") {
@@ -6043,6 +6242,24 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
   }
   if (method === "PUT" && path === "/api/global/persona") return sendJson(res, 200, { ok: true });
   if (method === "GET" && path === "/api/openclaw/status") return sendJson(res, 200, openClawSetupStatus());
+  if (method === "POST" && path === "/api/openclaw/install") {
+    try {
+      const result = installOpenClawFromWizard();
+      await saveStore();
+      return sendJson(res, 200, result);
+    } catch (error) {
+      return sendJson(res, error.statusCode || 500, { detail: error.message || "Unable to install OpenClaw" });
+    }
+  }
+  if (method === "POST" && path === "/api/openclaw/connect") {
+    try {
+      const result = startOpenClawConnectWizard();
+      await saveStore();
+      return sendJson(res, 200, result);
+    } catch (error) {
+      return sendJson(res, error.statusCode || 500, { detail: error.message || "Unable to launch OpenClaw setup" });
+    }
+  }
   if (method === "POST" && path.startsWith("/api/workspace/")) return sendJson(res, 200, { ok: false });
   if (method === "GET" && path.startsWith("/api/file/")) return sendJson(res, 404, { detail: "No OSA workspace file preview for this desk yet." });
 
