@@ -124,6 +124,10 @@ try {
   await expectText(page, "body", "Top100 Projects");
   await expectText(page, "body", "Network Activity");
   await expectText(page, "body", "Network Chat");
+  await expectText(page, "body", "Canvas");
+  await expectText(page, "body", "Select a desk to show agent results.");
+  await page.locator('button[title="Collapse canvas"]').click();
+  await page.locator('button[title="Open result canvas"]').click();
   await page.locator('button[title="Settings"]').click();
   assert(await page.locator('input[type="number"]').first().inputValue() === "600", "manager patrol interval should default to 600 seconds");
   await page.locator('button[title="Settings"]').click();

@@ -13,6 +13,7 @@ import { NetworkActivityPanel } from "./components/NetworkActivityPanel";
 import { NetworkChatWindow } from "./components/NetworkChatWindow";
 import { ProjectDetailsModal } from "./components/ProjectDetailsModal";
 import { ManagerAuditHistoryModal } from "./components/ManagerAuditHistoryModal";
+import { ResultCanvas } from "./components/ResultCanvas";
 import { loadSnapshotIndex, loadSnapshotWorkbench, saveCurrentProjectSnapshot, type SnapshotMeta } from "./components/SnapshotMenu";
 import { FilePreview, DEFAULT_CODE_THEME } from "./components/FilePreview";
 import type { CodeThemeId } from "./components/FilePreview";
@@ -87,6 +88,7 @@ const WORKBENCH_LEGACY_KEY_V2 = legacyStorageKey("workbench-v2");
 const WORKBENCH_LEGACY_KEY_V1 = legacyStorageKey("workbench-v1");
 const ONBOARDING_DISMISSED_KEY = "osa-openclaw-onboarding-dismissed";
 const WALLET_STORAGE_KEY = "osa-wallet-session";
+const RESULT_CANVAS_OPEN_KEY = "osa-result-canvas-open";
 type DashboardTab = "workbench" | "top-projects" | "network";
 interface WalletSession {
   address: string;
@@ -109,6 +111,12 @@ const STORAGE_KEYS = {
   managerIdleGrace: { key: "osa-manager-idle-grace", legacy: [legacyStorageKey("manager-idle-grace")] },
   managerIdleThreshold: { key: "osa-manager-idle-threshold", legacy: [legacyStorageKey("manager-idle-threshold")] },
 };
+
+function defaultResultCanvasOpen() {
+  const stored = readStoredItem(RESULT_CANVAS_OPEN_KEY);
+  if (stored !== null) return stored !== "false";
+  return window.innerWidth >= 1100;
+}
 
 interface DeskSetupDraft {
   agentId: string;
@@ -445,6 +453,7 @@ export default function App() {
   const [walletConnectError, setWalletConnectError] = useState<string | null>(null);
   const [walletConnectPending, setWalletConnectPending] = useState(false);
   const [preview, setPreview] = useState<FilePreviewData | null>(null);
+  const [resultCanvasOpen, setResultCanvasOpen] = useState(defaultResultCanvasOpen);
   const panelZCounter = useRef(DESK_PANEL_Z_BASE);
   const [deskPanelZ, setDeskPanelZ] = useState<Record<string, number>>({});
   const [previewZ, setPreviewZ] = useState(DESK_PANEL_Z_BASE);
@@ -804,6 +813,10 @@ export default function App() {
   // ── Tool presets (for desk config defaults) ────────────────────────────────
 
   const selectedDeskId = focusedDeskId ?? activePendingDeskId;
+  const selectedCanvasSession = useMemo(() => {
+    const item = selectedDeskId ? findDeskItem(teams, selectedDeskId) : null;
+    return item && "started_at" in item ? item as Session : null;
+  }, [selectedDeskId, teams]);
 
   const deskConfigsById = useMemo(() => {
     const map: Record<string, NonNullable<ReturnType<typeof buildDeskConfigView>>> = {};
@@ -1848,6 +1861,8 @@ export default function App() {
           writeStoredItem(STORAGE_KEYS.reasoningEffort.key, v);
         }}
       />
+      <div style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
+        <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div style={{
         display: "flex",
         alignItems: "center",
@@ -2089,6 +2104,18 @@ export default function App() {
           }}
         />
       )}
+        </div>
+        <ResultCanvas
+          open={resultCanvasOpen}
+          session={selectedCanvasSession}
+          taskContent={selectedDeskId ? taskContents[selectedDeskId] : ""}
+          onOpenChange={(open) => {
+            setResultCanvasOpen(open);
+            writeStoredItem(RESULT_CANVAS_OPEN_KEY, String(open));
+          }}
+          onPreview={handleFilePreview}
+        />
+      </div>
       {onboardingOpen && (
         <OpenClawOnboarding
           status={openClawStatus}
@@ -2202,7 +2229,11 @@ export default function App() {
         onClose={() => setPreview(null)}
         codeTheme={codeTheme}
       />
-      <NetworkChatWindow walletAddress={walletAddress} refreshKey={networkChatRefreshKey} />
+      <NetworkChatWindow
+        walletAddress={walletAddress}
+        refreshKey={networkChatRefreshKey}
+        dockRightOffset={resultCanvasOpen ? 406 : 50}
+      />
       <ProjectDetailsModal
         projectId={projectDetails?.projectId || null}
         fallback={projectDetails?.fallback || null}

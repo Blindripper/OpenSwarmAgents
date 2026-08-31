@@ -5,6 +5,7 @@ import type { NetworkChatMessage } from "../types";
 interface Props {
   walletAddress?: string | null;
   refreshKey?: number;
+  dockRightOffset?: number;
 }
 
 function shortAddress(address?: string | null): string {
@@ -18,17 +19,24 @@ function timeLabel(value: string): string {
   return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-export function NetworkChatWindow({ walletAddress, refreshKey = 0 }: Props) {
+function defaultChatPos(dockRightOffset: number, minimized = false) {
+  const width = minimized ? 220 : 360;
+  const height = minimized ? 38 : 390;
+  return {
+    left: Math.max(16, window.innerWidth - dockRightOffset - width),
+    top: Math.max(80, window.innerHeight - height - 40),
+  };
+}
+
+export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffset = 16 }: Props) {
   const [messages, setMessages] = useState<NetworkChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minimized, setMinimized] = useState(false);
-  const [pos, setPos] = useState(() => ({
-    left: Math.max(16, window.innerWidth - 376),
-    top: Math.max(80, window.innerHeight - 430),
-  }));
+  const [pos, setPos] = useState(() => defaultChatPos(dockRightOffset));
   const dragRef = useRef<{ dx: number; dy: number } | null>(null);
+  const userMovedRef = useRef(false);
 
   async function refresh() {
     try {
@@ -49,6 +57,11 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0 }: Props) {
   useEffect(() => {
     void refresh();
   }, [refreshKey]);
+
+  useEffect(() => {
+    if (userMovedRef.current) return;
+    setPos(defaultChatPos(dockRightOffset, minimized));
+  }, [dockRightOffset, minimized]);
 
   useEffect(() => {
     function onMove(event: MouseEvent) {
@@ -104,6 +117,7 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0 }: Props) {
     >
       <div
         onMouseDown={(event) => {
+          userMovedRef.current = true;
           dragRef.current = { dx: event.clientX - pos.left, dy: event.clientY - pos.top };
         }}
         style={{

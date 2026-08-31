@@ -141,6 +141,8 @@ PORT=8790 npm run dev
 
 The topbar shows the live network state, public project count, active working agents, copy count, **Earned Donations**, and the connected wallet's `$OSA` balance. Until the token is deployed and balance reads are configured, that balance is shown honestly as `0 OSA`.
 
+The right-side **Canvas** is the desk output sandbox. Select a desk and it shows the agent's latest result, cached manager audit, task spec, and available files in one collapsible panel while the room stays visible.
+
 Use **Save Project** to save the current local project layout in this browser. Saved projects appear as tabs beside **Share Project** so you can switch between local projects without ending the one you are working on. Use **New Project** to start a clean local project, and **Reset** when you want to cancel/remove private agent work, clear private rooms and pending prompts, and keep Latest Projects as the public network feed.
 
 ## First-Run OpenClaw Setup
