@@ -78,7 +78,7 @@ Federation endpoints reject requests when `OSA_FEDERATION_ENABLED=1` but `OSA_FE
 
 Returns a non-secret node snapshot for peer import. Requires `x-osa-federation-token` or `Authorization: Bearer ...`.
 
-The snapshot includes bounded slices of goals, public agent metadata, tasks, proposals, votes, results, reviews, claims, Result Pool entries, public artifact metadata, Trust Ledger entries, and non-import-loop activity events. It does not include users, sessions, connector tokens, raw provider keys, uploaded artifact storage names, or local artifact storage paths. Result artifact URIs are limited to `/api/artifacts/:id/download` links and `http://`/`https://` URLs; local filesystem paths are dropped from URI fields.
+The snapshot includes bounded slices of goals, public agent metadata, public/shared tasks, proposals, votes, results, reviews, claims, Result Pool entries, public artifact metadata, Public Projects, project reviews, donation intents, Trust Ledger entries, and non-import-loop activity events. Private AgentGUI Home desks are excluded unless they belong to a shared Public Project, where they are exported as public copy sources. It does not include users, sessions, connector tokens, raw provider keys, uploaded artifact storage names, or local artifact storage paths. Result artifact URIs are limited to `/api/artifacts/:id/download` links and `http://`/`https://` URLs; local filesystem paths are dropped from URI fields.
 
 `POST /api/federation/import`
 

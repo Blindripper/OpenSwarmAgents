@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -24,6 +24,7 @@ try {
   const userB = await login(nodeB, "B");
   await configureTrustedNodes(nodeA, nodeB);
   await assertSignatureEnforcement(nodeA, nodeB);
+  await assertPublicProjectSharing(nodeA, nodeB);
 
   const proposal = await createProposal(nodeA, userA.headers);
   await assertTamperedSignatureRejected(nodeA, nodeB, proposal.id);
@@ -209,6 +210,15 @@ try {
 
 async function startNode(label, port, peerPort) {
   const dataDir = await mkdtemp(join(tmpdir(), `osa-fed-${label.toLowerCase()}-`));
+  const openClawFixturePath = join(dataDir, "openclaw-fixture.sh");
+  await writeFile(
+    openClawFixturePath,
+    [
+      "#!/usr/bin/env bash",
+      "printf '%s\\n' '{\"final\":\"{\\\"summary\\\":\\\"Done\\\",\\\"content\\\":\\\"Finished by the federation E2E fixture.\\\",\\\"sources\\\":[\\\"fixture://federation\\\"],\\\"confidence\\\":0.9}\"}'"
+    ].join("\n")
+  );
+  await chmod(openClawFixturePath, 0o755);
   const server = spawn(process.execPath, ["apps/server/src/server.mjs"], {
     cwd: rootDir,
     env: {
@@ -227,6 +237,7 @@ async function startNode(label, port, peerPort) {
       OSA_FEDERATION_TRUSTED_NODES_PATH: join(dataDir, "trusted-nodes.json"),
       OSA_FEDERATION_SYNC_MS: "1000",
       OSA_RATE_LIMIT_MULTIPLIER: "0",
+      OSA_OPENCLAW_COMMAND: openClawFixturePath,
       AGENTSWARM_PROPOSAL_VOTING_MS: "500"
     },
     stdio: ["ignore", "pipe", "pipe"]
@@ -297,6 +308,97 @@ async function sync(from, to) {
   const imported = await postJson(to, "/api/federation/import", { snapshot }, to.federationHeaders);
   assert(imported.ok, `sync ${from.label}->${to.label} should import successfully`);
   return imported;
+}
+
+async function assertPublicProjectSharing(nodeA, nodeB) {
+  const shareA = await createAndShareDashboardProject(nodeA, "Node A Alpha Project", "A private revenue project");
+  const idA = shareA.project.id.replace("public-project-", "");
+  assert(idA !== "project-local", "shared project ids should be scoped to the publishing node");
+  await postJson(nodeA, "/api/donations", {
+    session_id: shareA.project.id,
+    target_type: "project",
+    target_id: idA,
+    amount: 2,
+    wallet_address: "0x00000000000000000000000000000000000000aa",
+    chain_id: "0x1"
+  });
+  await sync(nodeA, nodeB);
+  await assertTopProjects(nodeB, ["Node A Alpha Project"]);
+  await assertTopProject(nodeB, "Node A Alpha Project", (project) => project.donation_total_usdc === 2, "donation totals should federate");
+  await assertNoImportedHomeDesk(nodeB, "A private revenue project");
+
+  const shareB = await createAndShareDashboardProject(nodeB, "Node B Beta Project", "B private security project");
+  const idB = shareB.project.id.replace("public-project-", "");
+  assert(idB !== idA, "independent nodes should publish projects under distinct ids");
+  await sync(nodeB, nodeA);
+  await sync(nodeA, nodeB);
+  await assertTopProjects(nodeA, ["Node A Alpha Project", "Node B Beta Project"]);
+  await assertTopProjects(nodeB, ["Node A Alpha Project", "Node B Beta Project"]);
+  await assertNoImportedHomeDesk(nodeA, "B private security project");
+
+  await postJson(nodeB, `/api/sessions/${encodeURIComponent(shareA.project.id)}/copy`, {});
+  await sync(nodeB, nodeA);
+  await assertTopProject(nodeA, "Node A Alpha Project", (project) => project.copy_count === 1, "copy counts should federate back to the publisher");
+
+  await createDashboardTask(nodeB, "B private draft not shared");
+  const snapshotB = await getJson(nodeB, "/api/federation/snapshot", nodeB.federationHeaders);
+  assert(
+    !snapshotB.collections.tasks.some((task) => task.title === "B private draft not shared"),
+    "unshared AgentGUI Home tasks should not be exported in federation snapshots"
+  );
+  assert(
+    !snapshotB.collections.goals.some((goal) => goal.title === "B private draft not shared"),
+    "unshared AgentGUI Home goals should not be exported in federation snapshots"
+  );
+  await sync(nodeB, nodeA);
+  await assertTopProjects(nodeA, ["Node A Alpha Project", "Node B Beta Project"]);
+  await assertNoImportedHomeDesk(nodeA, "B private draft not shared");
+}
+
+async function createAndShareDashboardProject(node, name, content) {
+  await createDashboardTask(node, content);
+  return postJson(node, "/api/public/projects/share", {
+    name,
+    rooms: [{ id: "home-room", name: "Home" }]
+  });
+}
+
+async function createDashboardTask(node, content) {
+  const created = await postJson(node, "/api/sessions/new", {
+    content,
+    team_id: "home-room",
+    agent: "moneymaker"
+  });
+  await waitForJson(
+    node,
+    "/api/sessions",
+    (items) => items.find((session) => session.id === created.session_id && session.task_solved === true),
+    `dashboard task on node ${node.label}`
+  );
+  return created;
+}
+
+async function assertTopProjects(node, names) {
+  const top = await getJson(node, "/api/top-projects?limit=100");
+  const titles = top.agents.map((project) => project.title);
+  for (const name of names) {
+    assert(titles.includes(name), `node ${node.label} should see public project ${name}; saw ${titles.join(", ")}`);
+  }
+}
+
+async function assertTopProject(node, name, predicate, message) {
+  const top = await getJson(node, "/api/top-projects?limit=100");
+  const project = top.agents.find((item) => item.title === name);
+  assert(project, `node ${node.label} should see public project ${name}`);
+  assert(predicate(project), `${message}; saw ${JSON.stringify(project)}`);
+}
+
+async function assertNoImportedHomeDesk(node, content) {
+  const sessions = await getJson(node, "/api/sessions");
+  assert(
+    !sessions.some((session) => session.team_id === "home-room" && session.title === content),
+    `node ${node.label} should not import peer project source tasks into Home`
+  );
 }
 
 async function login(node, label) {
@@ -371,6 +473,16 @@ async function state(node, headers) {
 
 async function trustLedger(node, headers) {
   return getJson(node, "/api/trust-ledger", headers);
+}
+
+async function waitForJson(node, path, predicate, label) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const payload = await getJson(node, path);
+    const match = predicate(payload);
+    if (match) return match;
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for ${label}`);
 }
 
 async function waitForHealth(node) {

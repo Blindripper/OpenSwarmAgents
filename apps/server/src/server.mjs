@@ -62,6 +62,13 @@ const legacySeedTaskIds = new Set([
   "task-storage-baseline"
 ]);
 const legacySeedProposalIds = new Set(["proposal-agent-security", "proposal-open-water-map"]);
+const retiredAgentGuiProfileIds = new Set([
+  "openclaw-codex",
+  "codex-cli",
+  "market-scout",
+  "product-builder",
+  "tokenomics-analyst"
+]);
 const providerEnvNames = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
@@ -120,11 +127,12 @@ async function loadStore() {
     const pruned = removeLegacySeedExamples(loaded);
     const exampleSeeded = ensureAgentGuiExampleProject(loaded);
     const profileSeeded = ensureAgentGuiDefaultProfiles(loaded);
+    const projectIdSeeded = ensureAgentGuiLocalPublicProjectId(loaded);
     if (!loaded.proposals.length) {
       const seed = JSON.parse(await readFile(seedPath, "utf8"));
       loaded.proposals = seed.proposals || [];
       await saveStore(loaded);
-    } else if (pruned || exampleSeeded || profileSeeded) {
+    } else if (pruned || exampleSeeded || profileSeeded || projectIdSeeded) {
       await saveStore(loaded);
     }
     return loaded;
@@ -152,6 +160,7 @@ async function loadStore() {
     });
     ensureAgentGuiExampleProject(initial);
     ensureAgentGuiDefaultProfiles(initial);
+    ensureAgentGuiLocalPublicProjectId(initial);
     await saveStore(initial);
     return initial;
   }
@@ -218,14 +227,6 @@ function normalizeAgentProfiles(profiles) {
     }))
     .filter((profile) => profile.id);
 }
-
-const retiredAgentGuiProfileIds = new Set([
-  "openclaw-codex",
-  "codex-cli",
-  "market-scout",
-  "product-builder",
-  "tokenomics-analyst"
-]);
 
 function defaultAgentGuiProfiles() {
   return normalizeAgentProfiles([
@@ -403,6 +404,45 @@ function ensureAgentGuiDefaultProfiles(target) {
   }
 
   return changed || before !== target.agentProfiles.length;
+}
+
+function agentGuiLocalPublicProjectId(ownerWalletAddress = null) {
+  const nodePart = String(nodeIdentity.nodeId || "local").replace(/^node-/, "").slice(0, 12) || "local";
+  const ownerPart = ownerWalletAddress ? String(ownerWalletAddress).replace(/^0x/, "").slice(0, 8).toLowerCase() : "local";
+  return `project-${nodePart}-${ownerPart}`;
+}
+
+function ensureAgentGuiLocalPublicProjectId(target) {
+  const legacyId = "project-local";
+  const legacyIndex = (target.publicProjects || []).findIndex((project) => project.id === legacyId);
+  if (legacyIndex < 0) return false;
+
+  const legacy = target.publicProjects[legacyIndex];
+  const nextId = agentGuiLocalPublicProjectId(legacy.ownerWalletAddress || null);
+  if (legacy.id === nextId) return false;
+  const existingIndex = target.publicProjects.findIndex((project) => project.id === nextId);
+  if (existingIndex >= 0 && existingIndex !== legacyIndex) {
+    const existing = target.publicProjects[existingIndex];
+    target.publicProjects[existingIndex] = chooseFederatedItem("publicProjects", existing, { ...legacy, id: nextId });
+    target.publicProjects.splice(legacyIndex, 1);
+  } else {
+    legacy.id = nextId;
+  }
+
+  for (const donation of target.agentDonations || []) {
+    if (donation.targetType === "project" && donation.targetId === legacyId) {
+      donation.targetId = nextId;
+      if (donation.sessionId === `public-project-${legacyId}`) donation.sessionId = `public-project-${nextId}`;
+    }
+  }
+  for (const review of target.publicProjectReviews || []) {
+    if (review.projectId === legacyId) review.projectId = nextId;
+  }
+  for (const eventEntry of target.events || []) {
+    if (eventEntry.data?.publicProjectId === legacyId) eventEntry.data.publicProjectId = nextId;
+    if (eventEntry.data?.targetId === legacyId) eventEntry.data.targetId = nextId;
+  }
+  return true;
 }
 
 function normalizeWalletAddress(address) {
@@ -891,11 +931,12 @@ async function loadPostgresStore() {
     const pruned = removeLegacySeedExamples(loaded);
     const exampleSeeded = ensureAgentGuiExampleProject(loaded);
     const profileSeeded = ensureAgentGuiDefaultProfiles(loaded);
+    const projectIdSeeded = ensureAgentGuiLocalPublicProjectId(loaded);
     if (!loaded.proposals.length) {
       const seed = JSON.parse(await readFile(seedPath, "utf8"));
       loaded.proposals = seed.proposals || [];
       await savePostgresStore(loaded);
-    } else if (pruned || exampleSeeded || profileSeeded) {
+    } else if (pruned || exampleSeeded || profileSeeded || projectIdSeeded) {
       await savePostgresStore(loaded);
     }
     return loaded;
@@ -924,6 +965,7 @@ async function loadPostgresStore() {
   });
   ensureAgentGuiExampleProject(initial);
   ensureAgentGuiDefaultProfiles(initial);
+  ensureAgentGuiLocalPublicProjectId(initial);
   await savePostgresStore(initial);
   return initial;
 }
@@ -1591,19 +1633,20 @@ function publicFederationSnapshot() {
     head: localTrustHead(),
     headsByNode: trustHeadsByNode(),
     collections: {
-      goals: federationSlice(store.goals).map(publicFederatedGoal),
+      goals: federationSlice(federatedGoalsForSnapshot()).map(publicFederatedGoal),
       agents: federationSlice(store.agents).map(publicFederatedAgent),
-      tasks: federationSlice(store.tasks).map(publicFederatedTask),
-      results: federationSlice(store.results).map(publicFederatedResult),
-      reviews: federationSlice(store.reviews).map(publicFederatedReview),
+      tasks: federationSlice(federatedTasksForSnapshot()).map(publicFederatedTask),
+      results: federationSlice(federatedResultsForSnapshot()).map(publicFederatedResult),
+      reviews: federationSlice(federatedReviewsForSnapshot()).map(publicFederatedReview),
       claims: federationSlice(store.claims).map(publicFederatedClaim),
-      resultPool: federationSlice(store.resultPool).map(publicFederatedResultPoolEntry),
+      resultPool: federationSlice(federatedResultPoolForSnapshot()).map(publicFederatedResultPoolEntry),
       proposals: federationSlice(store.proposals).map(publicFederatedProposal),
       proposalVotes: federationSlice(store.proposalVotes).map(publicFederatedProposalVote),
-      uploadedArtifacts: federationSlice(store.uploadedArtifacts).map(publicFederatedArtifact),
+      uploadedArtifacts: federationSlice(federatedArtifactsForSnapshot()).map(publicFederatedArtifact),
       publicRooms: federationSlice(store.publicRooms).map(publicFederatedPublicCollection),
       publicProjects: federationSlice(store.publicProjects).map(publicFederatedPublicCollection),
       publicProjectReviews: federationSlice(store.publicProjectReviews).map(publicFederatedProjectReview),
+      agentDonations: federationSlice(store.agentDonations).map(publicFederatedDonation),
       trustLedger: publicTrustLedger(500),
       events: store.events
         .filter((entry) => !["federation_imported", "user_signed_in"].includes(entry.type))
@@ -1615,6 +1658,86 @@ function publicFederationSnapshot() {
 
 function federationSlice(collection) {
   return Array.isArray(collection) ? collection.slice(0, federationCollectionLimit) : [];
+}
+
+function agentGuiPublicTaskIdsForSnapshot() {
+  const publicProjectTaskIds = new Set();
+  for (const collection of [...(store.publicProjects || []), ...(store.publicRooms || [])]) {
+    for (const taskId of collection.taskIds || []) publicProjectTaskIds.add(taskId);
+  }
+  return publicProjectTaskIds;
+}
+
+function isAgentGuiEntity(value = {}) {
+  return Boolean(value.agentGuiRoom || String(value.source || "").startsWith("agent-gui-"));
+}
+
+function shouldFederateTask(task, publicProjectTaskIds = agentGuiPublicTaskIdsForSnapshot()) {
+  if (!isAgentGuiEntity(task)) return true;
+  return publicProjectTaskIds.has(task.id);
+}
+
+function shouldFederateByTaskOrGoal(value = {}, publicProjectTaskIds = agentGuiPublicTaskIdsForSnapshot()) {
+  if (value.taskId) {
+    const task = store.tasks.find((item) => item.id === value.taskId);
+    if (task) return shouldFederateTask(task, publicProjectTaskIds);
+  }
+  if (value.goalId) {
+    const goal = store.goals.find((item) => item.id === value.goalId);
+    if (isAgentGuiEntity(goal)) {
+      return store.tasks.some((task) => task.goalId === value.goalId && publicProjectTaskIds.has(task.id));
+    }
+  }
+  return true;
+}
+
+function federatedGoalsForSnapshot() {
+  const publicProjectTaskIds = agentGuiPublicTaskIdsForSnapshot();
+  return (store.goals || []).filter((goal) => {
+    if (!isAgentGuiEntity(goal)) return true;
+    return store.tasks.some((task) => task.goalId === goal.id && publicProjectTaskIds.has(task.id));
+  });
+}
+
+function federatedTasksForSnapshot() {
+  const publicProjectTaskIds = agentGuiPublicTaskIdsForSnapshot();
+  return (store.tasks || []).flatMap((task) => {
+    if (!isAgentGuiEntity(task)) return [task];
+    if (!shouldFederateTask(task, publicProjectTaskIds)) return [];
+    return [{ ...task, source: "agent-gui-public", agentGuiRoom: "public" }];
+  });
+}
+
+function federatedResultsForSnapshot() {
+  const publicProjectTaskIds = agentGuiPublicTaskIdsForSnapshot();
+  return (store.results || []).filter((result) => shouldFederateByTaskOrGoal(result, publicProjectTaskIds));
+}
+
+function federatedReviewsForSnapshot() {
+  const publicProjectTaskIds = agentGuiPublicTaskIdsForSnapshot();
+  return (store.reviews || []).filter((review) => {
+    if (review.resultId) {
+      const result = store.results.find((item) => item.id === review.resultId);
+      if (result) return shouldFederateByTaskOrGoal(result, publicProjectTaskIds);
+    }
+    return shouldFederateByTaskOrGoal(review, publicProjectTaskIds);
+  });
+}
+
+function federatedResultPoolForSnapshot() {
+  const publicProjectTaskIds = agentGuiPublicTaskIdsForSnapshot();
+  return (store.resultPool || []).filter((entry) => shouldFederateByTaskOrGoal(entry, publicProjectTaskIds));
+}
+
+function federatedArtifactsForSnapshot() {
+  const publicProjectTaskIds = agentGuiPublicTaskIdsForSnapshot();
+  return (store.uploadedArtifacts || []).filter((artifact) => {
+    if (artifact.resultId) {
+      const result = store.results.find((item) => item.id === artifact.resultId);
+      if (result) return shouldFederateByTaskOrGoal(result, publicProjectTaskIds);
+    }
+    return shouldFederateByTaskOrGoal(artifact, publicProjectTaskIds);
+  });
 }
 
 function publicFederatedGoal(goal) {
@@ -1803,7 +1926,9 @@ function publicFederatedPublicCollection(item) {
     "updatedAt",
     "copyCount",
     "lastCopiedAt",
-    "ownerWalletAddress"
+    "ownerWalletAddress",
+    "shareFileRepo",
+    "isExample"
   ]);
 }
 
@@ -1817,6 +1942,27 @@ function publicFederatedProjectReview(review) {
     "comment",
     "createdAt",
     "updatedAt"
+  ]);
+}
+
+function publicFederatedDonation(donation) {
+  return pick(donation, [
+    "id",
+    "taskId",
+    "targetType",
+    "targetId",
+    "sessionId",
+    "walletAddress",
+    "chainId",
+    "amount",
+    "currency",
+    "feePercent",
+    "feeWallet",
+    "feeAmount",
+    "creatorAmount",
+    "status",
+    "txHash",
+    "createdAt"
   ]);
 }
 
@@ -2082,6 +2228,7 @@ function importFederationSnapshot(snapshot) {
     publicRooms: mergeFederatedPublicCollections("publicRooms", collections.publicRooms, "room"),
     publicProjects: mergeFederatedPublicCollections("publicProjects", collections.publicProjects, "project"),
     publicProjectReviews: mergeFederatedProjectReviews(collections.publicProjectReviews),
+    agentDonations: mergeFederatedAgentDonations(collections.agentDonations),
     trustLedger: mergeFederatedTrustLedger(collections.trustLedger),
     events: mergeFederatedEvents(collections.events)
   };
@@ -2154,6 +2301,19 @@ function mergeFederatedProjectReviews(incoming) {
     }
   }
   store.publicProjectReviews.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  return merged;
+}
+
+function mergeFederatedAgentDonations(incoming) {
+  if (!Array.isArray(incoming)) return 0;
+  store.agentDonations = normalizeAgentDonations(store.agentDonations || []);
+  let merged = 0;
+  for (const donation of normalizeAgentDonations(incoming).slice(0, federationCollectionLimit)) {
+    if (store.agentDonations.some((item) => item.id === donation.id)) continue;
+    store.agentDonations.push(donation);
+    merged += 1;
+  }
+  store.agentDonations.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   return merged;
 }
 
@@ -4210,10 +4370,11 @@ async function shareAgentGuiProject(body = {}) {
     if (!grouped.has(roomId)) grouped.set(roomId, { id: roomId, name: roomNames.get(roomId) || task.agentGuiTeamName || (roomId === agentGuiHomeTeamId ? "Home" : "Room"), taskIds: [] });
     grouped.get(roomId).taskIds.push(task.id);
   }
-  const existingIndex = store.publicProjects.findIndex((item) => item.id === "project-local");
+  const projectId = agentGuiLocalPublicProjectId(ownerWalletAddress);
+  const existingIndex = store.publicProjects.findIndex((item) => item.id === projectId || item.id === "project-local");
   const sharedAt = now();
   const next = {
-    id: "project-local",
+    id: projectId,
     type: "project",
     sourceTeamId: null,
     name,
@@ -5182,6 +5343,7 @@ async function handleApi(req, res, url) {
       });
       ensureAgentGuiExampleProject(store);
       ensureAgentGuiDefaultProfiles(store);
+      ensureAgentGuiLocalPublicProjectId(store);
       event("system", "Demo state reset");
       await saveStore();
       return sendJson(res, 200, publicState());

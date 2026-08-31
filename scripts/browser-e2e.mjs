@@ -179,25 +179,26 @@ try {
     ]
   });
   assert(projectShare.project?.id?.startsWith("public-project-"), "projects should be shareable");
+  const projectId = projectShare.project.id.replace("public-project-", "");
+  assert(projectId !== "project-local", "shared project ids should be scoped to the publishing node");
   let topProjects = await getJson("/api/top-projects?limit=100");
-  const sharedProject = topProjects.agents.find((agent) => agent.target_id === "project-local");
+  const sharedProject = topProjects.agents.find((agent) => agent.target_id === projectId);
   assert(sharedProject?.rank >= 1, "Top100 Projects should rank shared projects");
   assert(sharedProject?.summary?.includes("File Repo"), "shared projects should remember whether the File Repo was included");
   const projectCopy = await postJson(`/api/sessions/${encodeURIComponent(projectShare.project.id)}/copy`, {});
   assert(projectCopy.session_ids?.length >= 2, "copying a Public Project should copy multiple agents");
   topProjects = await getJson("/api/top-projects?limit=100");
-  const copiedSharedProject = topProjects.agents.find((agent) => agent.target_id === "project-local");
+  const copiedSharedProject = topProjects.agents.find((agent) => agent.target_id === projectId);
   assert(copiedSharedProject?.copy_count === 1, "Top100 Projects should count project copies");
   assert(copiedSharedProject?.donation_total_usdc === 0, "Top100 Projects should expose donation totals");
   await postJson("/api/donations", {
     session_id: projectShare.project.id,
     target_type: "project",
-    target_id: "project-local",
+    target_id: projectId,
     amount: 1,
     wallet_address: walletAddress,
     chain_id: "0x1"
   });
-  const projectId = projectShare.project.id.replace("public-project-", "");
   const review = await postJson(`/api/public/projects/${encodeURIComponent(projectId)}/reviews`, {
     wallet_address: walletAddress,
     rating: 5,
@@ -207,7 +208,7 @@ try {
   assert(review.stats?.review_count === 1, "Public Project reviews should be counted");
   assert(review.stats?.rating_avg === 5, "Public Project reviews should average ratings");
   topProjects = await getJson("/api/top-projects?limit=100");
-  const donatedSharedProject = topProjects.agents.find((agent) => agent.target_id === "project-local");
+  const donatedSharedProject = topProjects.agents.find((agent) => agent.target_id === projectId);
   assert(donatedSharedProject?.donation_total_usdc === 1, "Top100 Projects should sum project donations");
   assert(donatedSharedProject?.review_count === 1, "Top100 Projects should expose review counts");
   assert(donatedSharedProject?.rating_avg === 5, "Top100 Projects should expose average ratings");
