@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { SettingsMenu } from "./SettingsMenu";
 import { SnapshotMenu } from "./SnapshotMenu";
+import type { SnapshotMeta } from "./SnapshotMenu";
 import { AgentRosterMenu } from "./AgentRosterMenu";
 import { DeskContextBar } from "./DeskContextBar";
 import { ReasoningEffortControl } from "./ReasoningEffortControl";
@@ -62,7 +63,8 @@ interface Props {
   onManagerPatrolIntervalChange: (sec: number) => void;
   onManagerIdleGraceChange: (sec: number) => void;
   onReset: () => void;
-  onLoadSnapshot: () => void;
+  onLoadSnapshot: (name?: string) => void;
+  onSnapshotsChange?: (snapshots: SnapshotMeta[]) => void;
   onWalletConnect: () => void;
   onWalletDisconnect: () => void;
   walletAddress?: string | null;
@@ -132,7 +134,7 @@ export function Header({
   onSearch, searchStats,
   onBellSoundChange, onSceneChange, onShowManagerChange,
   onManagerPatrolIntervalChange, onManagerIdleGraceChange,
-  onReset, onLoadSnapshot, onWalletConnect, onWalletDisconnect, walletAddress, codeTheme, onCodeThemeChange,
+  onReset, onLoadSnapshot, onSnapshotsChange, onWalletConnect, onWalletDisconnect, walletAddress, codeTheme, onCodeThemeChange,
   dockerPersist, onDockerPersistChange, verbose, onVerboseChange,
 }: Props) {
   const [logoOk, setLogoOk] = useState(true);
@@ -256,7 +258,12 @@ export function Header({
           Reset
         </button>
 
-        <SnapshotMenu teams={teams} sessions={sessions} onLoadSnapshot={onLoadSnapshot} />
+        <SnapshotMenu
+          teams={teams}
+          sessions={sessions}
+          onLoadSnapshot={onLoadSnapshot}
+          onSnapshotsChange={onSnapshotsChange}
+        />
 
         <button
           type="button"

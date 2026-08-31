@@ -1107,7 +1107,7 @@ export function TeamRow({
                   fontSize: 10.5,
                   lineHeight: 1.35,
                 }}>
-                  Latest public projects.
+                  Click a project to inspect rooms, reviews, and send Explorer before copying.
                 </div>
               )}
               <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>

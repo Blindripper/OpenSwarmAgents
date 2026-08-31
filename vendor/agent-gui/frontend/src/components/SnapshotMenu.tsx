@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import type { Session, Team } from "../types";
 import { readStoredItem, writeStoredItem, removeStoredItems } from "../storageKeys";
 
-const SNAPSHOTS_KEY = "osa-snapshots";
-const SNAPSHOT_PREFIX = "osa-snapshot-";
-const WORKBENCH_KEY_V2 = "osa-workbench-v2";
+export const SNAPSHOTS_KEY = "osa-snapshots";
+export const SNAPSHOT_PREFIX = "osa-snapshot-";
+export const WORKBENCH_KEY_V2 = "osa-workbench-v2";
 const LEGACY_PREFIX = ["her", "mes"].join("");
 const LEGACY_SNAPSHOTS_KEY = `${LEGACY_PREFIX}-snapshots`;
 const LEGACY_SNAPSHOT_PREFIX = `${LEGACY_PREFIX}-snapshot-`;
@@ -16,14 +16,14 @@ interface SessionSummary {
   workspacePath?: string | null;
 }
 
-interface SnapshotMeta {
+export interface SnapshotMeta {
   name: string;
   savedAt: string;
   note?: string;
   sessions?: SessionSummary[];
 }
 
-function loadIndex(): SnapshotMeta[] {
+export function loadSnapshotIndex(): SnapshotMeta[] {
   try {
     const raw = readStoredItem(SNAPSHOTS_KEY, [LEGACY_SNAPSHOTS_KEY]);
     const arr = raw ? JSON.parse(raw) : [];
@@ -35,13 +35,57 @@ function saveIndex(index: SnapshotMeta[]) {
   writeStoredItem(SNAPSHOTS_KEY, JSON.stringify(index));
 }
 
+export function loadSnapshotWorkbench(name: string): string | null {
+  return readStoredItem(SNAPSHOT_PREFIX + name, [LEGACY_SNAPSHOT_PREFIX + name]);
+}
+
+function buildSessionSummaries(teams: Team[], sessions: Session[]): SessionSummary[] {
+  const sessionMap = new Map(sessions.map((s) => [s.id, s]));
+  return teams
+    .flatMap((t) => t.desks)
+    .filter((d) => !("isPending" in d))
+    .flatMap((d) => {
+      const s = sessionMap.get((d as Session).id);
+      if (!s) return [];
+      const summary: SessionSummary = { id: s.id, title: s.title_summary || s.title || s.id };
+      if (s.workspace_path) summary.workspacePath = s.workspace_path;
+      return [summary];
+    });
+}
+
+export function saveCurrentProjectSnapshot(
+  teams: Team[],
+  sessions: Session[],
+  name: string,
+  note = "",
+): SnapshotMeta[] | null {
+  const cleanName = name.trim();
+  if (!cleanName) return null;
+  const current = readStoredItem(WORKBENCH_KEY_V2, [LEGACY_WORKBENCH_KEY_V2]);
+  if (!current) return null;
+  writeStoredItem(SNAPSHOT_PREFIX + cleanName, current);
+  const index = loadSnapshotIndex();
+  const existing = index.findIndex((s) => s.name === cleanName);
+  const meta: SnapshotMeta = {
+    name: cleanName,
+    savedAt: new Date().toISOString(),
+    note: note.trim() || undefined,
+    sessions: buildSessionSummaries(teams, sessions),
+  };
+  if (existing >= 0) index[existing] = meta;
+  else index.unshift(meta);
+  saveIndex(index);
+  return index;
+}
+
 interface Props {
   teams: Team[];
   sessions: Session[];
-  onLoadSnapshot: () => void;
+  onLoadSnapshot: (name?: string) => void;
+  onSnapshotsChange?: (snapshots: SnapshotMeta[]) => void;
 }
 
-export function SnapshotMenu({ teams, sessions, onLoadSnapshot }: Props) {
+export function SnapshotMenu({ teams, sessions, onLoadSnapshot, onSnapshotsChange }: Props) {
   const [open, setOpen] = useState(false);
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
   const [nameInput, setNameInput] = useState("");
@@ -50,7 +94,7 @@ export function SnapshotMenu({ teams, sessions, onLoadSnapshot }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (open) setSnapshots(loadIndex());
+    if (open) setSnapshots(loadSnapshotIndex());
   }, [open]);
 
   useEffect(() => {
@@ -62,39 +106,14 @@ export function SnapshotMenu({ teams, sessions, onLoadSnapshot }: Props) {
     return () => window.removeEventListener("mousedown", onDoc);
   }, [open]);
 
-  function buildSessionSummaries(): SessionSummary[] {
-    const sessionMap = new Map(sessions.map((s) => [s.id, s]));
-    return teams
-      .flatMap((t) => t.desks)
-      .filter((d) => !("isPending" in d))
-      .flatMap((d) => {
-        const s = sessionMap.get((d as Session).id);
-        if (!s) return [];
-        const summary: SessionSummary = { id: s.id, title: s.title_summary || s.title || s.id };
-        if (s.workspace_path) summary.workspacePath = s.workspace_path;
-        return [summary];
-      });
-  }
-
   function handleSave() {
     const name = nameInput.trim();
     if (!name) return;
     try {
-      const current = readStoredItem(WORKBENCH_KEY_V2, [LEGACY_WORKBENCH_KEY_V2]);
-      if (!current) return;
-      writeStoredItem(SNAPSHOT_PREFIX + name, current);
-      const index = loadIndex();
-      const existing = index.findIndex((s) => s.name === name);
-      const meta: SnapshotMeta = {
-        name,
-        savedAt: new Date().toISOString(),
-        note: noteInput.trim() || undefined,
-        sessions: buildSessionSummaries(),
-      };
-      if (existing >= 0) index[existing] = meta;
-      else index.unshift(meta);
-      saveIndex(index);
+      const index = saveCurrentProjectSnapshot(teams, sessions, name, noteInput.trim());
+      if (!index) return;
       setSnapshots(index);
+      onSnapshotsChange?.(index);
       setNameInput("");
       setNoteInput("");
     } catch {}
@@ -102,20 +121,21 @@ export function SnapshotMenu({ teams, sessions, onLoadSnapshot }: Props) {
 
   function handleLoad(name: string) {
     try {
-      const raw = readStoredItem(SNAPSHOT_PREFIX + name, [LEGACY_SNAPSHOT_PREFIX + name]);
+      const raw = loadSnapshotWorkbench(name);
       if (!raw) return;
       writeStoredItem(WORKBENCH_KEY_V2, raw);
       setOpen(false);
-      onLoadSnapshot();
+      onLoadSnapshot(name);
     } catch {}
   }
 
   function handleDelete(name: string) {
     try {
       removeStoredItems(SNAPSHOT_PREFIX + name, [LEGACY_SNAPSHOT_PREFIX + name]);
-      const index = loadIndex().filter((s) => s.name !== name);
+      const index = loadSnapshotIndex().filter((s) => s.name !== name);
       saveIndex(index);
       setSnapshots(index);
+      onSnapshotsChange?.(index);
     } catch {}
   }
 
@@ -123,7 +143,7 @@ export function SnapshotMenu({ teams, sessions, onLoadSnapshot }: Props) {
     <div ref={ref} style={{ position: "relative" }}>
       <button
         onClick={() => setOpen((o) => !o)}
-        title="Save or load the current OSA project"
+        title="Save the current OSA project or load a saved project"
         style={{
           height: 32, padding: "0 10px",
           background: open ? "var(--accent2)" : "rgba(255,255,255,0.06)",
@@ -133,7 +153,7 @@ export function SnapshotMenu({ teams, sessions, onLoadSnapshot }: Props) {
           cursor: "pointer",
         }}
       >
-        <span style={{ fontSize: 13 }}>💾</span> Save/Load Project
+        <span style={{ fontSize: 13 }}>💾</span> Save Project
       </button>
 
       {open && (

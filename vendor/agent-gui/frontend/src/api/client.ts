@@ -1,4 +1,4 @@
-import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, NetworkChatMessage, PublicProjectDetail, PublicProjectReview, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
+import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, NetworkChatMessage, ProjectExplorerReport, PublicProjectDetail, PublicProjectReview, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
 
 const BASE = "/api";
 const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
@@ -360,6 +360,11 @@ export const api = {
       post<{ ok: boolean; shared_public: boolean; project?: Session }>("/public/projects/share", body),
     get: (projectId: string) =>
       get<PublicProjectDetail>(`/public/projects/${encodeURIComponent(projectId)}`),
+    explore: (projectId: string) =>
+      post<{ ok: boolean; report: ProjectExplorerReport }>(
+        `/public/projects/${encodeURIComponent(projectId)}/explore`,
+        {},
+      ),
     reviews: (projectId: string) =>
       get<{
         reviews: PublicProjectReview[];

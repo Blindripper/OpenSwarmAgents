@@ -120,6 +120,26 @@ export interface PublicProjectDetail {
   };
 }
 
+export interface ProjectExplorerReport {
+  project_id: string;
+  generated_at: string;
+  explorer_agent: {
+    id: string;
+    name: string;
+    soul_summary: string;
+  };
+  summary: string;
+  rooms: {
+    name: string;
+    task_count: number;
+    agents: string[];
+  }[];
+  strengths: string[];
+  cautions: string[];
+  copy_fit: string;
+  evidence: string[];
+}
+
 export interface NetworkChatMessage {
   id: string;
   node_id: string;

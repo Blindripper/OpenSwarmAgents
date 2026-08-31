@@ -12,6 +12,7 @@ import { TopAgentsPanel } from "./components/TopAgentsPanel";
 import { NetworkActivityPanel } from "./components/NetworkActivityPanel";
 import { NetworkChatWindow } from "./components/NetworkChatWindow";
 import { ProjectDetailsModal } from "./components/ProjectDetailsModal";
+import { loadSnapshotIndex, loadSnapshotWorkbench, saveCurrentProjectSnapshot, type SnapshotMeta } from "./components/SnapshotMenu";
 import { FilePreview, DEFAULT_CODE_THEME } from "./components/FilePreview";
 import type { CodeThemeId } from "./components/FilePreview";
 import { DEFAULT_BELL, playBell } from "./sounds";
@@ -260,7 +261,12 @@ function makePrivateTeam(id: string, name?: string | null, desks: DeskItem[] = [
 // OSA rooms: Home and custom private rooms can run local agents. Latest Projects
 // is the only public marketplace view; a shared project contains all private
 // rooms and agents as one copy-only bundle.
-function mergeServerTeams(current: Team[], sessions: Session[]): Team[] {
+function mergeServerTeams(
+  current: Team[],
+  sessions: Session[],
+  options: { includeUnplacedPrivate?: boolean } = {},
+): Team[] {
+  const includeUnplacedPrivate = options.includeUnplacedPrivate !== false;
   const byId = new Map(sessions.map((session) => [session.id, session]));
   const placedPrivateIds = new Set<string>();
   const privateTeams: Team[] = [];
@@ -289,16 +295,18 @@ function mergeServerTeams(current: Team[], sessions: Session[]): Team[] {
     privateTeams.unshift(makeHomeTeam());
   }
 
-  for (const session of sessions.filter(isPrivateSession)) {
-    if (placedPrivateIds.has(session.id)) continue;
-    const teamId = privateTeamId(session);
-    let team = privateTeams.find((item) => item.id === teamId);
-    if (!team) {
-      team = makePrivateTeam(teamId, session.team_name, [makePending()]);
-      privateTeams.push(team);
+  if (includeUnplacedPrivate) {
+    for (const session of sessions.filter(isPrivateSession)) {
+      if (placedPrivateIds.has(session.id)) continue;
+      const teamId = privateTeamId(session);
+      let team = privateTeams.find((item) => item.id === teamId);
+      if (!team) {
+        team = makePrivateTeam(teamId, session.team_name, [makePending()]);
+        privateTeams.push(team);
+      }
+      team.desks.push(session);
+      placedPrivateIds.add(session.id);
     }
-    team.desks.push(session);
-    placedPrivateIds.add(session.id);
   }
 
   const publicProjectDesks = sessions.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID);
@@ -371,8 +379,8 @@ function WalletGate({
         }}>
           {[
             ["10B", "$OSA fixed supply"],
-            ["5B", "agent-work rewards"],
-            ["3Y", "gradual distribution"],
+            ["100%", "community supply"],
+            ["12Y", "reward epochs"],
           ].map(([value, label]) => (
             <div key={label} style={{
               border: "1px solid #2a3558",
@@ -427,6 +435,8 @@ export default function App() {
   const [networkEventsLoading, setNetworkEventsLoading] = useState(false);
   const [networkChatRefreshKey, setNetworkChatRefreshKey] = useState(0);
   const [projectDetails, setProjectDetails] = useState<{ projectId: string; fallback?: TopAgent | null } | null>(null);
+  const [savedProjectTabs, setSavedProjectTabs] = useState<SnapshotMeta[]>(() => loadSnapshotIndex());
+  const [activeSavedProject, setActiveSavedProject] = useState<string | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [walletConnected, setWalletConnected] = useState(readWalletConnected);
   const [walletAddress, setWalletAddress] = useState<string | null>(() => readWalletSession()?.address || null);
@@ -532,6 +542,7 @@ export default function App() {
 
   const sessionsRef = useRef<Session[]>([]);
   const workbenchRestoredRef = useRef(false);
+  const projectScopedRef = useRef(false);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -596,7 +607,8 @@ export default function App() {
           }
 
           if (restoredTeams.length > 0) {
-            setTeams(mergeServerTeams(restoredTeams, data));
+            projectScopedRef.current = true;
+            setTeams(mergeServerTeams(restoredTeams, data, { includeUnplacedPrivate: false }));
             if (Object.keys(pendingTextsInit).length > 0) setPendingTexts(pendingTextsInit);
             if (Object.keys(taskContentsInit).length > 0) setTaskContents(taskContentsInit);
             if (Object.keys(taskImagesInit).length > 0) setTaskImages(taskImagesInit);
@@ -606,7 +618,9 @@ export default function App() {
         }
         // No saved workbench (or nothing restored): still surface server-side teams
         // (e.g. script-created desks) so they appear in the office on a fresh load.
-        setTeams((prev) => mergeServerTeams(prev, data));
+        setTeams((prev) => mergeServerTeams(prev, data, {
+          includeUnplacedPrivate: !projectScopedRef.current,
+        }));
       } else {
         // Normal poll: refresh session data across all teams + merge in any
         // newly-appeared server-side teams (script-created desks).
@@ -621,6 +635,7 @@ export default function App() {
               }),
             })),
             data,
+            { includeUnplacedPrivate: !projectScopedRef.current },
           )
         );
       }
@@ -1385,7 +1400,9 @@ export default function App() {
       setActivePendingDeskId(null);
       setJustStartedId(loadedSessions[0]?.id || copied.session_id);
       setJustStartedAnchor(null);
-      setTeams((prev) => mergeServerTeams(prev, nextSessions));
+      setTeams((prev) => mergeServerTeams(prev, nextSessions, {
+        includeUnplacedPrivate: !projectScopedRef.current,
+      }));
       setDashboardTab("workbench");
       void refreshTopProjects();
     } catch (e) {
@@ -1424,7 +1441,9 @@ export default function App() {
       const latest = await api.sessions.list(50);
       sessionsRef.current = latest;
       setSessions(latest);
-      setTeams((prev) => mergeServerTeams(prev, latest));
+      setTeams((prev) => mergeServerTeams(prev, latest, {
+        includeUnplacedPrivate: !projectScopedRef.current,
+      }));
       await refreshTopProjects();
     } catch (e) {
       window.alert((e as Error).message || "Couldn't share this project.");
@@ -1491,9 +1510,82 @@ export default function App() {
     }
   }
 
-  function handleLoadSnapshot() {
+  function clearActiveProjectUiState() {
+    setPendingTexts({});
+    setTaskContents({});
+    setTaskImages({});
+    setPendingAssignments({});
+    setDeskBarConfigs({});
+    setAskManagerByTeamId({});
+    setWorkspacePaths({});
+    setActivePendingDeskId(null);
+    setFocusedDeskId(null);
+    setJustStartedId(null);
+    setJustStartedAnchor(null);
+  }
+
+  function refreshSavedProjectTabs(next?: SnapshotMeta[] | null) {
+    setSavedProjectTabs(next ?? loadSnapshotIndex());
+  }
+
+  function defaultProjectSnapshotName(): string {
+    const stamp = new Date()
+      .toISOString()
+      .slice(0, 16)
+      .replace("T", " ");
+    return `Project ${stamp}`;
+  }
+
+  function activeProjectHasWork(): boolean {
+    return teams
+      .filter((team) => !PUBLIC_TEAM_IDS.has(team.id))
+      .some((team) => team.desks.some((desk) => (
+        "isPending" in desk
+          ? Boolean((pendingTexts[desk.id] || "").trim())
+          : true
+      )));
+  }
+
+  function handleLoadSnapshot(name?: string) {
+    projectScopedRef.current = true;
+    setActiveSavedProject(name || null);
+    clearActiveProjectUiState();
+    refreshSavedProjectTabs();
     workbenchRestoredRef.current = false;
-    loadSessions();
+    void loadSessions();
+  }
+
+  function handleSavedProjectTab(name: string) {
+    const raw = loadSnapshotWorkbench(name);
+    if (!raw) {
+      window.alert(`Saved project "${name}" could not be loaded.`);
+      refreshSavedProjectTabs();
+      return;
+    }
+    writeStoredItem(WORKBENCH_KEY_V2, raw);
+    handleLoadSnapshot(name);
+    setDashboardTab("workbench");
+  }
+
+  function handleNewProject() {
+    let nextIndex: SnapshotMeta[] | null = null;
+    if (activeProjectHasWork()) {
+      saveWorkbenchV2(teams, pendingTexts, taskContents, taskImages);
+      nextIndex = saveCurrentProjectSnapshot(
+        teams,
+        sessionsRef.current,
+        activeSavedProject || defaultProjectSnapshotName(),
+        "",
+      );
+    }
+    refreshSavedProjectTabs(nextIndex);
+    removeStoredItems(WORKBENCH_KEY_V2, [WORKBENCH_LEGACY_KEY_V2]);
+    removeStoredItems(WORKBENCH_KEY_V1, [WORKBENCH_LEGACY_KEY_V1]);
+    projectScopedRef.current = true;
+    setActiveSavedProject(null);
+    clearActiveProjectUiState();
+    setTeams([makeHomeTeam(), makePublicProjectsTeam(sessionsRef.current.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID))]);
+    setDashboardTab("workbench");
   }
 
   const handleSearch = useCallback(async (q: string) => {
@@ -1553,13 +1645,15 @@ export default function App() {
     setFocusedDeskId(null);
     setJustStartedId(null);
     setJustStartedAnchor(null);
+    projectScopedRef.current = false;
+    setActiveSavedProject(null);
     if (privateSessionIds.length > 0) {
       await Promise.allSettled(privateSessionIds.map((id) => api.sessions.delete(id)));
       const publicOnly = sessionsRef.current.filter((session) => !privateSessionIds.includes(session.id));
       sessionsRef.current = publicOnly;
       setSessions(publicOnly);
     }
-    setTeams([makeHomeTeam(), makePublicProjectsTeam()]);
+    setTeams([makeHomeTeam(), makePublicProjectsTeam(sessionsRef.current.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID))]);
     try {
       const r = await api.docker.cleanup();
       if (r.skipped) {
@@ -1699,6 +1793,7 @@ export default function App() {
         searchStats={searchStats}
         onReset={handleReset}
         onLoadSnapshot={handleLoadSnapshot}
+        onSnapshotsChange={refreshSavedProjectTabs}
         onWalletConnect={() => void connectDashboardWallet()}
         onWalletDisconnect={disconnectDashboardWallet}
         walletAddress={walletAddress}
@@ -1789,6 +1884,24 @@ export default function App() {
         ))}
         <button
           type="button"
+          onClick={handleNewProject}
+          title="Start a fresh private project while keeping saved projects available"
+          style={{
+            height: 30,
+            padding: "0 12px",
+            borderRadius: 6,
+            border: "1px solid #2563eb",
+            background: "#12213d",
+            color: "#93c5fd",
+            fontSize: 12,
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          New Project
+        </button>
+        <button
+          type="button"
           onClick={addRoom}
           title="Create a private OpenClaw room with its own desks"
           style={{
@@ -1823,6 +1936,49 @@ export default function App() {
         >
           Share Project
         </button>
+        {savedProjectTabs.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              minWidth: 0,
+              flex: 1,
+              overflowX: "auto",
+              paddingLeft: 4,
+            }}
+          >
+            {savedProjectTabs.slice(0, 8).map((snapshot) => {
+              const active = activeSavedProject === snapshot.name;
+              return (
+                <button
+                  key={snapshot.name}
+                  type="button"
+                  onClick={() => handleSavedProjectTab(snapshot.name)}
+                  title={`Open saved project "${snapshot.name}"`}
+                  style={{
+                    height: 28,
+                    maxWidth: 180,
+                    padding: "0 10px",
+                    borderRadius: 6,
+                    border: `1px solid ${active ? "#60a5fa" : "#2a3558"}`,
+                    background: active ? "#1e3a8a" : "#121828",
+                    color: active ? "white" : "var(--text-dim)",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    flexShrink: 0,
+                  }}
+                >
+                  {snapshot.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
       {networkNotice && (
         <div style={{

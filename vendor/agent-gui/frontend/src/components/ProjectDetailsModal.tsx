@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { PublicProjectDetail, PublicProjectReview, TopAgent } from "../types";
+import type { ProjectExplorerReport, PublicProjectDetail, PublicProjectReview, TopAgent } from "../types";
+import { AgentFigure } from "./AgentFigure";
 
 interface Props {
   projectId: string | null;
@@ -58,6 +59,9 @@ export function ProjectDetailsModal({ projectId, fallback, onClose, onCopy, onRe
   const [detail, setDetail] = useState<PublicProjectDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [explorerReport, setExplorerReport] = useState<ProjectExplorerReport | null>(null);
+  const [explorerLoading, setExplorerLoading] = useState(false);
+  const [explorerError, setExplorerError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!projectId) return;
@@ -76,6 +80,26 @@ export function ProjectDetailsModal({ projectId, fallback, onClose, onCopy, onRe
       });
     return () => { cancelled = true; };
   }, [projectId]);
+
+  useEffect(() => {
+    setExplorerReport(null);
+    setExplorerError(null);
+    setExplorerLoading(false);
+  }, [projectId]);
+
+  async function sendExplorer() {
+    if (!projectId) return;
+    setExplorerLoading(true);
+    setExplorerError(null);
+    try {
+      const result = await api.publicProjects.explore(projectId);
+      setExplorerReport(result.report);
+    } catch (err) {
+      setExplorerError((err as Error).message || "Explorer could not inspect this project.");
+    } finally {
+      setExplorerLoading(false);
+    }
+  }
 
   if (!projectId) return null;
   const project = detail?.project || fallback || null;
@@ -153,6 +177,81 @@ export function ProjectDetailsModal({ projectId, fallback, onClose, onCopy, onRe
         </div>
 
         {error && <div style={{ marginTop: 12, color: "#ff8a8a", fontSize: 12 }}>{error}</div>}
+
+        <div
+          style={{
+            marginTop: 14,
+            border: "1px solid #263b63",
+            borderRadius: 8,
+            background: "#0b1428",
+            padding: 12,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <AgentFigure
+              agentId="explorer"
+              color="#60a5fa"
+              state={explorerLoading ? "working" : "idle"}
+              scale={0.9}
+            />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: "#93c5fd" }}>Explorer</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "var(--text-dim)", lineHeight: 1.45 }}>
+                Sends the Explorer agent through the public rooms, tasks, reviews, copies, and donations so you can judge what this project does before copying it.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void sendExplorer()}
+              disabled={explorerLoading}
+              style={{
+                height: 34,
+                padding: "0 12px",
+                borderRadius: 6,
+                border: "1px solid #2563eb",
+                background: explorerLoading ? "#172554" : "#1d4ed8",
+                color: "white",
+                cursor: explorerLoading ? "default" : "pointer",
+                fontWeight: 900,
+                flexShrink: 0,
+              }}
+            >
+              {explorerLoading ? "Inspecting..." : "Send Explorer"}
+            </button>
+          </div>
+          {explorerError && (
+            <div style={{ marginTop: 10, color: "#ff8a8a", fontSize: 12 }}>{explorerError}</div>
+          )}
+          {explorerReport && (
+            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              <div style={{ fontSize: 12, lineHeight: 1.5, color: "var(--text)" }}>
+                {explorerReport.summary}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 900, color: "#7ee0c2", marginBottom: 6 }}>Strengths</div>
+                  <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
+                    {explorerReport.strengths.map((item) => (
+                      <li key={item} style={{ fontSize: 12, lineHeight: 1.45 }}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 900, color: "#facc15", marginBottom: 6 }}>Cautions</div>
+                  <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
+                    {explorerReport.cautions.map((item) => (
+                      <li key={item} style={{ fontSize: 12, lineHeight: 1.45 }}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+              <div style={{ borderTop: "1px solid #263b63", paddingTop: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 900, color: "#93c5fd", marginBottom: 5 }}>Copy fit</div>
+                <div style={{ fontSize: 12, lineHeight: 1.5 }}>{explorerReport.copy_fit}</div>
+              </div>
+            </div>
+          )}
+        </div>
 
         <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
           <div style={{ fontSize: 13, fontWeight: 900 }}>Project Rooms</div>

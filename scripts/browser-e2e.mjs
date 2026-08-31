@@ -50,7 +50,7 @@ try {
   assert(balance.formatted === "0 OSA" && balance.source === "not_deployed", "wallet balance should honestly report undeployed $OSA state");
   let config = await getJson("/api/gui-config");
   const agentIds = config.agents.map((agent) => agent.id);
-  for (const id of ["coder", "bugfixer", "info-guy", "coinexpert", "graphicsexpert", "moneymaker", "security-expert"]) {
+  for (const id of ["coder", "bugfixer", "info-guy", "coinexpert", "graphicsexpert", "moneymaker", "security-expert", "explorer"]) {
     assert(agentIds.includes(id), `Agent Profiles should include ${id}`);
   }
   assert(config.prototypes.length === 0, "legacy built-in Agent Profile prototypes should be removed");
@@ -123,7 +123,8 @@ try {
   assert(!bodyText.includes("Agent Chain"), "old Agent Chain label should not render");
   assert(bodyText.includes("Earned Donations"), "topbar should label donation totals clearly");
   assert(bodyText.includes("0 OSA"), "topbar should show connected wallet $OSA balance");
-  assert(bodyText.includes("Save/Load Project"), "project save/load control should replace Load Desk/Snapshots");
+  assert(bodyText.includes("Save Project"), "project save control should replace Load Desk/Snapshots");
+  assert(!bodyText.includes("Save/Load Project"), "topbar should not expose the old Save/Load Project wording");
   assert(!bodyText.includes("Snapshots"), "topbar should not expose the old snapshots wording");
   assert(!bodyText.includes("Load desk"), "topbar should not expose the old Load desk wording");
   assert(!(await page.locator("body").innerText()).includes("Open agent voting quality benchmark"), "legacy example tasks should not render");
@@ -213,6 +214,9 @@ try {
   assert(projectDetail.project?.title === "Browser E2E Project", "Public Project detail should expose the project title");
   assert(projectDetail.rooms?.some((room) => room.tasks?.some((task) => task.description.includes("market-research agent"))), "Public Project detail should explain included tasks");
   assert(projectDetail.reviews?.some((item) => item.title === "Actually useful"), "Public Project detail should expose readable reviews");
+  const explorerReport = await postJson(`/api/public/projects/${encodeURIComponent(projectId)}/explore`, {});
+  assert(explorerReport.report?.summary?.includes("Browser E2E Project"), "Explorer should explain the selected public project");
+  assert(explorerReport.report?.copy_fit, "Explorer should return a copy-fit recommendation");
   const chatPost = await postJson("/api/network/chat", {
     wallet_address: walletAddress,
     message: "Browser E2E says hello to Network Activity."
@@ -233,11 +237,23 @@ try {
   await expectText(page, "body", "Network Live");
   await expectText(page, "body", "Latest Projects");
   await expectText(page, "body", "Browser E2E Project");
-  await expectText(page, "body", "Latest public projects.");
+  await expectText(page, "body", "send Explorer before copying");
   await expectText(page, "body", "1 copies");
+  await page.getByRole("button", { name: "Save Project" }).click();
+  await page.getByPlaceholder("Project save name...").fill("Browser Saved Project");
+  await page.locator('button').filter({ hasText: /^Save$/ }).click();
+  await expectText(page, "body", "Browser Saved Project");
+  await page.getByRole("button", { name: "New Project" }).click();
+  await expectText(page, "body", "Browser Saved Project");
+  const afterNewProjectSessions = await getJson("/api/sessions");
+  assert(afterNewProjectSessions.some((session) => session.id === created.session_id), "New Project should not end the previous private project sessions");
+  await page.getByRole("button", { name: "Browser Saved Project" }).click();
   await page.locator('button[title="View what this public project does"]').first().click();
   await expectText(page, "body", "Project Rooms");
   await expectText(page, "body", "Actually useful");
+  await expectText(page, "body", "Send Explorer");
+  await page.getByRole("button", { name: "Send Explorer" }).click();
+  await expectText(page, "body", "Copy fit");
   await page.locator('[aria-label="Public project details"] button[title="Close"]').click();
   await page.getByRole("button", { name: "Top100 Projects" }).click();
   await expectText(page, "body", "Top100 Projects");

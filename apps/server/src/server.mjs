@@ -372,6 +372,26 @@ function defaultAgentGuiProfiles() {
         "Security review order: assets, trust boundaries, authn/authz, secrets, input handling, persistence, network exposure, logging, recovery.",
         "Good fixes reduce attack surface without breaking the intended product flow."
       ].join("\n")
+    },
+    {
+      id: "explorer",
+      name: "Explorer",
+      tagline: "Inspects public OSA projects before copy decisions",
+      color: "#60a5fa",
+      model: "OpenClaw local agent",
+      runner: "openclaw",
+      clone_from: "info-guy",
+      soul: [
+        "You are Explorer, an OSA public-project inspection agent.",
+        "Inspect only public project metadata: rooms, tasks, agents, result summaries, copies, reviews, donations, owner identity, and federation signals.",
+        "Explain what the project appears to do, who it helps, what rooms and agents it contains, and what evidence supports that reading.",
+        "Call out missing information, weak signals, and copy risks clearly. Do not claim access to private code, hidden files, or unpublished conversations.",
+        "End with a practical copy recommendation: copy, inspect further, or skip for now."
+      ].join("\n"),
+      memory: [
+        "Explorer reports should be compact, evidence-led, and honest about uncertainty.",
+        "Useful sections: what it does, rooms/tasks, strengths, cautions, copy fit, and public evidence."
+      ].join("\n")
     }
   ]);
 }
@@ -5252,6 +5272,85 @@ function publicProjectDetails(projectId) {
   };
 }
 
+function publicProjectExplorerReport(projectId) {
+  const details = publicProjectDetails(projectId);
+  if (!details) return null;
+  const profile = agentGuiProfileById("explorer") || {
+    id: "explorer",
+    name: "Explorer",
+    soul: "Inspect public OSA project metadata before a copy decision."
+  };
+  const project = details.project;
+  const rooms = details.rooms || [];
+  const taskCount = rooms.reduce((sum, room) => sum + (room.tasks?.length || 0), 0);
+  const agentNames = Array.from(new Set(
+    rooms
+      .flatMap((room) => room.tasks || [])
+      .map((task) => task.agent || "OSA Agent")
+      .filter(Boolean)
+  ));
+  const reviewCount = Number(details.stats.review_count || 0);
+  const ratingAvg = Number(details.stats.rating_avg || 0);
+  const copyCount = Number(details.stats.copy_count || 0);
+  const donationTotal = Number(details.stats.donation_total_usdc || 0);
+  const resultCount = rooms
+    .flatMap((room) => room.tasks || [])
+    .filter((task) => String(task.result_summary || "").trim()).length;
+  const roomNames = rooms.map((room) => room.name || "Room").filter(Boolean);
+  const strengths = [];
+  const cautions = [];
+
+  if (taskCount > 0) strengths.push(`Contains ${taskCount} public task${taskCount === 1 ? "" : "s"} across ${rooms.length || 1} room${rooms.length === 1 ? "" : "s"}.`);
+  if (agentNames.length > 0) strengths.push(`Uses ${agentNames.length} visible agent profile${agentNames.length === 1 ? "" : "s"}: ${agentNames.slice(0, 5).join(", ")}${agentNames.length > 5 ? "..." : ""}.`);
+  if (resultCount > 0) strengths.push(`${resultCount} task${resultCount === 1 ? "" : "s"} include accepted or visible result summaries.`);
+  if (reviewCount > 0) strengths.push(`Has ${reviewCount} public review${reviewCount === 1 ? "" : "s"} with ${ratingAvg.toFixed(1)} average rating.`);
+  if (copyCount > 0) strengths.push(`Has ${copyCount} recorded copy event${copyCount === 1 ? "" : "s"} in the federated view.`);
+  if (donationTotal > 0) strengths.push(`Has ${donationTotal} USDC in recorded donation intents.`);
+
+  if (!project.summary || project.summary === project.title) cautions.push("The public summary is thin, so inspect the tasks before copying.");
+  if (taskCount === 0) cautions.push("No public task details are available for this project.");
+  if (resultCount === 0) cautions.push("No accepted result summaries are visible yet.");
+  if (reviewCount === 0) cautions.push("No public reviews are available yet.");
+  if (copyCount === 0) cautions.push("No one has copied this project in the visible network data yet.");
+  if (!project.owner_wallet_address) cautions.push("No owner wallet is visible for accountability.");
+
+  const topic = String(project.summary || project.goal || project.title || "an OSA project").trim();
+  const copyFit = reviewCount > 0 && ratingAvg >= 4 && resultCount > 0
+    ? "Good copy candidate if the listed rooms match your goal; the public evidence shows reviews plus visible work results."
+    : taskCount > 0
+      ? "Inspect further before copying; the project has visible structure but still needs stronger public proof."
+      : "Skip for now unless you already trust the publisher; there is not enough public evidence to judge it.";
+
+  return {
+    project_id: project.target_id || project.id,
+    generated_at: now(),
+    explorer_agent: {
+      id: profile.id || "explorer",
+      name: profile.name || "Explorer",
+      soul_summary: "Public-project inspection agent for rooms, tasks, reviews, copies, donations, and copy-fit judgement."
+    },
+    summary: `Explorer reads this as ${topic}. It exposes ${rooms.length || 0} room${rooms.length === 1 ? "" : "s"}${roomNames.length ? ` (${roomNames.slice(0, 4).join(", ")}${roomNames.length > 4 ? "..." : ""})` : ""}, ${taskCount} task${taskCount === 1 ? "" : "s"}, and ${agentNames.length} visible agent profile${agentNames.length === 1 ? "" : "s"}.`,
+    rooms: rooms.map((room) => ({
+      name: room.name || "Room",
+      task_count: room.tasks?.length || 0,
+      agents: Array.from(new Set((room.tasks || []).map((task) => task.agent || "OSA Agent"))),
+    })),
+    strengths: strengths.length ? strengths : ["The project is visible as a public OSA project and can be inspected before copying."],
+    cautions: cautions.length ? cautions : ["No major public-data caution found, but private implementation details are still not visible until copied."],
+    copy_fit: copyFit,
+    evidence: [
+      `Public project: ${project.title || "Untitled"}`,
+      `Rooms: ${rooms.length || 0}`,
+      `Tasks: ${taskCount}`,
+      `Visible result summaries: ${resultCount}`,
+      `Reviews: ${reviewCount}${reviewCount > 0 ? ` at ${ratingAvg.toFixed(1)} average` : ""}`,
+      `Copies: ${copyCount}`,
+      `Donations: ${donationTotal} USDC`,
+      `Owner: ${project.owner_wallet_address || "unknown"}`
+    ]
+  };
+}
+
 async function createPublicProjectReview(projectId, body = {}) {
   const project = store.publicProjects.find((item) => item.id === projectId);
   if (!project) {
@@ -5628,6 +5727,20 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
   if (method === "GET" && projectDetailMatch) {
     const details = publicProjectDetails(decodeURIComponent(projectDetailMatch[1]));
     return details ? sendJson(res, 200, details) : notFound(res);
+  }
+
+  const projectExploreMatch = path.match(/^\/api\/public\/projects\/([^/]+)\/explore$/);
+  if (method === "POST" && projectExploreMatch) {
+    const projectId = decodeURIComponent(projectExploreMatch[1]);
+    const report = publicProjectExplorerReport(projectId);
+    if (!report) return notFound(res);
+    event("agentgui_project_explored", "Explorer inspected a Public Project", {
+      publicProjectId: projectId,
+      title: report.evidence[0] || null,
+      copyFit: report.copy_fit
+    });
+    await saveStore();
+    return sendJson(res, 200, { ok: true, report });
   }
 
   const projectReviewMatch = path.match(/^\/api\/public\/projects\/([^/]+)\/reviews$/);
