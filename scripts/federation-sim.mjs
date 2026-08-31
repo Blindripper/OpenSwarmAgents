@@ -329,7 +329,18 @@ async function assertPublicProjectSharing(nodeA, nodeB) {
     comment: "The remote node should see this signed project review."
   });
   await assertSignedPublicRecordTamperRejected(nodeA, nodeB, idA);
+  const firstSnapshotA = await getJson(nodeA, "/api/federation/snapshot", nodeA.federationHeaders);
   await sync(nodeA, nodeB);
+  const replayImport = await postJson(nodeB, "/api/federation/import", { snapshot: firstSnapshotA }, nodeB.federationHeaders);
+  assert(replayImport.ok && replayImport.changedTotal === 0, "reimporting the same peer snapshot should be idempotent");
+  await postJson(nodeA, `/api/public/projects/${encodeURIComponent(idA)}/reviews`, {
+    wallet_address: "0x00000000000000000000000000000000000000aa",
+    rating: 4,
+    title: "Federates cleanly after update",
+    comment: "The newer signed snapshot should advance the peer head."
+  });
+  await sync(nodeA, nodeB);
+  await expectPostStatus(nodeB, "/api/federation/import", 409, { snapshot: firstSnapshotA }, nodeB.federationHeaders);
   await assertTopProjects(nodeB, ["Node A Alpha Project"]);
   await assertTopProject(nodeB, "Node A Alpha Project", (project) => project.donation_total_usdc === 2, "donation totals should federate");
   await assertTopProject(nodeB, "Node A Alpha Project", (project) => project.review_count === 1, "project reviews should federate");

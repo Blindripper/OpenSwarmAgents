@@ -156,6 +156,7 @@ async function loadStore() {
       uploadedArtifacts: [],
       proposalVotes: [],
       trustLedger: [],
+      federationPeerHeads: {},
       events: []
     });
     ensureAgentGuiExampleProject(initial);
@@ -189,6 +190,7 @@ function normalizeStore(input) {
     connectorTokens: normalizeConnectorTokens(input.connectorTokens || []),
     uploadedArtifacts: input.uploadedArtifacts || [],
     trustLedger: normalizeTrustLedger(input.trustLedger || []),
+    federationPeerHeads: normalizeFederationPeerHeads(input.federationPeerHeads || {}),
     resultPool: input.resultPool || buildResultPoolFromAccepted(goals, tasks, results, reviews),
     proposals: (input.proposals || []).map(normalizeProposal),
     proposalVotes: input.proposalVotes || [],
@@ -779,6 +781,25 @@ function normalizeTrustLedger(entries) {
     }));
 }
 
+function normalizeFederationPeerHeads(input) {
+  const output = {};
+  const entries = Array.isArray(input)
+    ? input.map((entry) => [entry?.nodeId, entry])
+    : Object.entries(input || {});
+  for (const [nodeId, entry] of entries) {
+    const normalizedNodeId = String(nodeId || entry?.nodeId || "").slice(0, 100);
+    const head = entry?.head ? String(entry.head).slice(0, 128) : null;
+    if (!normalizedNodeId || !head) continue;
+    output[normalizedNodeId] = {
+      nodeId: normalizedNodeId,
+      head,
+      acceptedHash: entry.acceptedHash ? String(entry.acceptedHash).slice(0, 128) : null,
+      acceptedAt: entry.acceptedAt || now()
+    };
+  }
+  return output;
+}
+
 function normalizeConnectorTokens(tokens) {
   return tokens.map((token) => ({
     ...token,
@@ -964,6 +985,7 @@ async function loadPostgresStore() {
     proposalVotes: [],
     uploadedArtifacts: [],
     trustLedger: [],
+    federationPeerHeads: {},
     events: []
   });
   ensureAgentGuiExampleProject(initial);
@@ -2057,6 +2079,116 @@ function verifiedFederationCollections(snapshot) {
   };
 }
 
+function verifyFederationSnapshotProgress(snapshot, collections) {
+  if (!federationSignatureVerificationEnabled()) return null;
+  const originNodeId = snapshot.node?.nodeId;
+  const incomingHead = snapshot.head || snapshot.headsByNode?.[originNodeId] || null;
+  if (!originNodeId || originNodeId === nodeIdentity.nodeId || !incomingHead) return null;
+
+  store.federationPeerHeads = normalizeFederationPeerHeads(store.federationPeerHeads || {});
+  const accepted = store.federationPeerHeads[originNodeId] || null;
+  const acceptedHash = federationOriginProjectionHash(originNodeId, collections);
+  if (!accepted?.head) {
+    return { originNodeId, head: incomingHead, acceptedHash };
+  }
+
+  if (incomingHead === accepted.head) {
+    if (accepted.acceptedHash && accepted.acceptedHash !== acceptedHash) {
+      const error = new Error(`Federation snapshot from ${originNodeId} conflicts with the previously accepted peer head`);
+      error.statusCode = 409;
+      throw error;
+    }
+    return { originNodeId, head: incomingHead, acceptedHash, unchanged: true };
+  }
+
+  const ledgerEntries = normalizeTrustLedger([
+    ...(collections.trustLedger || []),
+    ...(store.trustLedger || [])
+  ]);
+  if (trustLedgerHeadReaches(ledgerEntries, incomingHead, accepted.head)) {
+    return { originNodeId, head: incomingHead, acceptedHash };
+  }
+  if (trustLedgerHeadReaches(ledgerEntries, accepted.head, incomingHead)) {
+    const error = new Error(`Federation snapshot from ${originNodeId} is stale and would roll back an accepted peer head`);
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const error = new Error(`Federation snapshot from ${originNodeId} does not extend the accepted peer head`);
+  error.statusCode = 409;
+  throw error;
+}
+
+function rememberFederationSnapshotProgress(progress) {
+  if (!progress?.originNodeId || !progress.head) return 0;
+  store.federationPeerHeads = normalizeFederationPeerHeads(store.federationPeerHeads || {});
+  const existing = store.federationPeerHeads[progress.originNodeId] || null;
+  if (
+    existing?.head === progress.head
+    && (!progress.acceptedHash || existing.acceptedHash === progress.acceptedHash)
+  ) {
+    return 0;
+  }
+  store.federationPeerHeads[progress.originNodeId] = {
+    nodeId: progress.originNodeId,
+    head: progress.head,
+    acceptedHash: progress.acceptedHash || null,
+    acceptedAt: now()
+  };
+  return 1;
+}
+
+function trustLedgerHeadReaches(entries, head, expectedAncestor) {
+  if (!head || !expectedAncestor) return false;
+  if (head === expectedAncestor) return true;
+  const byHash = new Map();
+  for (const entry of entries || []) {
+    if (entry?.eventHash && !byHash.has(entry.eventHash)) byHash.set(entry.eventHash, entry);
+  }
+  let current = head;
+  for (let depth = 0; current && depth < 5000; depth += 1) {
+    if (current === expectedAncestor) return true;
+    current = byHash.get(current)?.previousHash || null;
+  }
+  return false;
+}
+
+function federationOriginProjectionHash(originNodeId, collections = {}) {
+  const signedCollections = [
+    "proposals",
+    "proposalVotes",
+    "results",
+    "reviews",
+    "uploadedArtifacts",
+    "publicProjects",
+    "publicProjectReviews",
+    "agentDonations"
+  ];
+  const projection = {};
+  for (const name of signedCollections) {
+    projection[name] = (Array.isArray(collections[name]) ? collections[name] : [])
+      .filter((item) => item?.signature?.nodeId === originNodeId)
+      .map((item) => ({
+        id: String(item.id || "").slice(0, 160),
+        type: item.signature?.type || null,
+        payloadHash: item.signature?.payloadHash || null,
+        signedAt: item.signature?.signedAt || null
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id) || String(a.payloadHash).localeCompare(String(b.payloadHash)));
+  }
+  projection.trustLedger = (Array.isArray(collections.trustLedger) ? collections.trustLedger : [])
+    .filter((entry) => entry?.nodeId === originNodeId)
+    .map((entry) => ({
+      eventHash: entry.eventHash,
+      previousHash: entry.previousHash || null,
+      payloadHash: entry.payloadHash || null,
+      type: entry.type || null,
+      createdAt: entry.createdAt || null
+    }))
+    .sort((a, b) => String(a.eventHash).localeCompare(String(b.eventHash)));
+  return objectHash(projection);
+}
+
 function verifyFederationSnapshotNode(node, trusted) {
   if (!node?.nodeId || !node?.publicKeyPem) {
     const error = new Error("Federation snapshot is missing node identity");
@@ -2300,6 +2432,7 @@ function importFederationSnapshot(snapshot) {
     throw new Error("Invalid federation snapshot");
   }
   const collections = verifiedFederationCollections(snapshot);
+  const progress = verifyFederationSnapshotProgress(snapshot, collections);
   const changed = {
     goals: mergeFederatedCollection("goals", collections.goals, publicFederatedGoal),
     agents: mergeFederatedCollection("agents", collections.agents, publicFederatedAgent),
@@ -2316,6 +2449,7 @@ function importFederationSnapshot(snapshot) {
     publicProjectReviews: mergeFederatedProjectReviews(collections.publicProjectReviews),
     agentDonations: mergeFederatedAgentDonations(collections.agentDonations),
     trustLedger: mergeFederatedTrustLedger(collections.trustLedger),
+    federationPeerHeads: rememberFederationSnapshotProgress(progress),
     events: mergeFederatedEvents(collections.events)
   };
   recomputeProposalTallies();
@@ -5870,6 +6004,7 @@ async function handleApi(req, res, url) {
     if (error.statusCode === 413) return payloadTooLarge(res, error.message);
     if (error.statusCode === 400) return badRequest(res, error.message);
     if (error.statusCode === 403) return forbidden(res, error.message);
+    if (error.statusCode === 409) return sendJson(res, 409, { error: "conflict", message: error.message });
     console.error(error);
     return sendJson(res, 500, { error: "internal_error", message: error.message });
   }

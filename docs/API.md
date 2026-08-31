@@ -86,6 +86,8 @@ Imports a peer snapshot and merges it into the local node. Requires the same fed
 
 Peer sync uses one in-flight snapshot fetch per peer and rejects peer responses larger than `OSA_FEDERATION_SNAPSHOT_MAX_BYTES`. Shared token auth is the compatibility baseline for private trusted peers. Use the Account view to paste another node's public peer record and copy the generated `OSA_FEDERATION_REQUIRE_SIGNATURES=1` / `OSA_FEDERATION_TRUSTED_NODES` config, or set those values manually before importing from peers outside a fully private trust boundary. In that mode, OSA verifies the snapshot node identity, filters unsigned signed-contribution records, rejects tampered signatures, and validates Trust Ledger event hashes before merge. Signature enforcement covers proposals, votes, task results, result reviews, artifacts, Public Projects, project reviews, and donation intents.
 
+When signature enforcement is enabled, OSA also persists the last accepted Trust Ledger head for each peer. Reimporting the same peer head is idempotent, a newer head must extend the previous accepted head, and stale or divergent heads are rejected before any snapshot data is merged. This prevents a valid old snapshot from rolling public rankings or reward-relevant signals backward.
+
 Trusted node allowlists are JSON maps keyed by node id:
 
 ```json
