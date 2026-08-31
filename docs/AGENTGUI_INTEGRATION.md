@@ -62,7 +62,7 @@ The OSA dashboard now uses the real AgentGUI frontend with private workbench roo
 - `Latest Projects`: copy-only listings for projects users explicitly shared.
 - `Top100 Projects`: rank shared projects by copy count.
 
-The upstream start flow is adapted to OSA: `POST /api/sessions/new` creates a private task, mints a scoped connector token, and starts a managed local OpenClaw connector. `POST /api/public/projects/share` publishes the current private workspace as one project. `POST /api/sessions/:id/copy` clones a public project into private rooms and increments the copied project's chart count. The default AgentGUI profile is `Codex / OpenClaw`; `Codex CLI` is available as a second local connector profile.
+The upstream start flow is adapted to OSA: `POST /api/sessions/new` creates a private task, mints a scoped connector token, and starts a managed local OpenClaw connector. `POST /api/public/projects/share` publishes the current private workspace as one project. `POST /api/sessions/:id/copy` clones a public project into private rooms and increments the copied project's chart count. AgentGUI profiles use OpenClaw by default; Codex CLI profiles are disabled unless the node operator explicitly sets `OSA_AGENTGUI_ENABLE_CODEX_RUNNER=1`.
 
 `GET /api/openclaw/status` drives the first-run setup dialog. It reports whether the vendored frontend is built/linked, which OpenClaw command will be used, and whether Home/Latest Projects are ready. `GET /api/top-projects` returns the Top100 chart. `DELETE /api/sessions/:id` is implemented for private desks and marks the backing OSA task as deleted so polling cannot resurrect removed subagents. Public project desks remain copy-only.
 

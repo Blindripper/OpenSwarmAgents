@@ -55,6 +55,8 @@ try {
   for (const id of ["coder", "bugfixer", "info-guy", "coinexpert", "graphicsexpert", "moneymaker", "security-expert", "explorer"]) {
     assert(agentIds.includes(id), `Agent Profiles should include ${id}`);
   }
+  assert(config.agents.find((agent) => agent.id === "coder")?.model === "OpenClaw local agent", "Coder should default to OpenClaw in AgentGUI");
+  assert(config.agents.find((agent) => agent.id === "bugfixer")?.model === "OpenClaw local agent", "Bugfixer should default to OpenClaw in AgentGUI");
   assert(config.prototypes.length === 0, "legacy built-in Agent Profile prototypes should be removed");
   const infoPersona = await getJson("/api/agents/info-guy/persona");
   assert(infoPersona.soul.includes("information-gathering"), "existing specialist profiles should expose useful Soul.md content");
@@ -162,16 +164,16 @@ try {
   });
   assert(roomCreated.session?.team_id === "room-launch", "private room sessions should keep their team id");
   const coderFallback = await postJson("/api/sessions/new", {
-    content: "Test the default Coder desk when Codex CLI is not installed.",
+    content: "Test the default Coder desk through OpenClaw.",
     team_id: "home-room",
     agent: "coder"
   });
-  assert(coderFallback.session?.agent === "coder", "Coder profile should remain selected when the runner falls back");
-  assert(coderFallback.session?.agent_model === "OpenClaw local agent", "Coder should fall back to OpenClaw when Codex CLI is unavailable");
+  assert(coderFallback.session?.agent === "coder", "Coder profile should remain selected");
+  assert(coderFallback.session?.agent_model === "OpenClaw local agent", "Coder should run through OpenClaw in AgentGUI");
   await waitForJson(
     "/api/sessions",
     (items) => items.find((session) => session.id === coderFallback.session_id && session.task_solved === true),
-    "Coder fallback session to complete through OpenClaw"
+    "Coder session to complete through OpenClaw"
   );
 
   const legacyShare = await postJsonAllowError(`/api/sessions/${encodeURIComponent(created.session_id)}/share`, { shared: true });

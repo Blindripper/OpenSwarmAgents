@@ -51,6 +51,7 @@ const federationSnapshotMaxBytes = Math.max(maxJsonBytes, Number(process.env.OSA
 const federationPeerSyncs = new Set();
 const managedConnectorProcesses = new Map();
 const managedConnectorLogLimit = 12 * 1024;
+const agentGuiCodexRunnerEnabled = process.env.OSA_AGENTGUI_ENABLE_CODEX_RUNNER === "1";
 const agentGuiHomeTeamId = "home-room";
 const agentGuiPublicProjectsTeamId = "public-projects-room";
 const osaDonationFeeWallet = "0x0D92d175943336E3Ad099e55FBe4248dC6fA947b";
@@ -220,21 +221,29 @@ function normalizeTasks(tasks) {
 function normalizeAgentProfiles(profiles) {
   return profiles
     .filter((profile) => profile?.id)
-    .map((profile) => ({
-      id: String(profile.id).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80),
-      name: String(profile.name || profile.id || "OpenClaw Agent").slice(0, 80),
-      tagline: String(profile.tagline || "Private OpenClaw worker profile").slice(0, 160),
-      color: String(profile.color || "#22d3ee").slice(0, 32),
-      available: profile.available !== false,
-      model: String(profile.model || "OpenClaw local agent").slice(0, 120),
-      base_url: String(profile.base_url || "").slice(0, 500),
-      profile_path: String(profile.profile_path || `osa://profiles/${profile.id}`).slice(0, 500),
-      is_prototype: false,
-      clone_from: profile.clone_from || "coder",
-      runner: ["openclaw", "codex"].includes(profile.runner) ? profile.runner : (profile.clone_from === "coder" ? "codex" : "openclaw"),
-      soul: String(profile.soul || "You are a user-owned OpenClaw agent profile. Work clearly, locally, and keep results useful.").slice(0, 20_000),
-      memory: String(profile.memory || "").slice(0, 20_000)
-    }))
+    .map((profile) => {
+      const requestedRunner = ["openclaw", "codex"].includes(profile.runner) ? profile.runner : "openclaw";
+      const runner = requestedRunner === "codex" && !agentGuiCodexRunnerEnabled ? "openclaw" : requestedRunner;
+      const rawModel = String(profile.model || "").trim();
+      const model = runner === "codex"
+        ? String(rawModel || "Codex CLI").slice(0, 120)
+        : String(rawModel && rawModel !== "Codex CLI" ? rawModel : "OpenClaw local agent").slice(0, 120);
+      return {
+        id: String(profile.id).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80),
+        name: String(profile.name || profile.id || "OpenClaw Agent").slice(0, 80),
+        tagline: String(profile.tagline || "Private OpenClaw worker profile").slice(0, 160),
+        color: String(profile.color || "#22d3ee").slice(0, 32),
+        available: profile.available !== false,
+        model,
+        base_url: String(profile.base_url || "").slice(0, 500),
+        profile_path: String(profile.profile_path || `osa://profiles/${profile.id}`).slice(0, 500),
+        is_prototype: false,
+        clone_from: profile.clone_from || "coder",
+        runner,
+        soul: String(profile.soul || "You are a user-owned OpenClaw agent profile. Work clearly, locally, and keep results useful.").slice(0, 20_000),
+        memory: String(profile.memory || "").slice(0, 20_000)
+      };
+    })
     .filter((profile) => profile.id);
 }
 
@@ -245,8 +254,8 @@ function defaultAgentGuiProfiles() {
       name: "Coder",
       tagline: "Builds features, edits repos, and verifies code changes",
       color: "#38bdf8",
-      model: "Codex CLI",
-      runner: "codex",
+      model: "OpenClaw local agent",
+      runner: "openclaw",
       clone_from: null,
       soul: [
         "You are Coder, an OSA software engineering agent.",
@@ -264,8 +273,8 @@ function defaultAgentGuiProfiles() {
       name: "Bugfixer",
       tagline: "Reproduces failures, isolates root causes, and lands minimal fixes",
       color: "#fb7185",
-      model: "Codex CLI",
-      runner: "codex",
+      model: "OpenClaw local agent",
+      runner: "openclaw",
       clone_from: "coder",
       soul: [
         "You are Bugfixer, an OSA debugging specialist.",
@@ -409,6 +418,16 @@ function ensureAgentGuiDefaultProfiles(target) {
   for (const profile of defaults) {
     if (!existing.has(profile.id)) {
       existing.set(profile.id, profile);
+      changed = true;
+      continue;
+    }
+    const current = existing.get(profile.id);
+    if (current.runner === "codex" && !agentGuiCodexRunnerEnabled) {
+      current.runner = "openclaw";
+      current.model = "OpenClaw local agent";
+      changed = true;
+    } else if (["coder", "bugfixer"].includes(current.id) && current.model === "Codex CLI") {
+      current.model = "OpenClaw local agent";
       changed = true;
     }
   }
@@ -3180,10 +3199,6 @@ function resolveAgentGuiRunnerForAgent(agentId) {
     const openClawStatus = localCliRunnerStatus("openclaw");
     if (openClawStatus.available) return "openclaw";
   }
-  if (desired === "openclaw") {
-    const codexStatus = localCliRunnerStatus("codex");
-    if (codexStatus.available) return "codex";
-  }
   return desired;
 }
 
@@ -4466,13 +4481,16 @@ function createAgentGuiProfile(body = {}) {
   const cloneFrom = String(body.clone_from || "coder");
   const source = store.agentProfiles.find((profile) => profile.id === cloneFrom);
   const prototype = agentGuiPrototypeDefinitions().find((profile) => profile.id === cloneFrom);
-  const runner = prototype?.runner === "codex" || source?.runner === "codex" ? "codex" : "openclaw";
+  const runner = agentGuiCodexRunnerEnabled && (prototype?.runner === "codex" || source?.runner === "codex") ? "codex" : "openclaw";
+  const requestedModel = String(body.model_default || source?.model || "").trim();
   const profile = normalizeAgentProfiles([{
     id,
     name: body.name || `${id.replaceAll("-", " ")} Agent`,
     tagline: body.tagline || (prototype?.tagline ?? source?.tagline ?? "Private OpenClaw worker profile"),
     color: prototype?.color || source?.color || "#22d3ee",
-    model: body.model_default || source?.model || (runner === "codex" ? "Codex CLI" : "OpenClaw local agent"),
+    model: runner === "codex"
+      ? (requestedModel || "Codex CLI")
+      : (requestedModel && requestedModel !== "Codex CLI" ? requestedModel : "OpenClaw local agent"),
     base_url: body.base_url || source?.base_url || "",
     profile_path: `osa://profiles/${id}`,
     clone_from: cloneFrom,
@@ -5610,9 +5628,9 @@ function agentGuiGoalForStart(body, title, content) {
 
 function agentGuiRunnerForAgent(agentId) {
   const prototype = agentGuiPrototypeDefinitions().find((item) => item.id === agentId);
-  if (prototype?.runner === "codex") return "codex";
+  if (agentGuiCodexRunnerEnabled && prototype?.runner === "codex") return "codex";
   const profile = store.agentProfiles.find((item) => item.id === agentId);
-  if (profile?.runner === "codex") return "codex";
+  if (agentGuiCodexRunnerEnabled && profile?.runner === "codex") return "codex";
   return "openclaw";
 }
 
@@ -5966,7 +5984,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       profile_path: `osa://agents/${id}`,
       name: id,
       tagline: "OpenClaw worker profile",
-      model: id === "coder" || id === "bugfixer" ? "Codex CLI" : "OpenClaw local agent",
+      model: "OpenClaw local agent",
       base_url: ""
     });
   }
@@ -5987,7 +6005,9 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
 
   if (method === "GET" && path === "/api/llm/models") {
     return sendJson(res, 200, {
-      models: ["OpenClaw local agent", "Codex CLI", "OSA connector"],
+      models: agentGuiCodexRunnerEnabled
+        ? ["OpenClaw local agent", "Codex CLI", "OSA connector"]
+        : ["OpenClaw local agent", "OSA connector"],
       current: "OpenClaw local agent",
       base_url: ""
     });
