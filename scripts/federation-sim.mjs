@@ -322,9 +322,17 @@ async function assertPublicProjectSharing(nodeA, nodeB) {
     wallet_address: "0x00000000000000000000000000000000000000aa",
     chain_id: "0x1"
   });
+  await postJson(nodeA, `/api/public/projects/${encodeURIComponent(idA)}/reviews`, {
+    wallet_address: "0x00000000000000000000000000000000000000aa",
+    rating: 5,
+    title: "Federates cleanly",
+    comment: "The remote node should see this signed project review."
+  });
+  await assertSignedPublicRecordTamperRejected(nodeA, nodeB, idA);
   await sync(nodeA, nodeB);
   await assertTopProjects(nodeB, ["Node A Alpha Project"]);
   await assertTopProject(nodeB, "Node A Alpha Project", (project) => project.donation_total_usdc === 2, "donation totals should federate");
+  await assertTopProject(nodeB, "Node A Alpha Project", (project) => project.review_count === 1, "project reviews should federate");
   await assertNoImportedHomeDesk(nodeB, "A private revenue project");
 
   const shareB = await createAndShareDashboardProject(nodeB, "Node B Beta Project", "B private security project");
@@ -353,6 +361,28 @@ async function assertPublicProjectSharing(nodeA, nodeB) {
   await sync(nodeB, nodeA);
   await assertTopProjects(nodeA, ["Node A Alpha Project", "Node B Beta Project"]);
   await assertNoImportedHomeDesk(nodeA, "B private draft not shared");
+}
+
+async function assertSignedPublicRecordTamperRejected(from, to, projectId) {
+  const snapshot = await getJson(from, "/api/federation/snapshot", from.federationHeaders);
+  const project = snapshot.collections.publicProjects.find((item) => item.id === projectId);
+  const review = snapshot.collections.publicProjectReviews.find((item) => item.projectId === projectId);
+  const donation = snapshot.collections.agentDonations.find((item) => item.targetId === projectId);
+  assert(project?.signature?.signature, "fresh public project should carry a federation signature");
+  assert(review?.signature?.signature, "fresh public project review should carry a federation signature");
+  assert(donation?.signature?.signature, "fresh project donation should carry a federation signature");
+
+  const tamperedProjectSnapshot = structuredClone(snapshot);
+  tamperedProjectSnapshot.collections.publicProjects.find((item) => item.id === projectId).copyCount += 10;
+  await expectPostStatus(to, "/api/federation/import", 400, { snapshot: tamperedProjectSnapshot }, to.federationHeaders);
+
+  const tamperedReviewSnapshot = structuredClone(snapshot);
+  tamperedReviewSnapshot.collections.publicProjectReviews.find((item) => item.projectId === projectId).rating = 1;
+  await expectPostStatus(to, "/api/federation/import", 400, { snapshot: tamperedReviewSnapshot }, to.federationHeaders);
+
+  const tamperedDonationSnapshot = structuredClone(snapshot);
+  tamperedDonationSnapshot.collections.agentDonations.find((item) => item.targetId === projectId).amount = 200;
+  await expectPostStatus(to, "/api/federation/import", 400, { snapshot: tamperedDonationSnapshot }, to.federationHeaders);
 }
 
 async function createAndShareDashboardProject(node, name, content) {

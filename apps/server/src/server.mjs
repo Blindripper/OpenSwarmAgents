@@ -510,6 +510,7 @@ function normalizeAgentDonations(donations) {
           creatorAmount: donation.creatorAmount ? normalizeDonationAmount(donation.creatorAmount) : Math.max(0, Math.round((amount - feeAmount) * 1_000_000) / 1_000_000),
           status: donation.status === "confirmed" ? "confirmed" : "pledged",
           txHash: donation.txHash ? String(donation.txHash).slice(0, 100) : null,
+          signature: donation.signature || null,
           createdAt: donation.createdAt || now()
         };
       } catch {
@@ -534,7 +535,8 @@ function normalizePublicProjectReviews(reviews) {
           title: String(review.title || "").trim().slice(0, 120),
           comment: String(review.comment || "").trim().slice(0, 2000),
           createdAt: review.createdAt || now(),
-          updatedAt: review.updatedAt || review.createdAt || now()
+          updatedAt: review.updatedAt || review.createdAt || now(),
+          signature: review.signature || null
         };
       } catch {
         return null;
@@ -564,7 +566,8 @@ function normalizePublicCollections(items, type) {
       lastCopiedAt: item.lastCopiedAt || item.last_copied_at || null,
       ownerWalletAddress: item.ownerWalletAddress || item.owner_wallet_address ? normalizeWalletAddress(item.ownerWalletAddress || item.owner_wallet_address) : null,
       shareFileRepo: Boolean(item.shareFileRepo || item.share_file_repo),
-      isExample: Boolean(item.isExample || item.is_example)
+      isExample: Boolean(item.isExample || item.is_example),
+      signature: item.signature || null
     }))
     .filter((item) => item.id && item.taskIds.length > 0);
 }
@@ -1928,7 +1931,8 @@ function publicFederatedPublicCollection(item) {
     "lastCopiedAt",
     "ownerWalletAddress",
     "shareFileRepo",
-    "isExample"
+    "isExample",
+    "signature"
   ]);
 }
 
@@ -1941,7 +1945,8 @@ function publicFederatedProjectReview(review) {
     "title",
     "comment",
     "createdAt",
-    "updatedAt"
+    "updatedAt",
+    "signature"
   ]);
 }
 
@@ -1962,6 +1967,7 @@ function publicFederatedDonation(donation) {
     "creatorAmount",
     "status",
     "txHash",
+    "signature",
     "createdAt"
   ]);
 }
@@ -2044,6 +2050,9 @@ function verifiedFederationCollections(snapshot) {
     results: verifiedSignedCollection("results", collections.results, trusted),
     reviews: verifiedSignedCollection("reviews", collections.reviews, trusted),
     uploadedArtifacts: verifiedSignedCollection("uploadedArtifacts", collections.uploadedArtifacts, trusted),
+    publicProjects: verifiedSignedCollection("publicProjects", collections.publicProjects, trusted),
+    publicProjectReviews: verifiedSignedCollection("publicProjectReviews", collections.publicProjectReviews, trusted),
+    agentDonations: verifiedSignedCollection("agentDonations", collections.agentDonations, trusted),
     trustLedger: verifiedTrustLedgerEntries(collections.trustLedger, trusted)
   };
 }
@@ -2082,6 +2091,8 @@ function verifyFederatedSignedItem(name, item, trusted) {
   const payload = signedPayloadForFederatedItem(name, item);
   if (!payload) return false;
   const signature = item.signature;
+  const expectedType = signedContributionTypeForCollection(name);
+  if (expectedType && signature.type !== expectedType) return false;
   const trustedNode = trusted.get(signature.nodeId);
   if (!trustedNode) return false;
   if (!verifySignedContribution(signature, payload, trustedNode.publicKeyPem)) {
@@ -2090,6 +2101,19 @@ function verifyFederatedSignedItem(name, item, trusted) {
     throw error;
   }
   return true;
+}
+
+function signedContributionTypeForCollection(name) {
+  return {
+    proposals: "proposal",
+    proposalVotes: "proposal_vote",
+    results: "task_result",
+    reviews: "result_review",
+    uploadedArtifacts: "artifact_upload",
+    publicProjects: "public_project",
+    publicProjectReviews: "public_project_review",
+    agentDonations: "agent_donation"
+  }[name] || null;
 }
 
 function signedPayloadForFederatedItem(name, item) {
@@ -2142,7 +2166,69 @@ function signedPayloadForFederatedItem(name, item) {
       sha256: item.sha256
     };
   }
+  if (name === "publicProjects") return signedPayloadForPublicCollection(item, "project");
+  if (name === "publicProjectReviews") return signedPayloadForPublicProjectReview(item);
+  if (name === "agentDonations") return signedPayloadForDonation(item);
   return null;
+}
+
+function signedPayloadForPublicCollection(item, type = "project") {
+  const taskIds = normalizeList(item.taskIds || item.task_ids, []).map((id) => String(id).slice(0, 120));
+  const rooms = Array.isArray(item.rooms)
+    ? item.rooms.map((room) => ({
+        id: String(room.id || agentGuiHomeTeamId).slice(0, 100),
+        name: String(room.name || "Home").slice(0, 80),
+        taskIds: normalizeList(room.taskIds || room.task_ids, []).map((id) => String(id).slice(0, 120))
+      }))
+    : [];
+  return {
+    projectId: String(item.id || "").slice(0, 100),
+    type,
+    name: String(item.name || "Public Project").slice(0, 120),
+    summaryHash: hashToken(item.summary || ""),
+    taskIds,
+    rooms,
+    sharedAt: item.sharedAt || item.shared_at || null,
+    updatedAt: item.updatedAt || item.updated_at || item.sharedAt || item.shared_at || null,
+    copyCount: Math.max(0, Number(item.copyCount || item.copy_count || 0)),
+    lastCopiedAt: item.lastCopiedAt || item.last_copied_at || null,
+    ownerWalletAddress: item.ownerWalletAddress || item.owner_wallet_address || null,
+    shareFileRepo: Boolean(item.shareFileRepo || item.share_file_repo),
+    isExample: Boolean(item.isExample || item.is_example)
+  };
+}
+
+function signedPayloadForPublicProjectReview(review) {
+  return {
+    reviewId: String(review.id || "").slice(0, 100),
+    projectId: String(review.projectId || "").slice(0, 140),
+    walletAddress: review.walletAddress || null,
+    rating: Math.round(Number(review.rating || 0)),
+    titleHash: hashToken(review.title || ""),
+    commentHash: hashToken(review.comment || ""),
+    createdAt: review.createdAt || null,
+    updatedAt: review.updatedAt || review.createdAt || null
+  };
+}
+
+function signedPayloadForDonation(donation) {
+  return {
+    donationId: String(donation.id || "").slice(0, 100),
+    targetType: donation.targetType || "agent",
+    targetId: String(donation.targetId || donation.taskId || "").slice(0, 140),
+    sessionId: donation.sessionId ? String(donation.sessionId).slice(0, 140) : null,
+    walletAddress: donation.walletAddress || null,
+    chainId: donation.chainId || null,
+    amount: normalizeDonationAmount(donation.amount),
+    currency: "USDC",
+    feePercent: osaDonationFeePercent,
+    feeWallet: donation.feeWallet || osaDonationFeeWallet.toLowerCase(),
+    feeAmount: donation.feeAmount ? normalizeDonationAmount(donation.feeAmount) : 0,
+    creatorAmount: donation.creatorAmount ? normalizeDonationAmount(donation.creatorAmount) : 0,
+    status: donation.status === "confirmed" ? "confirmed" : "pledged",
+    txHash: donation.txHash || null,
+    createdAt: donation.createdAt || null
+  };
 }
 
 function verifySignedContribution(signature, payload, publicKeyPem) {
@@ -4255,6 +4341,12 @@ async function copyPublicCollectionToHome(sessionId, type, body = {}) {
   collection.copyCount = Math.max(0, Number(collection.copyCount || 0)) + 1;
   collection.lastCopiedAt = copiedAt;
   collection.updatedAt = copiedAt;
+  if (type === "project") {
+    collection.signature = recordSignedContribution("public_project", signedPayloadForPublicCollection(collection, "project"), {
+      objectType: "public_project",
+      objectId: collection.id
+    });
+  }
   event(type === "room" ? "agentgui_public_room_copied" : "agentgui_public_project_copied", `Copied Public ${type} into Home`, {
     publicId: collection.id,
     copiedTaskIds: copiedTasks.map((task) => task.id),
@@ -4388,6 +4480,10 @@ async function shareAgentGuiProject(body = {}) {
     ownerWalletAddress: ownerWalletAddress || store.publicProjects[existingIndex]?.ownerWalletAddress || tasks.find((task) => task.ownerWalletAddress)?.ownerWalletAddress || null,
     shareFileRepo
   };
+  next.signature = recordSignedContribution("public_project", signedPayloadForPublicCollection(next, "project"), {
+    objectType: "public_project",
+    objectId: next.id
+  });
   if (existingIndex >= 0) store.publicProjects[existingIndex] = next;
   else store.publicProjects.unshift(next);
   event("agentgui_project_shared", "Project shared to Public Projects", {
@@ -4512,6 +4608,10 @@ async function createAgentGuiDonation(body = {}) {
     txHash: body.tx_hash ? String(body.tx_hash).slice(0, 100) : null,
     createdAt
   };
+  donation.signature = recordSignedContribution("agent_donation", signedPayloadForDonation(donation), {
+    objectType: "agent_donation",
+    objectId: donation.id
+  });
   store.agentDonations.unshift(donation);
   event("agentgui_donation_pledged", "USDC donation pledged for Public catalog item", {
     targetType: target.targetType,
@@ -4584,8 +4684,16 @@ async function createPublicProjectReview(projectId, body = {}) {
   review.title = title;
   review.comment = comment;
   review.updatedAt = updatedAt;
+  review.signature = recordSignedContribution("public_project_review", signedPayloadForPublicProjectReview(review), {
+    objectType: "public_project_review",
+    objectId: review.id
+  });
   if (!existing) store.publicProjectReviews.unshift(review);
   project.updatedAt = updatedAt;
+  project.signature = recordSignedContribution("public_project", signedPayloadForPublicCollection(project, "project"), {
+    objectType: "public_project",
+    objectId: project.id
+  });
   event(existing ? "agentgui_project_review_updated" : "agentgui_project_review_created", "Public Project review saved", {
     publicProjectId: project.id,
     walletAddress,
