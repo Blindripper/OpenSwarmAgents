@@ -9,9 +9,10 @@ const federationToken = "test-federation-token-with-enough-entropy";
 const nodes = [];
 
 try {
-  const nodeA = await startNode("A", basePort, basePort + 1);
-  const nodeB = await startNode("B", basePort + 1, basePort);
-  nodes.push(nodeA, nodeB);
+  const nodeA = await startNode("A", basePort, [basePort + 1]);
+  const nodeB = await startNode("B", basePort + 1, [basePort, basePort + 2]);
+  const nodeC = await startNode("C", basePort + 2, [basePort + 1]);
+  nodes.push(nodeA, nodeB, nodeC);
 
   await expectGetStatus(nodeA, "/api/federation/snapshot", 401);
   await expectGetStatus(nodeA, "/api/federation/snapshot", 403, { "x-osa-federation-token": "wrong-token" });
@@ -22,8 +23,10 @@ try {
 
   const userA = await login(nodeA, "A");
   const userB = await login(nodeB, "B");
-  await configureTrustedNodes(nodeA, nodeB);
+  await configureTrustedNodes(nodeA, nodeB, nodeC);
   await assertSignatureEnforcement(nodeA, nodeB);
+  await assertPeerAnnouncements(nodeA, nodeB, userB.headers);
+  await assertTrustedPeerDiscovery(nodeA, nodeB, nodeC, userA.headers);
   await assertPublicProjectSharing(nodeA, nodeB);
 
   const proposal = await createProposal(nodeA, userA.headers);
@@ -208,7 +211,7 @@ try {
   await Promise.all(nodes.map((node) => stopNode(node)));
 }
 
-async function startNode(label, port, peerPort) {
+async function startNode(label, port, peerPorts) {
   const dataDir = await mkdtemp(join(tmpdir(), `osa-fed-${label.toLowerCase()}-`));
   const openClawFixturePath = join(dataDir, "openclaw-fixture.sh");
   await writeFile(
@@ -232,7 +235,9 @@ async function startNode(label, port, peerPort) {
       OSA_DEMO_ENDPOINTS: "0",
       OSA_FEDERATION_ENABLED: "1",
       OSA_FEDERATION_TOKEN: federationToken,
-      OSA_FEDERATION_PEERS: `http://127.0.0.1:${peerPort}`,
+      OSA_FEDERATION_PEERS: peerPorts.map((peerPort) => `http://127.0.0.1:${peerPort}`).join(","),
+      OSA_FEDERATION_ADVERTISE_URL: `http://127.0.0.1:${port}`,
+      OSA_FEDERATION_DISCOVERY: "1",
       OSA_FEDERATION_REQUIRE_SIGNATURES: "1",
       OSA_FEDERATION_TRUSTED_NODES_PATH: join(dataDir, "trusted-nodes.json"),
       OSA_FEDERATION_SYNC_MS: "1000",
@@ -260,11 +265,16 @@ async function stopNode(node) {
   await rm(node.dataDir, { recursive: true, force: true });
 }
 
-async function configureTrustedNodes(nodeA, nodeB) {
-  const snapshotA = await getJson(nodeA, "/api/federation/snapshot", nodeA.federationHeaders);
-  const snapshotB = await getJson(nodeB, "/api/federation/snapshot", nodeB.federationHeaders);
-  await writeTrustedNodes(nodeA, [snapshotB.node]);
-  await writeTrustedNodes(nodeB, [snapshotA.node]);
+async function configureTrustedNodes(...nodesToTrust) {
+  const snapshots = await Promise.all(nodesToTrust.map((node) => getJson(node, "/api/federation/snapshot", node.federationHeaders)));
+  for (let index = 0; index < nodesToTrust.length; index += 1) {
+    const node = nodesToTrust[index];
+    const ownNodeId = snapshots[index].node.nodeId;
+    await writeTrustedNodes(
+      node,
+      snapshots.map((snapshot) => snapshot.node).filter((peer) => peer.nodeId !== ownNodeId)
+    );
+  }
 }
 
 async function writeTrustedNodes(node, peers) {
@@ -301,6 +311,50 @@ async function assertTamperedSignatureRejected(from, to, proposalId) {
   assert(proposal?.signature?.signature, "fresh proposal should carry a signature");
   proposal.title = `${proposal.title} tampered`;
   await expectPostStatus(to, "/api/federation/import", 400, { snapshot }, to.federationHeaders);
+}
+
+async function assertPeerAnnouncements(nodeA, nodeB, headersB) {
+  const snapshotA = await getJson(nodeA, "/api/federation/snapshot", nodeA.federationHeaders);
+  const announcement = snapshotA.collections.federationPeerAnnouncements.find((item) => item.nodeId === snapshotA.node.nodeId);
+  assert(announcement?.signature?.signature, "local peer announcement should carry a federation signature");
+  assert(announcement.advertiseUrl === nodeA.baseUrl, "local peer announcement should advertise the configured node URL");
+
+  const tamperedSnapshot = structuredClone(snapshotA);
+  tamperedSnapshot.collections.federationPeerAnnouncements.find((item) => item.id === announcement.id).advertiseUrl = "http://127.0.0.1:9";
+  await expectPostStatus(nodeB, "/api/federation/import", 400, { snapshot: tamperedSnapshot }, nodeB.federationHeaders);
+
+  await sync(nodeA, nodeB);
+  const stateB = await state(nodeB, headersB);
+  assert(
+    stateB.federationPeerAnnouncements.some((item) => item.nodeId === snapshotA.node.nodeId && item.advertiseUrl === nodeA.baseUrl),
+    "node B should retain node A's signed peer announcement"
+  );
+}
+
+async function assertTrustedPeerDiscovery(nodeA, nodeB, nodeC, headersA) {
+  await createAndShareDashboardProject(nodeC, "Node C Bootstrap Project", "C public bootstrap project");
+  await sync(nodeC, nodeB);
+  await waitForJson(
+    nodeA,
+    "/api/state",
+    (snapshot) =>
+      snapshot.runtime?.federationDiscoveredPeerCount >= 1
+      && snapshot.federationPeerAnnouncements.some((item) => item.nodeId && item.advertiseUrl === nodeC.baseUrl),
+    "node A should learn node C's signed peer announcement through node B",
+    headersA
+  );
+
+  await createAndShareDashboardProject(nodeC, "Node C Discovered Project", "C public project reached through discovery");
+  await waitForJson(
+    nodeA,
+    "/api/state",
+    (snapshot) =>
+      snapshot.events.some((event) => event.type === "federation_imported" && event.data?.peer === nodeC.baseUrl)
+      && snapshot.federationPeerAnnouncements.some((item) => item.advertiseUrl === nodeC.baseUrl),
+    "node A should sync the discovered node C URL directly",
+    headersA
+  );
+  await assertTopProjects(nodeA, ["Node C Discovered Project"]);
 }
 
 async function sync(from, to) {
@@ -527,9 +581,9 @@ async function trustLedger(node, headers) {
   return getJson(node, "/api/trust-ledger", headers);
 }
 
-async function waitForJson(node, path, predicate, label) {
+async function waitForJson(node, path, predicate, label, headers = {}) {
   for (let attempt = 0; attempt < 80; attempt += 1) {
-    const payload = await getJson(node, path);
+    const payload = await getJson(node, path, headers);
     const match = predicate(payload);
     if (match) return match;
     await delay(250);

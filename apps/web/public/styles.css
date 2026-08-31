@@ -1259,6 +1259,49 @@ button:disabled {
   justify-self: start;
 }
 
+.trust-known-peers {
+  display: grid;
+  gap: 8px;
+}
+
+.trust-summary .trust-peer-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.trust-summary .trust-peer-row div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.trust-peer-row strong,
+.trust-peer-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trust-peer-row strong {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.trust-peer-row code,
+.trust-peer-row span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .trust-peer-setup textarea {
   min-height: 110px;
   resize: vertical;

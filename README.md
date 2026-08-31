@@ -186,6 +186,14 @@ Each row shows:
 
 Rankings update live when projects are shared, copied, donated to, reviewed, or imported from a peer node.
 
+## Decentralized Network
+
+OSA nodes communicate directly over HTTP/HTTPS federation, not through the blockchain. Each configured peer periodically exposes a bounded public snapshot at `/api/federation/snapshot`; the receiving node verifies the shared federation token, optional pinned Ed25519 node identity, signed public records, and replay-protected Trust Ledger head before importing it.
+
+When `OSA_FEDERATION_ADVERTISE_URL` is configured, a node also includes a signed peer announcement in its snapshot. Trusted peers can store and re-share that announcement as discovery metadata, so the network can learn which OSA nodes exist without letting an arbitrary snapshot silently rewrite the local peer list. If `OSA_FEDERATION_DISCOVERY=1` is also enabled, OSA can sync with discovered advertised URLs, but only when that node is already pinned in the trusted-node allowlist.
+
+Blockchain should be used later for public checkpoints, reward epochs, USDC settlement proof, and `$OSA` distribution. It should not be used as the transport layer for every project, review, copy, or node-sync message.
+
 ## Copy Mechanics
 
 Copying a project creates your own private copy.

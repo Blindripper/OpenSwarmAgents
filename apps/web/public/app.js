@@ -118,6 +118,8 @@ const els = {
   trustHeadHash: document.querySelector("#trust-head-hash"),
   trustFederationMode: document.querySelector("#trust-federation-mode"),
   trustPeerCount: document.querySelector("#trust-peer-count"),
+  trustAdvertiseUrl: document.querySelector("#trust-advertise-url"),
+  trustDiscoveredCount: document.querySelector("#trust-discovered-count"),
   trustPublicKey: document.querySelector("#trust-public-key"),
   trustPeerJson: document.querySelector("#trust-peer-json"),
   trustCopyPeer: document.querySelector("#trust-copy-peer"),
@@ -125,6 +127,7 @@ const els = {
   trustPeerFeedback: document.querySelector("#trust-peer-feedback"),
   trustPeerConfig: document.querySelector("#trust-peer-config"),
   trustCopyConfig: document.querySelector("#trust-copy-config"),
+  trustKnownPeers: document.querySelector("#trust-known-peers"),
   trustLedger: document.querySelector("#trust-ledger")
 };
 
@@ -1858,18 +1861,25 @@ function renderTrustLedger() {
   const stats = state.data.stats || {};
   const entries = state.data.trustLedger || [];
   const node = runtime.node || {};
-  const peerJson = trustedPeerJson(node);
+  const peerJson = trustedPeerJson(node, runtime);
   els.trustNodeId.textContent = node.nodeId || "-";
   els.trustHeadHash.textContent = stats.trustHead ? shortHash(stats.trustHead) : "-";
   els.trustHeadHash.title = stats.trustHead || "";
   els.trustFederationMode.textContent = federationModeLabel(runtime);
   els.trustPeerCount.textContent = `${runtime.federationTrustedNodeCount || 0} trusted · ${runtime.federationPeerCount || 0} configured`;
   els.trustPeerCount.title = runtime.federationTrustConfigError || "";
+  els.trustAdvertiseUrl.textContent = runtime.federationAdvertiseUrl || "-";
+  els.trustAdvertiseUrl.title = runtime.federationAdvertiseUrl || "";
+  els.trustDiscoveredCount.textContent = `${runtime.federationKnownPeerCount || 0} known · ${runtime.federationDiscoveredPeerCount || 0} syncable`;
+  els.trustDiscoveredCount.title = runtime.federationDiscoveryEnabled
+    ? "Discovery is enabled for trusted signed peer announcements."
+    : "Set OSA_FEDERATION_DISCOVERY=1 to sync trusted signed peer announcements.";
   els.trustPublicKey.textContent = node.publicKeyPem ? compactPublicKey(node.publicKeyPem) : "-";
   els.trustPublicKey.title = node.publicKeyPem || "";
   els.trustPeerJson.textContent = peerJson;
   els.trustEventCount.textContent = `${stats.trustEvents || 0} events`;
   renderPeerTrustConfig();
+  renderKnownPeerAnnouncements();
   renderList(
     els.trustLedger,
     entries.slice(0, 8),
@@ -1889,24 +1899,43 @@ function renderTrustLedger() {
   );
 }
 
+function renderKnownPeerAnnouncements() {
+  const peers = (state.data.federationPeerAnnouncements || [])
+    .filter((peer) => peer.nodeId && peer.nodeId !== state.data.runtime?.node?.nodeId)
+    .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+  renderList(
+    els.trustKnownPeers,
+    peers.slice(0, 8),
+    (peer) => `
+      <div class="trust-peer-row">
+        <div>
+          <strong>${escapeHtml(shortHash(peer.nodeId))}</strong>
+          <span>${escapeHtml(peer.advertiseUrl || "No advertised URL")}</span>
+        </div>
+        <code>${peer.signature?.signature ? "signed" : "unsigned"}</code>
+      </div>
+    `,
+    {
+      title: "No discovered peers",
+      detail: "Trusted nodes will show here after their signed announcements arrive through federation."
+    }
+  );
+}
+
 function federationModeLabel(runtime) {
   if (runtime.federationTrustConfigError) return "Trust config error";
   if (!runtime.federationEnabled) return "Local only";
   return runtime.federationSignatureVerificationEnabled ? "Signature verified" : "Shared token";
 }
 
-function trustedPeerJson(node) {
+function trustedPeerJson(node, runtime = {}) {
   if (!node?.nodeId || !node?.publicKeyPem) return "{}";
-  return JSON.stringify(
-    {
-      [node.nodeId]: {
-        publicKeyPem: node.publicKeyPem,
-        algorithm: node.algorithm || "Ed25519"
-      }
-    },
-    null,
-    2
-  );
+  const record = {
+    publicKeyPem: node.publicKeyPem,
+    algorithm: node.algorithm || "Ed25519"
+  };
+  if (runtime.federationAdvertiseUrl) record.advertiseUrl = runtime.federationAdvertiseUrl;
+  return JSON.stringify({ [node.nodeId]: record }, null, 2);
 }
 
 function renderPeerTrustConfig() {
@@ -1939,14 +1968,19 @@ function renderPeerTrustConfig() {
     ])
   );
   const label = parsed.nodes.length === 1 ? "peer" : "peers";
-  setPeerTrustConfig(`Ready: ${parsed.nodes.length} trusted ${label}.`, trustedNodes);
+  const peerUrls = parsed.nodes.map((node) => node.advertiseUrl).filter(Boolean);
+  setPeerTrustConfig(`Ready: ${parsed.nodes.length} trusted ${label}.`, trustedNodes, peerUrls);
 }
 
-function setPeerTrustConfig(message, trustedNodes) {
+function setPeerTrustConfig(message, trustedNodes, peerUrls = []) {
   els.trustPeerFeedback.textContent = message;
-  els.trustPeerConfig.textContent = `OSA_FEDERATION_REQUIRE_SIGNATURES=1\nOSA_FEDERATION_TRUSTED_NODES='${JSON.stringify(
-    trustedNodes
-  )}'`;
+  els.trustPeerConfig.textContent = [
+    "OSA_FEDERATION_ENABLED=1",
+    peerUrls.length ? `OSA_FEDERATION_PEERS=${peerUrls.join(",")}` : "",
+    peerUrls.length ? "OSA_FEDERATION_DISCOVERY=1" : "",
+    "OSA_FEDERATION_REQUIRE_SIGNATURES=1",
+    `OSA_FEDERATION_TRUSTED_NODES='${JSON.stringify(trustedNodes)}'`
+  ].filter(Boolean).join("\n");
 }
 
 function parsePeerTrustInput(raw) {
@@ -1982,7 +2016,21 @@ function cleanPeerTrustNode(nodeId, record) {
   const publicKeyPem = String(record.publicKeyPem || "").trim();
   const algorithm = String(record.algorithm || "Ed25519").trim() || "Ed25519";
   if (!cleanNodeId || !publicKeyPem.includes("BEGIN PUBLIC KEY")) return null;
-  return { nodeId: cleanNodeId, publicKeyPem, algorithm };
+  const advertiseUrl = cleanFederationPeerUrl(record.advertiseUrl || record.url || "");
+  return { nodeId: cleanNodeId, publicKeyPem, algorithm, advertiseUrl };
+}
+
+function cleanFederationPeerUrl(value) {
+  try {
+    const url = new URL(String(value || "").trim());
+    if (!["http:", "https:"].includes(url.protocol)) return "";
+    url.pathname = url.pathname.replace(/\/$/, "");
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
 }
 
 function compactPublicKey(value) {

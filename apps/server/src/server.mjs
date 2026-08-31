@@ -42,6 +42,8 @@ const federationEnabled = process.env.OSA_FEDERATION_ENABLED === "1";
 const federationToken = process.env.OSA_FEDERATION_TOKEN || "";
 const federationTokenHash = federationToken ? hashToken(federationToken) : "";
 const federationPeers = normalizeFederationPeers(process.env.OSA_FEDERATION_PEERS || "");
+const federationAdvertiseUrl = normalizeFederationPeerUrl(process.env.OSA_FEDERATION_ADVERTISE_URL || "");
+const federationDiscoveryEnabled = process.env.OSA_FEDERATION_DISCOVERY === "1";
 const federationTrustedNodesPath = process.env.OSA_FEDERATION_TRUSTED_NODES_PATH || "";
 const federationSyncMs = Math.max(1000, Number(process.env.OSA_FEDERATION_SYNC_MS || 5000));
 const federationCollectionLimit = Math.max(100, Math.min(5000, Number(process.env.OSA_FEDERATION_COLLECTION_LIMIT || 2000)));
@@ -151,6 +153,7 @@ async function loadStore() {
       agentDonations: [],
       publicProjectReviews: [],
       publicProjectCopies: [],
+      federationPeerAnnouncements: [],
       publicRooms: [],
       publicProjects: [],
       connectorTokens: [],
@@ -187,6 +190,7 @@ function normalizeStore(input) {
     agentDonations: normalizeAgentDonations(input.agentDonations || []),
     publicProjectReviews: normalizePublicProjectReviews(input.publicProjectReviews || []),
     publicProjectCopies: normalizePublicProjectCopies(input.publicProjectCopies || []),
+    federationPeerAnnouncements: normalizeFederationPeerAnnouncements(input.federationPeerAnnouncements || []),
     publicRooms: normalizePublicCollections(input.publicRooms || [], "room"),
     publicProjects: normalizePublicCollections(input.publicProjects || [], "project"),
     connectorTokens: normalizeConnectorTokens(input.connectorTokens || []),
@@ -569,6 +573,31 @@ function normalizePublicProjectCopies(copies) {
     .filter(Boolean);
 }
 
+function normalizeFederationPeerAnnouncements(announcements) {
+  return announcements
+    .filter((announcement) => announcement?.nodeId)
+    .map((announcement) => {
+      try {
+        const nodeId = String(announcement.nodeId).slice(0, 100);
+        const advertiseUrl = normalizeFederationPeerUrl(announcement.advertiseUrl || announcement.url || "");
+        if (!advertiseUrl && !announcement.publicKeyPem) return null;
+        return {
+          id: String(announcement.id || `peer-announcement-${nodeId}`).slice(0, 140),
+          nodeId,
+          publicKeyPem: announcement.publicKeyPem ? String(announcement.publicKeyPem).slice(0, 5000) : "",
+          algorithm: String(announcement.algorithm || "Ed25519").slice(0, 40),
+          advertiseUrl: advertiseUrl || null,
+          createdAt: announcement.createdAt || now(),
+          updatedAt: announcement.updatedAt || announcement.createdAt || now(),
+          signature: announcement.signature || null
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
 function normalizePublicCollections(items, type) {
   return items
     .filter((item) => item?.id)
@@ -879,8 +908,28 @@ function publicNodeIdentity() {
   };
 }
 
-function signedContribution(type, payload = {}) {
-  const signedAt = now();
+function localFederationPeerAnnouncement() {
+  if (!federationAdvertiseUrl) return null;
+  const announcement = {
+    id: `peer-announcement-${nodeIdentity.nodeId}`,
+    nodeId: nodeIdentity.nodeId,
+    publicKeyPem: nodeIdentity.publicKeyPem,
+    algorithm: nodeIdentity.algorithm,
+    advertiseUrl: federationAdvertiseUrl,
+    createdAt: nodeIdentity.createdAt,
+    updatedAt: nodeIdentity.createdAt
+  };
+  return {
+    ...announcement,
+    signature: signedContribution(
+      "federation_peer_announcement",
+      signedPayloadForFederationPeerAnnouncement(announcement),
+      nodeIdentity.createdAt
+    )
+  };
+}
+
+function signedContribution(type, payload = {}, signedAt = now()) {
   const payloadHash = objectHash(payload);
   const canonical = stableStringify({
     type,
@@ -1002,6 +1051,7 @@ async function loadPostgresStore() {
     agentDonations: [],
     publicProjectReviews: [],
     publicProjectCopies: [],
+    federationPeerAnnouncements: [],
     publicRooms: [],
     publicProjects: [],
     connectorTokens: [],
@@ -1544,6 +1594,7 @@ function publicState(auth = null) {
     reviews: store.reviews,
     publicProjectReviews: store.publicProjectReviews,
     publicProjectCopies: store.publicProjectCopies,
+    federationPeerAnnouncements: federationPeerAnnouncementsForSnapshot(),
     claims: store.claims,
     resultPool: store.resultPool,
     proposals: store.proposals,
@@ -1581,6 +1632,7 @@ function publicLockedState() {
     reviews: [],
     publicProjectReviews: [],
     publicProjectCopies: [],
+    federationPeerAnnouncements: [],
     claims: [],
     resultPool: [],
     proposals: [],
@@ -1697,6 +1749,7 @@ function publicFederationSnapshot() {
       publicProjects: federationSlice(store.publicProjects).map(publicFederatedPublicCollection),
       publicProjectReviews: federationSlice(store.publicProjectReviews).map(publicFederatedProjectReview),
       publicProjectCopies: federationSlice(store.publicProjectCopies).map(publicFederatedProjectCopy),
+      federationPeerAnnouncements: federationSlice(federationPeerAnnouncementsForSnapshot()).map(publicFederatedPeerAnnouncement),
       agentDonations: federationSlice(store.agentDonations).map(publicFederatedDonation),
       trustLedger: publicTrustLedger(500),
       events: store.events
@@ -1709,6 +1762,22 @@ function publicFederationSnapshot() {
 
 function federationSlice(collection) {
   return Array.isArray(collection) ? collection.slice(0, federationCollectionLimit) : [];
+}
+
+function federationPeerAnnouncementsForSnapshot() {
+  const local = localFederationPeerAnnouncement();
+  const imported = normalizeFederationPeerAnnouncements(store.federationPeerAnnouncements || [])
+    .filter((announcement) => announcement.nodeId !== nodeIdentity.nodeId);
+  const byNode = new Map();
+  for (const announcement of [local, ...imported].filter(Boolean)) {
+    const existing = byNode.get(announcement.nodeId);
+    if (!existing || Date.parse(announcement.updatedAt || 0) >= Date.parse(existing.updatedAt || 0)) {
+      byNode.set(announcement.nodeId, announcement);
+    }
+  }
+  return [...byNode.values()]
+    .sort((a, b) => String(a.nodeId).localeCompare(String(b.nodeId)))
+    .slice(0, 250);
 }
 
 function agentGuiPublicTaskIdsForSnapshot() {
@@ -2009,6 +2078,19 @@ function publicFederatedProjectCopy(copy) {
   ]);
 }
 
+function publicFederatedPeerAnnouncement(announcement) {
+  return pick(announcement, [
+    "id",
+    "nodeId",
+    "publicKeyPem",
+    "algorithm",
+    "advertiseUrl",
+    "createdAt",
+    "updatedAt",
+    "signature"
+  ]);
+}
+
 function publicFederatedDonation(donation) {
   return pick(donation, [
     "id",
@@ -2112,6 +2194,7 @@ function verifiedFederationCollections(snapshot) {
     publicProjects: verifiedSignedCollection("publicProjects", collections.publicProjects, trusted),
     publicProjectReviews: verifiedSignedCollection("publicProjectReviews", collections.publicProjectReviews, trusted),
     publicProjectCopies: verifiedSignedCollection("publicProjectCopies", collections.publicProjectCopies, trusted),
+    federationPeerAnnouncements: verifiedSignedCollection("federationPeerAnnouncements", collections.federationPeerAnnouncements, trusted),
     agentDonations: verifiedSignedCollection("agentDonations", collections.agentDonations, trusted),
     trustLedger: verifiedTrustLedgerEntries(collections.trustLedger, trusted)
   };
@@ -2266,6 +2349,11 @@ function verifyFederatedSignedItem(name, item, trusted) {
   if (expectedType && signature.type !== expectedType) return false;
   const trustedNode = trusted.get(signature.nodeId);
   if (!trustedNode) return false;
+  if (name === "federationPeerAnnouncements") {
+    if (item.nodeId !== signature.nodeId) return false;
+    if (normalizePem(item.publicKeyPem) !== normalizePem(trustedNode.publicKeyPem)) return false;
+    if (nodeIdForPublicKey(item.publicKeyPem) !== item.nodeId) return false;
+  }
   if (!verifySignedContribution(signature, payload, trustedNode.publicKeyPem)) {
     const error = new Error(`Invalid ${name} signature for ${item.id || signature.type}`);
     error.statusCode = 400;
@@ -2284,6 +2372,7 @@ function signedContributionTypeForCollection(name) {
     publicProjects: "public_project",
     publicProjectReviews: "public_project_review",
     publicProjectCopies: "public_project_copy",
+    federationPeerAnnouncements: "federation_peer_announcement",
     agentDonations: "agent_donation"
   }[name] || null;
 }
@@ -2341,6 +2430,7 @@ function signedPayloadForFederatedItem(name, item) {
   if (name === "publicProjects") return signedPayloadForPublicCollection(item, "project");
   if (name === "publicProjectReviews") return signedPayloadForPublicProjectReview(item);
   if (name === "publicProjectCopies") return signedPayloadForPublicProjectCopy(item);
+  if (name === "federationPeerAnnouncements") return signedPayloadForFederationPeerAnnouncement(item);
   if (name === "agentDonations") return signedPayloadForDonation(item);
   return null;
 }
@@ -2389,6 +2479,18 @@ function signedPayloadForPublicProjectCopy(copy) {
     walletAddress: copy.walletAddress || null,
     sourceNodeId: copy.sourceNodeId || null,
     createdAt: copy.createdAt || null
+  };
+}
+
+function signedPayloadForFederationPeerAnnouncement(announcement) {
+  return {
+    announcementId: String(announcement.id || "").slice(0, 140),
+    nodeId: String(announcement.nodeId || "").slice(0, 100),
+    publicKeyHash: hashToken(announcement.publicKeyPem || ""),
+    algorithm: String(announcement.algorithm || "Ed25519").slice(0, 40),
+    advertiseUrl: announcement.advertiseUrl || null,
+    createdAt: announcement.createdAt || null,
+    updatedAt: announcement.updatedAt || announcement.createdAt || null
   };
 }
 
@@ -2497,6 +2599,7 @@ function importFederationSnapshot(snapshot) {
     publicProjects: mergeFederatedPublicCollections("publicProjects", collections.publicProjects, "project"),
     publicProjectReviews: mergeFederatedProjectReviews(collections.publicProjectReviews),
     publicProjectCopies: mergeFederatedProjectCopies(collections.publicProjectCopies),
+    federationPeerAnnouncements: mergeFederatedPeerAnnouncements(collections.federationPeerAnnouncements),
     agentDonations: mergeFederatedAgentDonations(collections.agentDonations),
     trustLedger: mergeFederatedTrustLedger(collections.trustLedger),
     federationPeerHeads: rememberFederationSnapshotProgress(progress),
@@ -2584,6 +2687,28 @@ function mergeFederatedProjectCopies(incoming) {
     merged += 1;
   }
   store.publicProjectCopies.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  return merged;
+}
+
+function mergeFederatedPeerAnnouncements(incoming) {
+  if (!Array.isArray(incoming)) return 0;
+  store.federationPeerAnnouncements = normalizeFederationPeerAnnouncements(store.federationPeerAnnouncements || []);
+  let merged = 0;
+  for (const announcement of normalizeFederationPeerAnnouncements(incoming).slice(0, federationCollectionLimit)) {
+    if (!announcement.nodeId || announcement.nodeId === nodeIdentity.nodeId) continue;
+    const existingIndex = store.federationPeerAnnouncements.findIndex((item) => item.nodeId === announcement.nodeId);
+    if (existingIndex === -1) {
+      store.federationPeerAnnouncements.push(announcement);
+      merged += 1;
+      continue;
+    }
+    const existing = store.federationPeerAnnouncements[existingIndex];
+    if (Date.parse(announcement.updatedAt || announcement.createdAt || 0) > Date.parse(existing.updatedAt || existing.createdAt || 0)) {
+      store.federationPeerAnnouncements[existingIndex] = announcement;
+      merged += 1;
+    }
+  }
+  store.federationPeerAnnouncements.sort((a, b) => String(a.nodeId).localeCompare(String(b.nodeId)));
   return merged;
 }
 
@@ -2724,14 +2849,14 @@ function reconcileImportedCompletedGoals() {
 }
 
 function startFederationPeerSync() {
-  if (!federationEnabled || !federationPeers.length) return;
+  if (!federationEnabled) return;
   if (!federationTokenHash) {
     console.warn("OSA federation peers configured but OSA_FEDERATION_TOKEN is missing; peer sync disabled.");
     return;
   }
 
   const tick = () => {
-    for (const peer of federationPeers) {
+    for (const peer of federationSyncPeerUrls()) {
       syncFederationPeer(peer).catch((error) => {
         console.warn(`OSA federation sync failed for ${peer}: ${error.message}`);
       });
@@ -2739,6 +2864,41 @@ function startFederationPeerSync() {
   };
   setTimeout(tick, 250).unref?.();
   setInterval(tick, federationSyncMs).unref?.();
+}
+
+function federationSyncPeerUrls() {
+  return [...new Set([...federationPeers, ...federationDiscoveredPeerUrls()])]
+    .filter(Boolean)
+    .filter((peer) => peer !== federationAdvertiseUrl)
+    .slice(0, 50);
+}
+
+function federationDiscoveredPeerUrls() {
+  if (!federationDiscoveryEnabled || !federationSignatureVerificationEnabled()) return [];
+  let trusted;
+  try {
+    trusted = loadFederationTrustedNodes();
+  } catch {
+    return [];
+  }
+  return normalizeFederationPeerAnnouncements(store.federationPeerAnnouncements || [])
+    .filter((announcement) => trustedFederationPeerAnnouncement(announcement, trusted))
+    .map((announcement) => announcement.advertiseUrl)
+    .filter(Boolean)
+    .filter((url, index, list) => list.indexOf(url) === index)
+    .slice(0, 30);
+}
+
+function trustedFederationPeerAnnouncement(announcement, trusted) {
+  if (!announcement?.advertiseUrl || !announcement.nodeId || announcement.nodeId === nodeIdentity.nodeId) return false;
+  const trustedNode = trusted.get(announcement.nodeId);
+  if (!trustedNode) return false;
+  if (normalizePem(announcement.publicKeyPem) !== normalizePem(trustedNode.publicKeyPem)) return false;
+  try {
+    return verifyFederatedSignedItem("federationPeerAnnouncements", announcement, trusted);
+  } catch {
+    return false;
+  }
 }
 
 async function syncFederationPeer(peer) {
@@ -3020,6 +3180,10 @@ function publicRuntime() {
     maxArtifactUploadBytes,
     federationEnabled,
     federationPeerCount: federationPeers.length,
+    federationAdvertiseUrl: federationAdvertiseUrl || null,
+    federationDiscoveryEnabled,
+    federationKnownPeerCount: federationPeerAnnouncementsForSnapshot().filter((announcement) => announcement.nodeId !== nodeIdentity.nodeId).length,
+    federationDiscoveredPeerCount: federationDiscoveredPeerUrls().length,
     federationSignatureVerificationEnabled: federationSignatureVerificationEnabled(),
     federationTrustedNodeCount: federationTrust.trustedPeerCount,
     federationTrustConfigError: federationTrust.error,
@@ -3105,21 +3269,23 @@ function normalizeFederationPeers(value) {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean)
-    .map((item) => {
-      try {
-        const url = new URL(item);
-        if (!["http:", "https:"].includes(url.protocol)) return null;
-        url.pathname = url.pathname.replace(/\/$/, "");
-        url.search = "";
-        url.hash = "";
-        return url.toString().replace(/\/$/, "");
-      } catch {
-        return null;
-      }
-    })
+    .map(normalizeFederationPeerUrl)
     .filter(Boolean)
     .filter((item, index, list) => list.indexOf(item) === index)
     .slice(0, 20);
+}
+
+function normalizeFederationPeerUrl(value) {
+  try {
+    const url = new URL(String(value || "").trim());
+    if (!["http:", "https:"].includes(url.protocol)) return "";
+    url.pathname = url.pathname.replace(/\/$/, "");
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
 }
 
 function isLocalLoginEnabled() {
@@ -5686,6 +5852,7 @@ async function handleApi(req, res, url) {
         agentDonations: [],
         publicProjectReviews: [],
         publicProjectCopies: [],
+        federationPeerAnnouncements: [],
         publicRooms: [],
         publicProjects: [],
         connectorTokens: [],

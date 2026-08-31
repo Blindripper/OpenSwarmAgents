@@ -419,6 +419,14 @@
                   <span>Trusted peers</span>
                   <code id="trust-peer-count">-</code>
                 </div>
+                <div>
+                  <span>Advertised URL</span>
+                  <code id="trust-advertise-url">-</code>
+                </div>
+                <div>
+                  <span>Discovered peers</span>
+                  <code id="trust-discovered-count">-</code>
+                </div>
                 <div class="trust-wide">
                   <span>Public key</span>
                   <code id="trust-public-key">-</code>
@@ -435,6 +443,10 @@
                   <pre><code id="trust-peer-config">OSA_FEDERATION_REQUIRE_SIGNATURES=1
 OSA_FEDERATION_TRUSTED_NODES='{}'</code></pre>
                   <button id="trust-copy-config" class="copy-command" type="button">Copy config</button>
+                </div>
+                <div class="trust-wide">
+                  <span>Known peer announcements</span>
+                  <div id="trust-known-peers" class="trust-known-peers"></div>
                 </div>
               </div>
               <div id="trust-ledger" class="trust-ledger-list"></div>
