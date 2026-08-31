@@ -12,6 +12,7 @@ interface Props {
   onRefresh: () => void;
   onCopy?: (sessionId: string) => void;
   onDonateRecorded?: () => void;
+  onDetails?: (project: TopAgent) => void;
 }
 
 type WalletProvider = {
@@ -43,6 +44,7 @@ export function TopAgentsPanel({
   onRefresh,
   onCopy,
   onDonateRecorded,
+  onDetails,
 }: Props) {
   const maxCopies = Math.max(1, ...agents.map((agent) => agent.copy_count));
   const [wallet, setWallet] = useState<WalletSession | null>(() => readWalletSession());
@@ -251,7 +253,7 @@ export function TopAgentsPanel({
                   <div style={{
                     position: "relative",
                     display: "grid",
-                    gridTemplateColumns: isProjectChart ? "58px minmax(0, 1fr) 156px 70px 74px 82px" : "58px minmax(0, 1fr) 132px 74px 82px",
+                    gridTemplateColumns: isProjectChart ? "58px minmax(0, 1fr) 156px 68px 70px 74px 82px" : "58px minmax(0, 1fr) 132px 74px 82px",
                     alignItems: "center",
                     gap: 12,
                     minHeight: 76,
@@ -307,6 +309,25 @@ export function TopAgentsPanel({
                         </span>
                       )}
                     </div>
+                    {isProjectChart && (
+                      <button
+                        type="button"
+                        onClick={() => onDetails?.(agent)}
+                        disabled={!onDetails}
+                        style={{
+                          height: 30,
+                          borderRadius: 6,
+                          border: "1px solid #2a3558",
+                          background: "#121828",
+                          color: onDetails ? "var(--accent2)" : "var(--text-dim)",
+                          fontSize: 11,
+                          fontWeight: 800,
+                          cursor: onDetails ? "pointer" : "default",
+                        }}
+                      >
+                        Details
+                      </button>
+                    )}
                     {isProjectChart && (
                       <button
                         type="button"

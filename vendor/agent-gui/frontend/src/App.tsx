@@ -9,6 +9,9 @@ import { DeskAgentPicker } from "./components/DeskAgentPicker";
 import { GlobalDefaultPersonaEditor } from "./components/GlobalDefaultPersonaEditor";
 import { OpenClawOnboarding } from "./components/OpenClawOnboarding";
 import { TopAgentsPanel } from "./components/TopAgentsPanel";
+import { NetworkActivityPanel } from "./components/NetworkActivityPanel";
+import { NetworkChatWindow } from "./components/NetworkChatWindow";
+import { ProjectDetailsModal } from "./components/ProjectDetailsModal";
 import { FilePreview, DEFAULT_CODE_THEME } from "./components/FilePreview";
 import type { CodeThemeId } from "./components/FilePreview";
 import { DEFAULT_BELL, playBell } from "./sounds";
@@ -82,7 +85,7 @@ const WORKBENCH_LEGACY_KEY_V2 = legacyStorageKey("workbench-v2");
 const WORKBENCH_LEGACY_KEY_V1 = legacyStorageKey("workbench-v1");
 const ONBOARDING_DISMISSED_KEY = "osa-openclaw-onboarding-dismissed";
 const WALLET_STORAGE_KEY = "osa-wallet-session";
-type DashboardTab = "workbench" | "top-projects";
+type DashboardTab = "workbench" | "top-projects" | "network";
 interface WalletSession {
   address: string;
   chain_id?: string | null;
@@ -189,7 +192,26 @@ function networkEventLabel(event: NetworkEvent): string | null {
   if (event.type === "agentgui_project_shared") return "New public project joined OSA.";
   if (event.type === "agent_registered") return "Network agent came online.";
   if (event.type === "federation_imported") return "A peer node synced new OSA network updates.";
+  if (event.type === "network_chat_message") return "New network chat message.";
   return null;
+}
+
+function mergeNetworkEvents(current: NetworkEvent[], incoming: NetworkEvent[]): NetworkEvent[] {
+  const byId = new Map<string, NetworkEvent>();
+  for (const event of [...incoming, ...current]) {
+    if (event?.id) byId.set(event.id, event);
+  }
+  return [...byId.values()]
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .slice(0, 100);
+}
+
+function publicProjectIdFromSession(session: Session): string | null {
+  return session.id.startsWith("public-project-") ? session.id.slice("public-project-".length) : null;
+}
+
+function publicProjectIdFromTopAgent(project: TopAgent): string | null {
+  return project.target_id || (project.id.startsWith("public-project-") ? project.id.slice("public-project-".length) : null);
 }
 
 function rankingEventChanged(event: NetworkEvent): boolean {
@@ -401,6 +423,10 @@ export default function App() {
   const [topProjectsLoading, setTopProjectsLoading] = useState(false);
   const [networkLive, setNetworkLive] = useState(false);
   const [networkNotice, setNetworkNotice] = useState<string | null>(null);
+  const [networkEvents, setNetworkEvents] = useState<NetworkEvent[]>([]);
+  const [networkEventsLoading, setNetworkEventsLoading] = useState(false);
+  const [networkChatRefreshKey, setNetworkChatRefreshKey] = useState(0);
+  const [projectDetails, setProjectDetails] = useState<{ projectId: string; fallback?: TopAgent | null } | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [walletConnected, setWalletConnected] = useState(readWalletConnected);
   const [walletAddress, setWalletAddress] = useState<string | null>(() => readWalletSession()?.address || null);
@@ -629,6 +655,18 @@ export default function App() {
     }
   }, []);
 
+  const refreshNetworkActivity = useCallback(async () => {
+    setNetworkEventsLoading(true);
+    try {
+      const r = await api.network.activity(100);
+      setNetworkEvents(r.events ?? []);
+    } catch {
+      setNetworkEvents([]);
+    } finally {
+      setNetworkEventsLoading(false);
+    }
+  }, []);
+
   const refreshWalletBalance = useCallback(async () => {
     const wallet = readWalletSession();
     setWalletAddress(wallet?.address || null);
@@ -656,11 +694,12 @@ export default function App() {
   const refreshNetworkViews = useCallback(() => {
     void loadSessions();
     void refreshTopProjects();
+    void refreshNetworkActivity();
     void refreshRuntimeStatus();
     const connected = readWalletConnected();
     setWalletConnected(connected);
     void refreshWalletBalance();
-  }, [loadSessions, refreshRuntimeStatus, refreshTopProjects, refreshWalletBalance]);
+  }, [loadSessions, refreshNetworkActivity, refreshRuntimeStatus, refreshTopProjects, refreshWalletBalance]);
 
   useEffect(() => {
     loadSessions();
@@ -679,22 +718,26 @@ export default function App() {
     // Also re-pull the roster: profiles installed/changed on disk while the GUI
     // is open (e.g. install_profiles.sh) otherwise never appear until a reload.
     refreshTopProjects();
+    refreshNetworkActivity();
     refreshRuntimeStatus();
     refreshWalletBalance();
     const poll = setInterval(() => {
       loadSessions();
       refreshAgents();
       refreshTopProjects();
+      refreshNetworkActivity();
       refreshRuntimeStatus();
       setWalletConnected(readWalletConnected());
       refreshWalletBalance();
     }, POLL_INTERVAL);
     return () => clearInterval(poll);
-  }, [loadSessions, refreshAgents, refreshRuntimeStatus, refreshTopProjects, refreshWalletBalance]);
+  }, [loadSessions, refreshAgents, refreshNetworkActivity, refreshRuntimeStatus, refreshTopProjects, refreshWalletBalance]);
 
   useEffect(() => {
     const source = api.networkStream((event) => {
       setNetworkLive(true);
+      setNetworkEvents((current) => mergeNetworkEvents(current, [event]));
+      if (event.type === "network_chat_message") setNetworkChatRefreshKey((key) => key + 1);
       const label = networkEventLabel(event);
       if (label) {
         setNetworkNotice(label);
@@ -1578,6 +1621,16 @@ export default function App() {
     setWalletConnectError(null);
   }
 
+  function openProjectDetails(project: TopAgent) {
+    const projectId = publicProjectIdFromTopAgent(project);
+    if (projectId) setProjectDetails({ projectId, fallback: project });
+  }
+
+  function openProjectDetailsFromSession(session: Session) {
+    const projectId = publicProjectIdFromSession(session);
+    if (projectId) setProjectDetails({ projectId });
+  }
+
   if (backendError) {
     return (
       <div style={{
@@ -1709,6 +1762,7 @@ export default function App() {
         {([
           ["workbench", "Home / Latest"],
           ["top-projects", "Top100 Projects"],
+          ["network", "Network Activity"],
         ] as const).map(([id, label]) => (
           <button
             key={id}
@@ -1716,6 +1770,7 @@ export default function App() {
             onClick={() => {
               setDashboardTab(id);
               if (id === "top-projects") void refreshTopProjects();
+              if (id === "network") void refreshNetworkActivity();
             }}
             style={{
               height: 30,
@@ -1802,6 +1857,15 @@ export default function App() {
           onRefresh={refreshTopProjects}
           onCopy={copyDeskToHome}
           onDonateRecorded={refreshTopProjects}
+          onDetails={openProjectDetails}
+        />
+      ) : dashboardTab === "network" ? (
+        <NetworkActivityPanel
+          events={networkEvents}
+          live={networkLive}
+          loading={networkEventsLoading}
+          onRefresh={refreshNetworkActivity}
+          onOpenProject={(projectId) => setProjectDetails({ projectId })}
         />
       ) : (
         <Office
@@ -1837,6 +1901,7 @@ export default function App() {
           onDeskClose={closeDesk}
           onAddDesk={addDeskToTeam}
           onCopyDesk={copyDeskToHome}
+          onPublicProjectDetails={openProjectDetailsFromSession}
           onDeleteTeam={deleteRoom}
           onTeamSceneChange={setTeamScene}
           onTeamRename={renameTeam}
@@ -1961,6 +2026,13 @@ export default function App() {
         onActivate={activateFilePreview}
         onClose={() => setPreview(null)}
         codeTheme={codeTheme}
+      />
+      <NetworkChatWindow walletAddress={walletAddress} refreshKey={networkChatRefreshKey} />
+      <ProjectDetailsModal
+        projectId={projectDetails?.projectId || null}
+        fallback={projectDetails?.fallback || null}
+        onClose={() => setProjectDetails(null)}
+        onCopy={copyDeskToHome}
       />
     </div>
   );

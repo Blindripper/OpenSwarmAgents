@@ -153,6 +153,7 @@ async function loadStore() {
       agentDonations: [],
       publicProjectReviews: [],
       publicProjectCopies: [],
+      networkChatMessages: [],
       federationPeerAnnouncements: [],
       publicRooms: [],
       publicProjects: [],
@@ -190,6 +191,7 @@ function normalizeStore(input) {
     agentDonations: normalizeAgentDonations(input.agentDonations || []),
     publicProjectReviews: normalizePublicProjectReviews(input.publicProjectReviews || []),
     publicProjectCopies: normalizePublicProjectCopies(input.publicProjectCopies || []),
+    networkChatMessages: normalizeNetworkChatMessages(input.networkChatMessages || []),
     federationPeerAnnouncements: normalizeFederationPeerAnnouncements(input.federationPeerAnnouncements || []),
     publicRooms: normalizePublicCollections(input.publicRooms || [], "room"),
     publicProjects: normalizePublicCollections(input.publicProjects || [], "project"),
@@ -571,6 +573,30 @@ function normalizePublicProjectCopies(copies) {
       }
     })
     .filter(Boolean);
+}
+
+function normalizeNetworkChatMessages(messages) {
+  return messages
+    .filter((message) => message?.id && message?.message)
+    .map((message) => {
+      try {
+        let walletAddress = null;
+        if (message.walletAddress || message.wallet_address) {
+          walletAddress = normalizeWalletAddress(message.walletAddress || message.wallet_address);
+        }
+        return {
+          id: String(message.id || `network-chat-${randomUUID()}`).slice(0, 100),
+          nodeId: String(message.nodeId || nodeIdentity?.nodeId || "unknown-node").slice(0, 100),
+          walletAddress,
+          message: String(message.message || "").trim().slice(0, 500),
+          createdAt: message.createdAt || message.created_at || now(),
+          signature: message.signature || null
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter((message) => message && message.message.length > 0);
 }
 
 function normalizeFederationPeerAnnouncements(announcements) {
@@ -1051,6 +1077,7 @@ async function loadPostgresStore() {
     agentDonations: [],
     publicProjectReviews: [],
     publicProjectCopies: [],
+    networkChatMessages: [],
     federationPeerAnnouncements: [],
     publicRooms: [],
     publicProjects: [],
@@ -1594,6 +1621,7 @@ function publicState(auth = null) {
     reviews: store.reviews,
     publicProjectReviews: store.publicProjectReviews,
     publicProjectCopies: store.publicProjectCopies,
+    networkChatMessages: store.networkChatMessages,
     federationPeerAnnouncements: federationPeerAnnouncementsForSnapshot(),
     claims: store.claims,
     resultPool: store.resultPool,
@@ -1749,11 +1777,12 @@ function publicFederationSnapshot() {
       publicProjects: federationSlice(store.publicProjects).map(publicFederatedPublicCollection),
       publicProjectReviews: federationSlice(store.publicProjectReviews).map(publicFederatedProjectReview),
       publicProjectCopies: federationSlice(store.publicProjectCopies).map(publicFederatedProjectCopy),
+      networkChatMessages: federationSlice(store.networkChatMessages).map(publicFederatedNetworkChatMessage),
       federationPeerAnnouncements: federationSlice(federationPeerAnnouncementsForSnapshot()).map(publicFederatedPeerAnnouncement),
       agentDonations: federationSlice(store.agentDonations).map(publicFederatedDonation),
       trustLedger: publicTrustLedger(500),
       events: store.events
-        .filter((entry) => !["federation_imported", "user_signed_in"].includes(entry.type))
+        .filter((entry) => isPublicNetworkEventType(entry.type) && entry.type !== "federation_imported")
         .slice(0, 100)
         .map(publicFederatedEvent)
     }
@@ -2078,6 +2107,17 @@ function publicFederatedProjectCopy(copy) {
   ]);
 }
 
+function publicFederatedNetworkChatMessage(message) {
+  return pick(message, [
+    "id",
+    "nodeId",
+    "walletAddress",
+    "message",
+    "createdAt",
+    "signature"
+  ]);
+}
+
 function publicFederatedPeerAnnouncement(announcement) {
   return pick(announcement, [
     "id",
@@ -2118,6 +2158,20 @@ function publicFederatedEvent(eventEntry) {
     ...pick(eventEntry, ["id", "type", "message", "createdAt"]),
     data: sanitizeFederatedEventData(eventEntry.data)
   };
+}
+
+function isPublicNetworkEventType(type) {
+  return [
+    "agent_registered",
+    "agentgui_project_shared",
+    "agentgui_public_project_copied",
+    "agentgui_public_room_copied",
+    "agentgui_donation_pledged",
+    "agentgui_project_review_created",
+    "agentgui_project_review_updated",
+    "network_chat_message",
+    "federation_imported"
+  ].includes(type);
 }
 
 function sanitizeFederatedEventData(data) {
@@ -2194,6 +2248,7 @@ function verifiedFederationCollections(snapshot) {
     publicProjects: verifiedSignedCollection("publicProjects", collections.publicProjects, trusted),
     publicProjectReviews: verifiedSignedCollection("publicProjectReviews", collections.publicProjectReviews, trusted),
     publicProjectCopies: verifiedSignedCollection("publicProjectCopies", collections.publicProjectCopies, trusted),
+    networkChatMessages: verifiedSignedCollection("networkChatMessages", collections.networkChatMessages, trusted),
     federationPeerAnnouncements: verifiedSignedCollection("federationPeerAnnouncements", collections.federationPeerAnnouncements, trusted),
     agentDonations: verifiedSignedCollection("agentDonations", collections.agentDonations, trusted),
     trustLedger: verifiedTrustLedgerEntries(collections.trustLedger, trusted)
@@ -2372,6 +2427,7 @@ function signedContributionTypeForCollection(name) {
     publicProjects: "public_project",
     publicProjectReviews: "public_project_review",
     publicProjectCopies: "public_project_copy",
+    networkChatMessages: "network_chat_message",
     federationPeerAnnouncements: "federation_peer_announcement",
     agentDonations: "agent_donation"
   }[name] || null;
@@ -2430,6 +2486,7 @@ function signedPayloadForFederatedItem(name, item) {
   if (name === "publicProjects") return signedPayloadForPublicCollection(item, "project");
   if (name === "publicProjectReviews") return signedPayloadForPublicProjectReview(item);
   if (name === "publicProjectCopies") return signedPayloadForPublicProjectCopy(item);
+  if (name === "networkChatMessages") return signedPayloadForNetworkChatMessage(item);
   if (name === "federationPeerAnnouncements") return signedPayloadForFederationPeerAnnouncement(item);
   if (name === "agentDonations") return signedPayloadForDonation(item);
   return null;
@@ -2479,6 +2536,16 @@ function signedPayloadForPublicProjectCopy(copy) {
     walletAddress: copy.walletAddress || null,
     sourceNodeId: copy.sourceNodeId || null,
     createdAt: copy.createdAt || null
+  };
+}
+
+function signedPayloadForNetworkChatMessage(message) {
+  return {
+    messageId: String(message.id || "").slice(0, 100),
+    nodeId: message.nodeId || null,
+    walletAddress: message.walletAddress || null,
+    messageHash: hashToken(message.message || ""),
+    createdAt: message.createdAt || null
   };
 }
 
@@ -2599,6 +2666,7 @@ function importFederationSnapshot(snapshot) {
     publicProjects: mergeFederatedPublicCollections("publicProjects", collections.publicProjects, "project"),
     publicProjectReviews: mergeFederatedProjectReviews(collections.publicProjectReviews),
     publicProjectCopies: mergeFederatedProjectCopies(collections.publicProjectCopies),
+    networkChatMessages: mergeFederatedNetworkChatMessages(collections.networkChatMessages),
     federationPeerAnnouncements: mergeFederatedPeerAnnouncements(collections.federationPeerAnnouncements),
     agentDonations: mergeFederatedAgentDonations(collections.agentDonations),
     trustLedger: mergeFederatedTrustLedger(collections.trustLedger),
@@ -2687,6 +2755,20 @@ function mergeFederatedProjectCopies(incoming) {
     merged += 1;
   }
   store.publicProjectCopies.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  return merged;
+}
+
+function mergeFederatedNetworkChatMessages(incoming) {
+  if (!Array.isArray(incoming)) return 0;
+  store.networkChatMessages = normalizeNetworkChatMessages(store.networkChatMessages || []);
+  let merged = 0;
+  for (const message of normalizeNetworkChatMessages(incoming).slice(0, federationCollectionLimit)) {
+    if (store.networkChatMessages.some((item) => item.id === message.id)) continue;
+    store.networkChatMessages.push(message);
+    merged += 1;
+  }
+  store.networkChatMessages.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  store.networkChatMessages = store.networkChatMessages.slice(0, 200);
   return merged;
 }
 
@@ -5058,6 +5140,118 @@ function publicProjectReviews(projectId) {
     .map(publicProjectReview);
 }
 
+function publicNetworkActivity(limit = 100) {
+  const max = Math.max(1, Math.min(100, Number(limit || 100)));
+  return store.events
+    .filter((entry) => isPublicNetworkEventType(entry.type))
+    .slice(0, max)
+    .map(publicFederatedEvent);
+}
+
+function publicNetworkChatMessages(limit = 60) {
+  const max = Math.max(1, Math.min(100, Number(limit || 60)));
+  return normalizeNetworkChatMessages(store.networkChatMessages || [])
+    .slice()
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .slice(0, max)
+    .map((message) => ({
+      id: message.id,
+      node_id: message.nodeId,
+      wallet_address: message.walletAddress,
+      message: message.message,
+      created_at: message.createdAt
+    }))
+    .reverse();
+}
+
+async function createNetworkChatMessage(body = {}) {
+  const text = String(body.message || "").trim().replace(/\s+/g, " ").slice(0, 500);
+  if (!text) {
+    const error = new Error("Network chat message is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+  let walletAddress = null;
+  if (body.wallet_address || body.walletAddress) walletAddress = normalizeWalletAddress(body.wallet_address || body.walletAddress);
+  const createdAt = now();
+  const message = {
+    id: `network-chat-${randomUUID()}`,
+    nodeId: nodeIdentity.nodeId,
+    walletAddress,
+    message: text,
+    createdAt
+  };
+  message.signature = recordSignedContribution("network_chat_message", signedPayloadForNetworkChatMessage(message), {
+    objectType: "network_chat_message",
+    objectId: message.id
+  });
+  store.networkChatMessages = normalizeNetworkChatMessages(store.networkChatMessages || []);
+  store.networkChatMessages.unshift(message);
+  store.networkChatMessages = store.networkChatMessages.slice(0, 200);
+  event("network_chat_message", "Network chat message", {
+    networkChatMessageId: message.id,
+    nodeId: message.nodeId,
+    walletAddress
+  });
+  await saveStore();
+  return {
+    ok: true,
+    message: {
+      id: message.id,
+      node_id: message.nodeId,
+      wallet_address: message.walletAddress,
+      message: message.message,
+      created_at: message.createdAt
+    }
+  };
+}
+
+function publicProjectTaskSummary(task) {
+  const result = store.results.find((item) => item.taskId === task.id && item.status === "accepted")
+    || store.results.find((item) => item.taskId === task.id);
+  const agent = task.assignedAgentId ? findAgent(task.assignedAgentId) : null;
+  return {
+    id: task.id,
+    title: task.title,
+    description: task.description,
+    agent: agent?.name || task.agentGuiAgent || "OSA Agent",
+    model: task.agentGuiModel || agent?.models?.[0] || agent?.provider || "OSA connector",
+    status: task.status,
+    capabilities: task.requiredCapabilities || [],
+    result_summary: result?.summary || null
+  };
+}
+
+function publicProjectDetails(projectId) {
+  const project = store.publicProjects.find((item) => item.id === projectId);
+  if (!project) return null;
+  const ranked = agentGuiRankedPublicCollections("project", 100).find((item) => item.target_id === project.id);
+  const sourceTasks = project.taskIds
+    .map((taskId) => store.tasks.find((task) => task.id === taskId))
+    .filter(Boolean);
+  const tasksById = new Map(sourceTasks.map((task) => [task.id, publicProjectTaskSummary(task)]));
+  const fallbackRoom = {
+    id: agentGuiHomeTeamId,
+    name: "Home",
+    taskIds: project.taskIds
+  };
+  const rooms = (project.rooms.length ? project.rooms : [fallbackRoom]).map((room) => ({
+    id: room.id,
+    name: room.name || "Room",
+    tasks: normalizeList(room.taskIds, []).map((taskId) => tasksById.get(taskId)).filter(Boolean)
+  }));
+  return {
+    project: ranked || agentGuiPublicCollectionSession(project, "project"),
+    rooms,
+    reviews: publicProjectReviews(project.id),
+    stats: {
+      ...agentGuiDonationStats("project", project.id),
+      ...agentGuiProjectReviewStats(project.id),
+      ...agentGuiProjectCopyStats(project)
+    }
+  };
+}
+
 async function createPublicProjectReview(projectId, body = {}) {
   const project = store.publicProjects.find((item) => item.id === projectId);
   if (!project) {
@@ -5274,6 +5468,22 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     return serveAgentGuiNetworkStream(req, res);
   }
 
+  if (method === "GET" && path === "/api/network/activity") {
+    return sendJson(res, 200, { events: publicNetworkActivity(url.searchParams.get("limit") || 100) });
+  }
+
+  if (method === "GET" && path === "/api/network/chat") {
+    return sendJson(res, 200, { messages: publicNetworkChatMessages(url.searchParams.get("limit") || 60) });
+  }
+
+  if (method === "POST" && path === "/api/network/chat") {
+    try {
+      return sendJson(res, 201, await createNetworkChatMessage(await readJson(req)));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to send network chat message" });
+    }
+  }
+
   if (method === "GET" && path === "/api/sessions") {
     return sendJson(res, 200, agentGuiSessions());
   }
@@ -5412,6 +5622,12 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     } catch (error) {
       return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to share project" });
     }
+  }
+
+  const projectDetailMatch = path.match(/^\/api\/public\/projects\/([^/]+)$/);
+  if (method === "GET" && projectDetailMatch) {
+    const details = publicProjectDetails(decodeURIComponent(projectDetailMatch[1]));
+    return details ? sendJson(res, 200, details) : notFound(res);
   }
 
   const projectReviewMatch = path.match(/^\/api\/public\/projects\/([^/]+)\/reviews$/);

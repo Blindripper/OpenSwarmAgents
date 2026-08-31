@@ -73,12 +73,59 @@ export interface TopAgent {
   last_copied_at?: string | null;
 }
 
+export interface PublicProjectReview {
+  id: string;
+  project_id: string;
+  wallet_address: string;
+  rating: number;
+  title?: string;
+  comment?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ProjectReviewSummary {
   rating: number;
   title?: string;
   comment?: string;
   wallet_address?: string;
   created_at?: string;
+}
+
+export interface PublicProjectDetail {
+  project: TopAgent;
+  rooms: {
+    id: string;
+    name: string;
+    tasks: {
+      id: string;
+      title: string;
+      description: string;
+      agent: string;
+      model: string;
+      status: string;
+      capabilities?: string[];
+      result_summary?: string | null;
+    }[];
+  }[];
+  reviews: PublicProjectReview[];
+  stats: {
+    copy_count: number;
+    copy_event_count?: number;
+    donation_count?: number;
+    donation_total_usdc?: number;
+    osa_fee_total_usdc?: number;
+    review_count?: number;
+    rating_avg?: number;
+  };
+}
+
+export interface NetworkChatMessage {
+  id: string;
+  node_id: string;
+  wallet_address?: string | null;
+  message: string;
+  created_at: string;
 }
 
 export interface ToolsetMeta {

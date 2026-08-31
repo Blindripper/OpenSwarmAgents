@@ -123,6 +123,7 @@ interface Props {
   readOnly?: boolean;
   copyLabel?: string;
   onCopy?: () => void | Promise<void>;
+  onDetails?: () => void;
   /** Fired once after autoExpand opens the panel (so the parent can clear justStartedId). */
   onAutoExpanded?: () => void;
   onActivity?: () => void;
@@ -737,7 +738,7 @@ function DeskHistoryView({ history }: { history: DeskHistory | null }) {
   );
 }
 
-export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExpand, openAnchor, workspacePath, taskContent, taskImages, verbose = true, reasoningEffort, apiMode, onPreview, panelZIndex, onPanelActivate, onSelect, onFocus, onOpen, onOpenChange, deskFocused, onClose, readOnly = false, copyLabel = "Copy", onCopy, onAutoExpanded, onActivity, onAskManager, onInterrupt, profileLabel, profileColor, profileModel }: Props) {
+export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExpand, openAnchor, workspacePath, taskContent, taskImages, verbose = true, reasoningEffort, apiMode, onPreview, panelZIndex, onPanelActivate, onSelect, onFocus, onOpen, onOpenChange, deskFocused, onClose, readOnly = false, copyLabel = "Copy", onCopy, onDetails, onAutoExpanded, onActivity, onAskManager, onInterrupt, profileLabel, profileColor, profileModel }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [tab, setTab] = useState<DeskTab>("activity");
   const [consoleView, setConsoleView] = useState<ConsoleView>("debug");
@@ -1295,7 +1296,10 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
   }
 
   function handleClick() {
-    if (readOnly) return;
+    if (readOnly) {
+      onDetails?.();
+      return;
+    }
     if (deskClickTimerRef.current) clearTimeout(deskClickTimerRef.current);
     deskClickTimerRef.current = setTimeout(() => {
       deskClickTimerRef.current = null;
@@ -1822,7 +1826,7 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
         {/* Clickable desk body */}
         <div
           style={{
-            width: 200, cursor: readOnly ? "default" : "pointer", userSelect: "none", borderRadius: 8,
+            width: 200, cursor: readOnly && onDetails ? "pointer" : readOnly ? "default" : "pointer", userSelect: "none", borderRadius: 8,
             outline: deskFocused
               ? "2px solid var(--accent2)"
               : isActive
@@ -1836,7 +1840,7 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
           }}
           onClick={handleClick}
           onDoubleClick={handleDeskDoubleClick}
-          title={readOnly ? "Copy this public project into Home" : expanded ? "Click to close" : "Click to open"}
+          title={readOnly ? "View public project details" : expanded ? "Click to close" : "Click to open"}
         >
           {/* Monitor */}
           <div style={{
@@ -1963,6 +1967,20 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
                     </span>
                   )}
                 </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDetails?.(); }}
+                  disabled={!onDetails}
+                  title="View what this public project does"
+                  style={{
+                    padding: "3px 14px", borderRadius: 6, fontSize: 11,
+                    background: "#121828",
+                    color: onDetails ? "var(--accent2)" : "var(--text-dim)",
+                    border: "1px solid #2a3558",
+                    cursor: onDetails ? "pointer" : "default",
+                  }}
+                >
+                  Details
+                </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); void handleCopy(); }}
                   disabled={!onCopy || copying}

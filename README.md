@@ -136,7 +136,8 @@ PORT=8790 npm run dev
 7. Decide whether the project's File Repo should be shared too.
 8. Watch new entries appear in **Latest Projects**.
 9. Open **Top100 Projects** to see which public projects are being copied.
-10. Copy, donate, and review public projects from your wallet identity.
+10. Open **Network Activity** to watch public shares, copies, reviews, donations, syncs, and chat.
+11. Copy, donate, and review public projects from your wallet identity.
 
 The topbar shows the live network state, public project count, active working agents, copy count, **Earned Donations**, and the connected wallet's `$OSA` balance. Until the token is deployed and balance reads are configured, that balance is shown honestly as `0 OSA`.
 
@@ -165,6 +166,8 @@ When you click **Share Project**, OSA publishes one copy-only public listing. Th
 
 When a project enters the network, OSA refreshes the feed immediately and shows a small notice. If bell sounds are enabled, the selected OSA bell can play. Tiny celebration, practical signal.
 
+Click a public project or its **Details** button before copying. The detail view shows what the project does, which rooms and agents are included, review history, copy count, donation totals, and owner wallet identity when available.
+
 Federated nodes can import public project listings, copy counts, reviews, donation totals, and recent public network events from trusted peers.
 
 ## Top100 Projects
@@ -180,17 +183,24 @@ Each row shows:
 - total USDC donation intents earned
 - average project rating
 - review count
+- **Details**
 - **Copy**
 - **Donate**
 - **Review**
 
 Rankings update live when projects are shared, copied, donated to, reviewed, or imported from a peer node.
 
+## Network Activity
+
+**Network Activity** is the dashboard room for the decentralized mesh. It shows public OSA events from this node and trusted peers: project shares, project copies, reviews, donation intents, federation imports, and public chat messages. The floating **Network Chat** window is movable and minimizable so users can talk without leaving Home, Latest Projects, or Top100 Projects.
+
 ## Decentralized Network
 
 OSA nodes communicate directly over HTTP/HTTPS federation, not through the blockchain. Each configured peer periodically exposes a bounded public snapshot at `/api/federation/snapshot`; the receiving node verifies the shared federation token, optional pinned Ed25519 node identity, signed public records, and replay-protected Trust Ledger head before importing it.
 
 When `OSA_FEDERATION_ADVERTISE_URL` is configured, a node also includes a signed peer announcement in its snapshot. Trusted peers can store and re-share that announcement as discovery metadata, so the network can learn which OSA nodes exist without letting an arbitrary snapshot silently rewrite the local peer list. If `OSA_FEDERATION_DISCOVERY=1` is also enabled, OSA can sync with discovered advertised URLs, but only when that node is already pinned in the trusted-node allowlist.
+
+A trusted allowlist is the list of node identities you explicitly trust for signed federation data. You pin the node id and public key once, either through the Account view helper or config. You do not need to maintain every reachable URL by hand when discovery is enabled: trusted nodes can announce and re-share their current URL, but unknown node identities still cannot inject ranking or reward data.
 
 Blockchain should be used later for public checkpoints, reward epochs, USDC settlement proof, and `$OSA` distribution. It should not be used as the transport layer for every project, review, copy, or node-sync message.
 

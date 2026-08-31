@@ -114,6 +114,8 @@ try {
   await expectText(page, "body", "Home");
   await expectText(page, "body", "Latest Projects");
   await expectText(page, "body", "Top100 Projects");
+  await expectText(page, "body", "Network Activity");
+  await expectText(page, "body", "Network Chat");
   let bodyText = await page.locator("body").innerText();
   assert(!bodyText.includes("Top100 AI Agents"), "agent charts should not render");
   assert(!bodyText.includes("Top100 Rooms"), "room charts should not render");
@@ -207,6 +209,19 @@ try {
   });
   assert(review.stats?.review_count === 1, "Public Project reviews should be counted");
   assert(review.stats?.rating_avg === 5, "Public Project reviews should average ratings");
+  const projectDetail = await getJson(`/api/public/projects/${encodeURIComponent(projectId)}`);
+  assert(projectDetail.project?.title === "Browser E2E Project", "Public Project detail should expose the project title");
+  assert(projectDetail.rooms?.some((room) => room.tasks?.some((task) => task.description.includes("market-research agent"))), "Public Project detail should explain included tasks");
+  assert(projectDetail.reviews?.some((item) => item.title === "Actually useful"), "Public Project detail should expose readable reviews");
+  const chatPost = await postJson("/api/network/chat", {
+    wallet_address: walletAddress,
+    message: "Browser E2E says hello to Network Activity."
+  });
+  assert(chatPost.message?.message.includes("Network Activity"), "Network chat should accept public messages");
+  const chatList = await getJson("/api/network/chat?limit=20");
+  assert(chatList.messages?.some((item) => item.message.includes("Network Activity")), "Network chat should list saved messages");
+  const activity = await getJson("/api/network/activity?limit=100");
+  assert(activity.events?.some((item) => item.type === "network_chat_message"), "Network activity should list chat events");
   topProjects = await getJson("/api/top-projects?limit=100");
   const donatedSharedProject = topProjects.agents.find((agent) => agent.target_id === projectId);
   assert(donatedSharedProject?.donation_total_usdc === 1, "Top100 Projects should sum project donations");
@@ -220,12 +235,23 @@ try {
   await expectText(page, "body", "Browser E2E Project");
   await expectText(page, "body", "Latest public projects.");
   await expectText(page, "body", "1 copies");
+  await page.locator('button[title="View what this public project does"]').first().click();
+  await expectText(page, "body", "Project Rooms");
+  await expectText(page, "body", "Actually useful");
+  await page.locator('[aria-label="Public project details"] button[title="Close"]').click();
   await page.getByRole("button", { name: "Top100 Projects" }).click();
   await expectText(page, "body", "Top100 Projects");
   await expectText(page, "body", "Browser E2E Project");
   await expectText(page, "body", "1 USDC earned");
   await expectText(page, "body", "5.0 stars");
+  await expectText(page, "body", "Details");
   await expectText(page, "body", "Review");
+  await page.getByRole("button", { name: "Network Activity" }).click();
+  await expectText(page, "body", "Public OSA shares");
+  await expectText(page, "body", "Network chat message");
+  await page.getByPlaceholder("Message the network").fill("Browser chat from the floating window.");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expectText(page, "body", "Browser chat from the floating window.");
 
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Reset" }).click();

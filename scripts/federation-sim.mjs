@@ -28,6 +28,7 @@ try {
   await assertPeerAnnouncements(nodeA, nodeB, userB.headers);
   await assertTrustedPeerDiscovery(nodeA, nodeB, nodeC, userA.headers);
   await assertPublicProjectSharing(nodeA, nodeB);
+  await assertNetworkChatFederation(nodeA, nodeB, userB.headers);
 
   const proposal = await createProposal(nodeA, userA.headers);
   await assertTamperedSignatureRejected(nodeA, nodeB, proposal.id);
@@ -428,6 +429,32 @@ async function assertPublicProjectSharing(nodeA, nodeB) {
   await sync(nodeB, nodeA);
   await assertTopProjects(nodeA, ["Node A Alpha Project", "Node B Beta Project"]);
   await assertNoImportedHomeDesk(nodeA, "B private draft not shared");
+}
+
+async function assertNetworkChatFederation(nodeA, nodeB, headersB) {
+  await postJson(nodeA, "/api/network/chat", {
+    wallet_address: "0x00000000000000000000000000000000000000aa",
+    message: "Node A says hello from Network Activity."
+  });
+  const snapshotA = await getJson(nodeA, "/api/federation/snapshot", nodeA.federationHeaders);
+  const chat = snapshotA.collections.networkChatMessages.find((item) => item.message.includes("Network Activity"));
+  assert(chat?.signature?.signature, "network chat messages should carry a federation signature");
+
+  const tamperedSnapshot = structuredClone(snapshotA);
+  tamperedSnapshot.collections.networkChatMessages.find((item) => item.id === chat.id).message = "Tampered network chat";
+  await expectPostStatus(nodeB, "/api/federation/import", 400, { snapshot: tamperedSnapshot }, nodeB.federationHeaders);
+
+  await sync(nodeA, nodeB);
+  const stateB = await state(nodeB, headersB);
+  assert(
+    stateB.networkChatMessages.some((item) => item.message.includes("Network Activity")),
+    "node B should import signed network chat messages"
+  );
+  const chatListB = await getJson(nodeB, "/api/network/chat?limit=20");
+  assert(
+    chatListB.messages.some((item) => item.message.includes("Network Activity")),
+    "node B should expose imported network chat messages to AgentGUI"
+  );
 }
 
 async function assertSignedPublicRecordTamperRejected(from, to, projectId) {

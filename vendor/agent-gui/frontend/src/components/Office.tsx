@@ -42,6 +42,7 @@ interface Props {
   onDeskClose: (deskId: string) => void;
   onAddDesk: (teamId: string) => void;
   onCopyDesk?: (deskId: string) => void;
+  onPublicProjectDetails?: (session: Session) => void;
   onShareTeam?: (teamId: string) => void;
   onTeamSceneChange?: (teamId: string, sceneId: string) => void;
   onTeamRename?: (teamId: string, name: string) => void;
@@ -109,7 +110,7 @@ export function Office({
   pendingAssignments, activePendingDeskId, deskDropHoverId, askManagerByTeamId, onAskManagerDone,
   onPreview, onDeskStart, onDeskClose,
   deskPanelZ, onDeskPanelActivate,
-  onAddDesk, onCopyDesk, onShareTeam, onDeleteTeam, onSessionInterrupt, onAssignAgentToDesk,
+  onAddDesk, onCopyDesk, onPublicProjectDetails, onShareTeam, onDeleteTeam, onSessionInterrupt, onAssignAgentToDesk,
   onPendingMsgChange, onPendingAssignmentPatch, onActivePendingDeskChange, onDeskFocus, focusedDeskId, selectedDeskId,
   deskConfigsById, onAvatarClick, onDeskAskManager, onAgentDragStart,
   onTeamSceneChange, onTeamRename,
@@ -170,6 +171,7 @@ export function Office({
             readOnly={isPublicRoom}
             canAddDesk={!isPublicRoom}
             onCopyDesk={onCopyDesk}
+            onPublicProjectDetails={onPublicProjectDetails}
             onShareTeam={undefined}
             onAddDesk={() => onAddDesk(team.id)}
             onSessionInterrupt={onSessionInterrupt}

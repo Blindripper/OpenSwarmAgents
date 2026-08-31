@@ -1,4 +1,4 @@
-import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
+import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, NetworkChatMessage, PublicProjectDetail, PublicProjectReview, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
 
 const BASE = "/api";
 const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
@@ -331,6 +331,14 @@ export const api = {
     source.onerror = () => onClose?.();
     return source;
   },
+  network: {
+    activity: (limit = 100) =>
+      get<{ events: NetworkEvent[] }>(`/network/activity?limit=${limit}`),
+    chat: (limit = 60) =>
+      get<{ messages: NetworkChatMessage[] }>(`/network/chat?limit=${limit}`),
+    sendChat: (body: { message: string; wallet_address?: string | null }) =>
+      post<{ ok: boolean; message: NetworkChatMessage }>("/network/chat", body),
+  },
   wallet: {
     login: (body: { address: string; chain_id?: string | null; signature?: string | null }) =>
       post<{ ok: boolean; wallet: WalletSession }>("/wallet/login", body),
@@ -350,15 +358,17 @@ export const api = {
   publicProjects: {
     share: (body: { name?: string; owner_wallet_address?: string; share_file_repo?: boolean; rooms?: { id: string; name?: string }[] }) =>
       post<{ ok: boolean; shared_public: boolean; project?: Session }>("/public/projects/share", body),
+    get: (projectId: string) =>
+      get<PublicProjectDetail>(`/public/projects/${encodeURIComponent(projectId)}`),
     reviews: (projectId: string) =>
       get<{
-        reviews: { id: string; project_id: string; wallet_address: string; rating: number; title?: string; comment?: string; created_at: string; updated_at: string }[];
+        reviews: PublicProjectReview[];
         stats: { review_count: number; rating_avg: number };
       }>(`/public/projects/${encodeURIComponent(projectId)}/reviews`),
     review: (projectId: string, body: { wallet_address: string; rating: number; title?: string; comment?: string }) =>
       post<{
         ok: boolean;
-        review: { id: string; project_id: string; wallet_address: string; rating: number; title?: string; comment?: string; created_at: string; updated_at: string };
+        review: PublicProjectReview;
         stats: { review_count: number; rating_avg: number };
         project?: TopAgent | null;
       }>(`/public/projects/${encodeURIComponent(projectId)}/reviews`, body),

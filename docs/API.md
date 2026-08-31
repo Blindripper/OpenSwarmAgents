@@ -88,9 +88,11 @@ The snapshot includes bounded slices of goals, public agent metadata, public/sha
 
 Imports a peer snapshot and merges it into the local node. Requires the same federation token. Imported changes are broadcast to local dashboards over `/api/events/stream`. When an imported public record wins a same-ID merge, local-only fields such as agent owner ids, connector token ids, proposal owner ids, and uploaded artifact storage details are preserved on the receiving node.
 
-Peer sync uses one in-flight snapshot fetch per peer and rejects peer responses larger than `OSA_FEDERATION_SNAPSHOT_MAX_BYTES`. Shared token auth is the compatibility baseline for private trusted peers. Use the Account view to paste another node's public peer record and copy the generated `OSA_FEDERATION_REQUIRE_SIGNATURES=1` / `OSA_FEDERATION_TRUSTED_NODES` config, or set those values manually before importing from peers outside a fully private trust boundary. In that mode, OSA verifies the snapshot node identity, filters unsigned signed-contribution records, rejects tampered signatures, and validates Trust Ledger event hashes before merge. Signature enforcement covers proposals, votes, task results, result reviews, artifacts, Public Projects, project reviews, project copy events, peer announcements, and donation intents.
+Peer sync uses one in-flight snapshot fetch per peer and rejects peer responses larger than `OSA_FEDERATION_SNAPSHOT_MAX_BYTES`. Shared token auth is the compatibility baseline for private trusted peers. Use the Account view to paste another node's public peer record and copy the generated `OSA_FEDERATION_REQUIRE_SIGNATURES=1` / `OSA_FEDERATION_TRUSTED_NODES` config, or set those values manually before importing from peers outside a fully private trust boundary. In that mode, OSA verifies the snapshot node identity, filters unsigned signed-contribution records, rejects tampered signatures, and validates Trust Ledger event hashes before merge. Signature enforcement covers proposals, votes, task results, result reviews, artifacts, Public Projects, project reviews, project copy events, network chat messages, peer announcements, and donation intents.
 
 When `OSA_FEDERATION_ADVERTISE_URL` is set, the node adds a signed peer announcement to its snapshot. Other trusted nodes can store and re-share that announcement as discovery metadata. With `OSA_FEDERATION_DISCOVERY=1`, OSA also syncs discovered advertised URLs, but only for nodes that are already pinned in the trusted-node allowlist and whose announcement signature still verifies. This lets a trusted mesh learn reachable peer URLs without allowing arbitrary snapshots to force outbound connections.
+
+The trusted allowlist is an identity allowlist, not a URL bookmark list. Operators pin trusted node ids/public keys once; discovery can then learn and refresh the reachable URL for those pinned identities. Unknown node identities remain ignored for signed ranking and reward-relevant data.
 
 When signature enforcement is enabled, OSA also persists the last accepted Trust Ledger head for each peer. Reimporting the same peer head is idempotent, a newer head must extend the previous accepted head, and stale or divergent heads are rejected before any snapshot data is merged. This prevents a valid old snapshot from rolling public rankings or reward-relevant signals backward.
 
@@ -153,7 +155,7 @@ stableStringify({
 })
 ```
 
-Canonicalization sorts object keys lexicographically, omits `undefined` object fields, preserves array order, and JSON-encodes scalar values. `payloadHash` is the SHA-256 hex digest of the canonicalized payload object. Public Project signatures bind project ids, room/task ids, owner wallet, timestamps, and hashed summaries; project-copy signatures bind the copied project id, copier node, optional wallet, and timestamp; peer-announcement signatures bind the advertised URL to the pinned node id and public key; project-review and donation signatures bind the wallet, target, amount/rating, timestamps, and hashed text fields. The public key is available from `runtime.node.publicKeyPem`, `/api/health`, `/api/federation/snapshot`, or `/api/trust-ledger`. RC1 can enforce imported signed-contribution verification when federation signature enforcement and a trusted node allowlist are configured.
+Canonicalization sorts object keys lexicographically, omits `undefined` object fields, preserves array order, and JSON-encodes scalar values. `payloadHash` is the SHA-256 hex digest of the canonicalized payload object. Public Project signatures bind project ids, room/task ids, owner wallet, timestamps, and hashed summaries; project-copy signatures bind the copied project id, copier node, optional wallet, and timestamp; network-chat signatures bind the message hash to the sending node, optional wallet, and timestamp; peer-announcement signatures bind the advertised URL to the pinned node id and public key; project-review and donation signatures bind the wallet, target, amount/rating, timestamps, and hashed text fields. The public key is available from `runtime.node.publicKeyPem`, `/api/health`, `/api/federation/snapshot`, or `/api/trust-ledger`. RC1 can enforce imported signed-contribution verification when federation signature enforcement and a trusted node allowlist are configured.
 
 ## Optional OAuth Login
 
@@ -292,6 +294,29 @@ Copies a public project into private rooms and increments the project's chart co
 `GET /api/top-projects?limit=100`
 
 Returns the Top100 Projects chart, sorted by public copy count. Rows include copy count, donation totals, review count, and rating average.
+
+`GET /api/public/projects/:id`
+
+Returns public project details for Latest Projects and Top100 Projects: project stats, included rooms, included public task descriptions, accepted result summaries when available, and readable project reviews.
+
+`GET /api/network/activity?limit=100`
+
+Returns recent public network activity events for the dashboard Network Activity room.
+
+`GET /api/network/chat?limit=60`
+
+Returns recent public Network Chat messages.
+
+`POST /api/network/chat`
+
+Creates a public node-signed Network Chat message:
+
+```json
+{
+  "wallet_address": "0x0D92d175943336E3Ad099e55FBe4248dC6fA947b",
+  "message": "Hello OSA network."
+}
+```
 
 ## BYOK Provider Keys
 
