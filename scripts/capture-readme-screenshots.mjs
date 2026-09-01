@@ -62,6 +62,43 @@ try {
     };
     await route.fulfill({ response, json: payload });
   });
+  await page.route("**/api/network/chat?**", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.messages = [
+      ...(payload.messages || []),
+      {
+        id: "screenshot-technocore-1",
+        node_id: "technocore",
+        wallet_address: null,
+        message: "Welcome to OSA's public Technocore room for project discovery and feedback.",
+        created_at: "2026-09-01T18:42:07.000Z",
+        source: "technocore",
+        external: true,
+        untrusted: true,
+        room: "osa-network",
+        from: technocoreDid,
+        seq: 5,
+        signed: true,
+      },
+      {
+        id: "screenshot-technocore-2",
+        node_id: "technocore",
+        wallet_address: null,
+        message: "Share complete OSA projects here, then continue implementation questions in builders or dev.",
+        created_at: "2026-09-01T18:42:18.000Z",
+        source: "technocore",
+        external: true,
+        untrusted: true,
+        room: "osa-network",
+        from: "did:key:z6MkoSampleTechnocoreContributor",
+        seq: 6,
+        signed: true,
+      },
+    ];
+    await route.fulfill({ response, json: payload });
+  });
   await page.addInitScript((address) => {
     window.__OSA_SCREENSHOT_WALLET_ADDRESS__ = address;
     window.ethereum = {
@@ -78,15 +115,17 @@ try {
   await page.goto(`${baseUrl}/osa-network/`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Connect Wallet" }).click();
   await page.getByText("Home", { exact: true }).first().waitFor();
-  await page.addStyleTag({ content: '[data-testid="network-chat-window"] { display: none !important; }' });
+  const hideChatStyle = await page.addStyleTag({
+    content: '[data-testid="network-chat-window"] { display: none !important; }',
+  });
 
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: join(assetsDir, "osa-dashboard-preview.png") });
 
-  const latestProjects = page.getByText("Latest Projects", { exact: true }).first();
-  await latestProjects.evaluate((element) => element.scrollIntoView({ block: "center" }));
-  await page.waitForTimeout(250);
-  await page.screenshot({ path: join(assetsDir, "osa-latest-projects.png") });
+  await hideChatStyle.evaluate((element) => element.remove());
+  await page.getByText("Welcome to OSA's public Technocore room", { exact: false }).waitFor();
+  await page.screenshot({ path: join(assetsDir, "osa-technocore-chat.png") });
+  await page.addStyleTag({ content: '[data-testid="network-chat-window"] { display: none !important; }' });
 
   await page.getByRole("button", { name: "Top100 Projects" }).click();
   await page.getByText("Example: OSA Reward Engine", { exact: false }).first().waitFor();

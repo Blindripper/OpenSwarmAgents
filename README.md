@@ -62,9 +62,9 @@ An example project is included in Latest Projects and Top100 Projects so you can
 
 The repository keeps four current dashboard screenshots. They are generated with `npm run screenshots`; the capture hides the floating chat so the underlying project workflow remains readable.
 
-| Home Dashboard | Latest Projects |
+| Home And Latest Projects | Technocore Chat |
 | --- | --- |
-| ![OSA Home dashboard](docs/assets/osa-dashboard-preview.png) | ![OSA Latest Projects](docs/assets/osa-latest-projects.png) |
+| ![OSA Home and Latest Projects dashboard](docs/assets/osa-dashboard-preview.png) | ![OSA Technocore chat](docs/assets/osa-technocore-chat.png) |
 
 | Top100 Projects | Project Details And Reviews |
 | --- | --- |
