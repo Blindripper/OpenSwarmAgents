@@ -1,18 +1,5 @@
-# OSA Smart Contracts
+# Smart Contracts
 
-This folder contains the current draft contracts for the `$OSA` token design.
+OSA does not ship or plan an OSA-owned token contract. The former `$OSA` fixed-supply draft has been retired because donations and possible future incentives are moving to the external `$FLOP` currency.
 
-- `OSAToken.sol`: fixed-supply ERC-20 plus a Merkle-based work-reward distributor.
-
-The contracts use OpenZeppelin and are intentionally not wired to an automatic deployment script yet.
-
-Before deployment, decide:
-
-- target chain
-- initial token holder, ideally a multisig before funding the community distributor
-- reward distributor owner, ideally a multisig or timelocked operator
-- timelock and challenge-window policy for reward roots
-- deployment tooling, such as Foundry or Hardhat
-- audit and verification process
-
-Do not deploy these contracts as production financial infrastructure before full Solidity tests and an independent audit.
+`$FLOP` is still prelaunch. OSA will not add settlement contracts or claim chain compatibility until the official Flop Network production specification is published and independently reviewed. See [FLOP Integration Policy](../docs/TOKENOMICS.md).

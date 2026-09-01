@@ -404,14 +404,14 @@ function WalletGate({
           <img src="/osa-logo.svg" alt="OSA" width={44} height={44} />
           <div>
             <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: 0 }}>OpenSwarmAgents</div>
-            <div style={{ fontSize: 12, fontWeight: 800, color: "#7ee0c2", letterSpacing: 0 }}>$OSA wallet identity required</div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#7ee0c2", letterSpacing: 0 }}>Wallet identity required</div>
           </div>
         </div>
         <div style={{ fontSize: 38, lineHeight: 1.05, fontWeight: 950, maxWidth: 620, letterSpacing: 0, marginBottom: 14 }}>
           Connect a wallet before agents enter the network.
         </div>
         <div style={{ fontSize: 14, lineHeight: 1.65, color: "var(--text-dim)", marginBottom: 20 }}>
-          OSA uses your EVM public key as the project owner identity for sharing, reviews, donations, and future $OSA work rewards. Login does not ask for a private key and does not send a transaction.
+          OSA uses your EVM public key as the project owner identity for sharing, reviews, FLOP pledge intents, and future FLOP incentives. Login does not ask for a private key and does not send a transaction.
         </div>
         <div style={{
           display: "grid",
@@ -420,9 +420,9 @@ function WalletGate({
           marginBottom: 22,
         }}>
           {[
-            ["10B", "$OSA fixed supply"],
-            ["100%", "community supply"],
-            ["12Y", "reward epochs"],
+            ["DRAFT", "$FLOP status"],
+            ["Q4 2026", "testnet target"],
+            ["Q1 2027", "mainnet target"],
           ].map(([value, label]) => (
             <div key={label} style={{
               border: "1px solid #2a3558",
@@ -455,7 +455,7 @@ function WalletGate({
         </button>
         {error && <div style={{ marginTop: 12, color: "#ff8a8a", fontSize: 13 }}>{error}</div>}
         <div style={{ marginTop: 18, color: "var(--text-dim)", fontSize: 12, lineHeight: 1.55 }}>
-          Experimental warning: $OSA is currently an unlisted, worthless test token concept. Nothing here promises that it will ever have market value.
+          Prelaunch warning: $FLOP is not live yet and the official specification is still a draft. OSA records pledge intents only; it does not transfer tokens, show a balance, or promise rewards.
         </div>
       </div>
     </div>
@@ -483,7 +483,7 @@ export default function App() {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [walletConnected, setWalletConnected] = useState(readWalletConnected);
   const [walletAddress, setWalletAddress] = useState<string | null>(() => readWalletSession()?.address || null);
-  const [osaBalanceLabel, setOsaBalanceLabel] = useState("0 OSA");
+  const [flopStatusLabel, setFlopStatusLabel] = useState("Prelaunch");
   const [walletConnectError, setWalletConnectError] = useState<string | null>(null);
   const [walletConnectPending, setWalletConnectPending] = useState(false);
   const [preview, setPreview] = useState<FilePreviewData | null>(null);
@@ -733,14 +733,14 @@ export default function App() {
     const wallet = readWalletSession();
     setWalletAddress(wallet?.address || null);
     if (!wallet?.address) {
-      setOsaBalanceLabel("0 OSA");
+      setFlopStatusLabel("Prelaunch");
       return;
     }
     try {
       const balance = await api.wallet.balance(wallet.address);
-      setOsaBalanceLabel(balance.formatted || `${Number(balance.balance_osa || 0).toLocaleString()} OSA`);
+      setFlopStatusLabel(balance.formatted || "Prelaunch");
     } catch {
-      setOsaBalanceLabel("0 OSA");
+      setFlopStatusLabel("Prelaunch");
     }
   }, []);
 
@@ -1128,7 +1128,7 @@ export default function App() {
       const wallet = readWalletSession();
       if (!wallet) {
         setWalletConnected(false);
-        setWalletConnectError("Connect your wallet before starting network-rewarded agents.");
+        setWalletConnectError("Connect your wallet before starting wallet-owned agent work.");
         return;
       }
       started = await api.sessions.new(
@@ -1863,8 +1863,8 @@ export default function App() {
   const networkStats = {
     publicProjects: sessions.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID).length,
     copies: topProjects.reduce((sum, item) => sum + Number(item.copy_count || 0), 0),
-    donationsUsdc: topProjects.reduce((sum, item) => sum + Number(item.donation_total_usdc || 0), 0),
-    osaBalanceLabel,
+    donationsFlop: topProjects.reduce((sum, item) => sum + Number(item.donation_total_flop || 0), 0),
+    flopStatusLabel,
     onlineAgents: activeCount,
     walletConnected,
     live: networkLive,
@@ -1913,7 +1913,7 @@ export default function App() {
   function disconnectDashboardWallet() {
     localStorage.removeItem(WALLET_STORAGE_KEY);
     setWalletAddress(null);
-    setOsaBalanceLabel("0 OSA");
+    setFlopStatusLabel("Prelaunch");
     setWalletConnected(false);
     setWalletConnectError(null);
   }
@@ -2228,7 +2228,7 @@ export default function App() {
         <TopAgentsPanel
           agents={topProjects}
           title="Top100 Projects"
-          subtitle="Projects ranked by copies. Copy a project to import its rooms and agents, donate USDC to the builder, or leave a review."
+          subtitle="Projects ranked by copies. Copy a project, record a prelaunch FLOP pledge for its builder, or leave a review."
           emptyText="Share a project to start the chart."
           entityLabel="project"
           loading={topProjectsLoading}

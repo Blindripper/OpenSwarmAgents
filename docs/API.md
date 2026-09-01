@@ -91,6 +91,26 @@ Verifies a wallet signature, consumes the challenge nonce, records the verified 
 
 Login rejects missing challenges, expired challenges, replayed challenges, changed messages, and signatures that recover to a different EVM address.
 
+`GET /api/wallet/balance?address=0x...`
+
+Returns the honest FLOP integration status for the connected wallet. While `$FLOP` is not live, the response contains `balance_flop: null`, `formatted: "Prelaunch"`, and `source: "flop_prelaunch"`. OSA does not fabricate a zero balance or perform an on-chain lookup before official production network details exist.
+
+`POST /api/donations`
+
+Records a wallet-linked prelaunch FLOP pledge for a shared Public Project:
+
+```json
+{
+  "target_type": "project",
+  "target_id": "project-id",
+  "amount": 5,
+  "wallet_address": "0x...",
+  "chain_id": "0x1"
+}
+```
+
+The response currency is `FLOP`, status is `pledged`, and fee is zero. This endpoint records signed application metadata only: it does not transfer, reserve, mint, or promise FLOP. Legacy USDC records remain distinct for audit/federation compatibility and are excluded from `donation_total_flop`.
+
 ## Federation
 
 Federation is opt-in. Enable it only between trusted peers and protect it with a long shared token:
@@ -108,7 +128,7 @@ OSA_FEDERATION_SNAPSHOT_MAX_BYTES=4194304
 
 Federation endpoints reject requests when `OSA_FEDERATION_ENABLED=1` but `OSA_FEDERATION_TOKEN` is missing. Use HTTPS or a private tunnel/network for peer URLs when tokens cross a network boundary. `http://` peer URLs are acceptable only for localhost, containers, or private networks you control. `OSA_ALLOW_INSECURE_FEDERATION=1` exists only for isolated local experiments.
 
-Nodes communicate directly over HTTP/HTTPS. A node periodically fetches `/api/federation/snapshot` from each configured peer in `OSA_FEDERATION_PEERS`, verifies the shared transport token, optionally verifies the peer's Ed25519 identity and signed records, then imports the public snapshot. The blockchain is not the transport channel for node-to-node messages; it is intended later as a public settlement, checkpoint, and reward-distribution layer.
+Nodes communicate directly over HTTP/HTTPS. A node periodically fetches `/api/federation/snapshot` from each configured peer in `OSA_FEDERATION_PEERS`, verifies the shared transport token, optionally verifies the peer's Ed25519 identity and signed records, then imports the public snapshot. The blockchain is not the transport channel for node-to-node messages; it may later serve as a public checkpoint and FLOP settlement layer after the official production specification is live.
 
 `GET /api/federation/snapshot`
 
@@ -303,7 +323,7 @@ Returns dashboard rooms, Agent Profiles, the OpenClaw manager model, and `defaul
 
 `POST /api/sessions/new`
 
-Creates a private desk from the AgentGUI dashboard. The dashboard passes the connected wallet address so later reward scoring can attribute agent work to a public key. If no `agent` is provided, the server starts the desk with `default_agent_id`.
+Creates a private desk from the AgentGUI dashboard. The dashboard passes the connected wallet address so project ownership and any later, explicitly defined FLOP incentive signals can be attributed to a public key. No current task creates an entitlement to FLOP. If no `agent` is provided, the server starts the desk with `default_agent_id`.
 
 `POST /api/sessions/:id/share`
 
@@ -343,7 +363,7 @@ Copies a public project into private rooms and increments the project's chart co
 
 `GET /api/top-projects?limit=100`
 
-Returns the Top100 Projects chart, sorted by public copy count. Rows include copy count, donation totals, review count, and rating average.
+Returns the Top100 Projects chart, sorted by public copy count. Rows include copy count, `donation_total_flop` prelaunch pledge totals, review count, and rating average.
 
 `GET /api/public/projects/:id`
 

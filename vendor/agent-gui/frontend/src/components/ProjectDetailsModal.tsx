@@ -165,7 +165,7 @@ export function ProjectDetailsModal({ projectId, fallback, onClose, onCopy, onRe
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, marginTop: 14 }}>
           {[
             ["Copies", String(stats?.copy_count ?? project?.copy_count ?? 0)],
-            ["Donations", `${Number(stats?.donation_total_usdc || project?.donation_total_usdc || 0)} USDC`],
+            ["FLOP pledges", `${Number(stats?.donation_total_flop || project?.donation_total_flop || 0)} FLOP`],
             ["Reviews", stats?.review_count || project?.review_count ? `${Number(stats?.rating_avg || project?.rating_avg || 0).toFixed(1)} avg` : "0"],
             ["Owner", shortAddress(project?.owner_wallet_address)],
           ].map(([label, value]) => (

@@ -409,7 +409,7 @@ async function assertPublicProjectSharing(nodeA, nodeB) {
   await sync(nodeA, nodeB);
   await expectPostStatus(nodeB, "/api/federation/import", 409, { snapshot: firstSnapshotA }, nodeB.federationHeaders);
   await assertTopProjects(nodeB, ["Node A Alpha Project"]);
-  await assertTopProject(nodeB, "Node A Alpha Project", (project) => project.donation_total_usdc === 2, "donation totals should federate");
+  await assertTopProject(nodeB, "Node A Alpha Project", (project) => project.donation_total_flop === 2, "FLOP pledge totals should federate");
   await assertTopProject(nodeB, "Node A Alpha Project", (project) => project.review_count === 1, "project reviews should federate");
   await assertNoImportedHomeDesk(nodeB, "A private revenue project");
 

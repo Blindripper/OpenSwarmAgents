@@ -107,8 +107,8 @@ const managedConnectorLogLimit = 12 * 1024;
 const agentGuiCodexRunnerEnabled = process.env.OSA_AGENTGUI_ENABLE_CODEX_RUNNER === "1";
 const agentGuiHomeTeamId = "home-room";
 const agentGuiPublicProjectsTeamId = "public-projects-room";
-const osaDonationFeeWallet = "0x0D92d175943336E3Ad099e55FBe4248dC6fA947b";
-const osaDonationFeePercent = 5;
+const flopCurrency = "FLOP";
+const flopDonationFeePercent = 0;
 const legacySeedGoalIds = new Set(["goal-agent-collab", "goal-water", "goal-energy-storage"]);
 const legacySeedTaskIds = new Set([
   "task-architecture-map",
@@ -778,7 +778,11 @@ function normalizeAgentDonations(donations) {
         const targetType = ["agent", "room", "project"].includes(donation.targetType) ? donation.targetType : "agent";
         const targetId = String(donation.targetId || donation.taskId).slice(0, 140);
         const amount = normalizeDonationAmount(donation.amount);
-        const feeAmount = Math.round(amount * osaDonationFeePercent * 10_000) / 1_000_000;
+        const currency = String(donation.currency || "USDC").toUpperCase() === flopCurrency ? flopCurrency : "USDC";
+        const feePercent = currency === flopCurrency
+          ? 0
+          : Math.max(0, Math.min(100, Number(donation.feePercent ?? 5) || 0));
+        const feeAmount = Math.round(amount * feePercent * 10_000) / 1_000_000;
         return {
           id: String(donation.id || `donation-${randomUUID()}`).slice(0, 100),
           taskId: targetType === "agent" ? targetId : (donation.taskId ? String(donation.taskId).slice(0, 120) : null),
@@ -788,11 +792,15 @@ function normalizeAgentDonations(donations) {
           walletAddress: normalizeWalletAddress(donation.walletAddress),
           chainId: donation.chainId ? String(donation.chainId).slice(0, 40) : null,
           amount,
-          currency: "USDC",
-          feePercent: osaDonationFeePercent,
-          feeWallet: donation.feeWallet ? normalizeWalletAddress(donation.feeWallet) : osaDonationFeeWallet.toLowerCase(),
-          feeAmount: donation.feeAmount ? normalizeDonationAmount(donation.feeAmount) : feeAmount,
-          creatorAmount: donation.creatorAmount ? normalizeDonationAmount(donation.creatorAmount) : Math.max(0, Math.round((amount - feeAmount) * 1_000_000) / 1_000_000),
+          currency,
+          feePercent,
+          feeWallet: currency === flopCurrency
+            ? null
+            : donation.feeWallet ? normalizeWalletAddress(donation.feeWallet) : null,
+          feeAmount: currency === flopCurrency ? 0 : donation.feeAmount ? normalizeDonationAmount(donation.feeAmount) : feeAmount,
+          creatorAmount: currency === flopCurrency
+            ? amount
+            : donation.creatorAmount ? normalizeDonationAmount(donation.creatorAmount) : Math.max(0, Math.round((amount - feeAmount) * 1_000_000) / 1_000_000),
           status: donation.status === "confirmed" ? "confirmed" : "pledged",
           txHash: donation.txHash ? String(donation.txHash).slice(0, 100) : null,
           signature: donation.signature || null,
@@ -974,23 +982,28 @@ function normalizePublicCollections(items, type) {
 }
 
 function ensureAgentGuiExampleProject(target) {
-  const wallet = osaDonationFeeWallet.toLowerCase();
+  const wallet = "0x0d92d175943336e3ad099e55fbe4248dc6fa947b";
   const stamped = "2026-08-30T00:00:00.000Z";
   const goalId = "goal-osa-example-reward-engine";
   const taskIds = ["task-osa-example-moneymaker", "task-osa-example-security"];
   let changed = false;
 
-  if (!target.goals.some((goal) => goal.id === goalId)) {
+  const exampleGoal = target.goals.find((goal) => goal.id === goalId);
+  if (!exampleGoal) {
     target.goals.unshift({
       id: goalId,
-      title: "Example: OSA Reward Engine",
-      description: "Demo project for testing public copy, donation, review, and Top100 mechanics.",
+      title: "Example: FLOP Project Pledges",
+      description: "Demo project for testing public copy, FLOP pledge, review, and Top100 mechanics.",
       status: "active",
       supporters: 0,
       sourceProposalId: null,
       source: "agent-gui-public-example",
       createdAt: stamped
     });
+    changed = true;
+  } else if (exampleGoal.title !== "Example: FLOP Project Pledges" || !String(exampleGoal.description || "").includes("FLOP pledge")) {
+    exampleGoal.title = "Example: FLOP Project Pledges";
+    exampleGoal.description = "Demo project for testing public copy, FLOP pledge, review, and Top100 mechanics.";
     changed = true;
   }
 
@@ -1008,7 +1021,7 @@ function ensureAgentGuiExampleProject(target) {
       id: taskIds[1],
       legacyId: "task-osa-example-token-planner",
       title: "Security Expert Agent",
-      description: "Reviews $OSA reward mechanics for abuse paths, wallet risk, and practical hardening steps.",
+      description: "Reviews wallet, FLOP pledge, and future incentive mechanics for abuse paths and practical hardening steps.",
       agent: "security-expert",
       teamId: "room-security",
       teamName: "Security"
@@ -1067,8 +1080,8 @@ function ensureAgentGuiExampleProject(target) {
       id: projectId,
       type: "project",
       sourceTeamId: null,
-      name: "Example: OSA Reward Engine",
-      summary: "A sample wallet-owned agent project for testing Copy, Donate, Review, Latest Projects, and Top100 Projects.",
+      name: "Example: FLOP Project Pledges",
+      summary: "A sample wallet-owned agent project for testing Copy, FLOP Pledge, Review, Latest Projects, and Top100 Projects.",
       taskIds,
       rooms: [
         { id: agentGuiHomeTeamId, name: "Home", taskIds: [taskIds[0]] },
@@ -1091,16 +1104,19 @@ function ensureAgentGuiExampleProject(target) {
     const prior = JSON.stringify({
       taskIds: existingProject.taskIds,
       rooms: existingProject.rooms,
+      name: existingProject.name,
       summary: existingProject.summary,
       isExample: existingProject.isExample
     });
     existingProject.taskIds = taskIds;
     existingProject.rooms = nextRooms;
-    existingProject.summary = "A sample wallet-owned agent project for testing Copy, Donate, Review, Latest Projects, and Top100 Projects.";
+    existingProject.name = "Example: FLOP Project Pledges";
+    existingProject.summary = "A sample wallet-owned agent project for testing Copy, FLOP Pledge, Review, Latest Projects, and Top100 Projects.";
     existingProject.isExample = true;
     if (JSON.stringify({
       taskIds: existingProject.taskIds,
       rooms: existingProject.rooms,
+      name: existingProject.name,
       summary: existingProject.summary,
       isExample: existingProject.isExample
     }) !== prior) {
@@ -1109,7 +1125,8 @@ function ensureAgentGuiExampleProject(target) {
     }
   }
 
-  if (!target.agentDonations.some((donation) => donation.id === "donation-osa-example-reward-engine")) {
+  const exampleDonation = target.agentDonations.find((donation) => donation.id === "donation-osa-example-reward-engine");
+  if (!exampleDonation) {
     target.agentDonations.unshift({
       id: "donation-osa-example-reward-engine",
       taskId: null,
@@ -1119,14 +1136,25 @@ function ensureAgentGuiExampleProject(target) {
       walletAddress: wallet,
       chainId: "0x1",
       amount: 5,
-      currency: "USDC",
-      feePercent: osaDonationFeePercent,
-      feeWallet: wallet,
-      feeAmount: 0.25,
-      creatorAmount: 4.75,
+      currency: flopCurrency,
+      feePercent: flopDonationFeePercent,
+      feeWallet: null,
+      feeAmount: 0,
+      creatorAmount: 5,
       status: "pledged",
       txHash: null,
       createdAt: stamped
+    });
+    changed = true;
+  } else if (exampleDonation.currency !== flopCurrency || Number(exampleDonation.feeAmount || 0) !== 0) {
+    Object.assign(exampleDonation, {
+      currency: flopCurrency,
+      feePercent: flopDonationFeePercent,
+      feeWallet: null,
+      feeAmount: 0,
+      creatorAmount: Number(exampleDonation.amount || 5),
+      txHash: null,
+      status: "pledged"
     });
     changed = true;
   }
@@ -2906,9 +2934,9 @@ function signedPayloadForDonation(donation) {
     walletAddress: donation.walletAddress || null,
     chainId: donation.chainId || null,
     amount: normalizeDonationAmount(donation.amount),
-    currency: "USDC",
-    feePercent: osaDonationFeePercent,
-    feeWallet: donation.feeWallet || osaDonationFeeWallet.toLowerCase(),
+    currency: donation.currency === flopCurrency ? flopCurrency : "USDC",
+    feePercent: Math.max(0, Number(donation.feePercent || 0)),
+    feeWallet: donation.feeWallet || null,
     feeAmount: donation.feeAmount ? normalizeDonationAmount(donation.feeAmount) : 0,
     creatorAmount: donation.creatorAmount ? normalizeDonationAmount(donation.creatorAmount) : 0,
     status: donation.status === "confirmed" ? "confirmed" : "pledged",
@@ -4465,12 +4493,16 @@ function agentGuiDonationStats(targetType, targetId) {
   const matching = store.agentDonations.filter((donation) =>
     donation.targetType === targetType && donation.targetId === targetId
   );
-  const donationTotal = matching.reduce((sum, donation) => sum + Number(donation.amount || 0), 0);
-  const feeTotal = matching.reduce((sum, donation) => sum + Number(donation.feeAmount || 0), 0);
+  const flopPledges = matching.filter((donation) => donation.currency === flopCurrency);
+  const legacyUsdc = matching.filter((donation) => donation.currency === "USDC");
+  const donationTotal = flopPledges.reduce((sum, donation) => sum + Number(donation.amount || 0), 0);
+  const feeTotal = flopPledges.reduce((sum, donation) => sum + Number(donation.feeAmount || 0), 0);
   return {
-    donation_count: matching.length,
-    donation_total_usdc: Math.round(donationTotal * 1_000_000) / 1_000_000,
-    osa_fee_total_usdc: Math.round(feeTotal * 1_000_000) / 1_000_000
+    donation_count: flopPledges.length,
+    donation_total_flop: Math.round(donationTotal * 1_000_000) / 1_000_000,
+    platform_fee_total_flop: Math.round(feeTotal * 1_000_000) / 1_000_000,
+    legacy_usdc_donation_count: legacyUsdc.length,
+    legacy_usdc_donation_total: Math.round(legacyUsdc.reduce((sum, donation) => sum + Number(donation.amount || 0), 0) * 1_000_000) / 1_000_000
   };
 }
 
@@ -5624,16 +5656,17 @@ async function connectAgentGuiWallet(body = {}) {
   };
 }
 
-function agentGuiOsaWalletBalance(address) {
+function agentGuiFlopWalletStatus(address) {
   const normalized = normalizeWalletAddress(address);
   return {
     address: normalized,
-    balance_osa: 0,
-    formatted: "0 OSA",
-    source: "not_deployed",
-    token_contract: process.env.OSA_TOKEN_ADDRESS || null,
-    rewards_contract: process.env.OSA_REWARDS_DISTRIBUTOR_ADDRESS || null,
-    note: "$OSA is not deployed/configured for on-chain balance reads on this node yet."
+    balance_flop: null,
+    formatted: "Prelaunch",
+    source: "flop_prelaunch",
+    token_contract: null,
+    rewards_contract: null,
+    official_url: "https://flop.finance/teaser/",
+    note: "$FLOP is not live yet. OSA records pledge intents only and performs no token transfer or balance lookup."
   };
 }
 
@@ -5663,7 +5696,7 @@ async function createAgentGuiDonation(body = {}) {
   const target = agentGuiDonationTargetFromBody(body);
   const walletAddress = normalizeWalletAddress(body.wallet_address || body.walletAddress);
   const amount = normalizeDonationAmount(body.amount);
-  const feeAmount = Math.round(amount * osaDonationFeePercent * 10_000) / 1_000_000;
+  const feeAmount = 0;
   const chainId = body.chain_id || body.chainId ? String(body.chain_id || body.chainId).slice(0, 40) : null;
   const createdAt = now();
   const existingWallet = store.walletSessions.find((item) => item.address === walletAddress);
@@ -5690,9 +5723,9 @@ async function createAgentGuiDonation(body = {}) {
     walletAddress,
     chainId,
     amount,
-    currency: "USDC",
-    feePercent: osaDonationFeePercent,
-    feeWallet: osaDonationFeeWallet.toLowerCase(),
+    currency: flopCurrency,
+    feePercent: flopDonationFeePercent,
+    feeWallet: null,
     feeAmount,
     creatorAmount: Math.max(0, Math.round((amount - feeAmount) * 1_000_000) / 1_000_000),
     status: "pledged",
@@ -5704,22 +5737,22 @@ async function createAgentGuiDonation(body = {}) {
     objectId: donation.id
   });
   store.agentDonations.unshift(donation);
-  event("agentgui_donation_pledged", "USDC donation pledged for Public catalog item", {
+  event("agentgui_donation_pledged", "Prelaunch FLOP pledge recorded for Public catalog item", {
     targetType: target.targetType,
     targetId: target.targetId,
     sessionId: donation.sessionId,
     walletAddress,
     amount,
-    currency: "USDC",
+    currency: flopCurrency,
     feeAmount,
-    feeWallet: donation.feeWallet
+    settlement: "prelaunch_intent"
   });
   await saveStore();
   return {
     ok: true,
     donation,
     stats: agentGuiDonationStats(target.targetType, target.targetId),
-    fee: { percent: osaDonationFeePercent, wallet: osaDonationFeeWallet, amount: feeAmount },
+    fee: { percent: flopDonationFeePercent, wallet: null, amount: feeAmount },
     agent: agentGuiRankedPublicCollections("project", 100).find((item) => item.target_id === target.targetId) || null
   };
 }
@@ -6384,7 +6417,7 @@ function publicProjectExplorerReport(projectId) {
   const reviewCount = Number(details.stats.review_count || 0);
   const ratingAvg = Number(details.stats.rating_avg || 0);
   const copyCount = Number(details.stats.copy_count || 0);
-  const donationTotal = Number(details.stats.donation_total_usdc || 0);
+  const donationTotal = Number(details.stats.donation_total_flop || 0);
   const resultCount = rooms
     .flatMap((room) => room.tasks || [])
     .filter((task) => String(task.result_summary || "").trim()).length;
@@ -6397,7 +6430,7 @@ function publicProjectExplorerReport(projectId) {
   if (resultCount > 0) strengths.push(`${resultCount} task${resultCount === 1 ? "" : "s"} include accepted or visible result summaries.`);
   if (reviewCount > 0) strengths.push(`Has ${reviewCount} public review${reviewCount === 1 ? "" : "s"} with ${ratingAvg.toFixed(1)} average rating.`);
   if (copyCount > 0) strengths.push(`Has ${copyCount} recorded copy event${copyCount === 1 ? "" : "s"} in the federated view.`);
-  if (donationTotal > 0) strengths.push(`Has ${donationTotal} USDC in recorded donation intents.`);
+  if (donationTotal > 0) strengths.push(`Has ${donationTotal} FLOP in recorded prelaunch pledge intents.`);
 
   if (!project.summary || project.summary === project.title) cautions.push("The public summary is thin, so inspect the tasks before copying.");
   if (taskCount === 0) cautions.push("No public task details are available for this project.");
@@ -6437,7 +6470,7 @@ function publicProjectExplorerReport(projectId) {
       `Visible result summaries: ${resultCount}`,
       `Reviews: ${reviewCount}${reviewCount > 0 ? ` at ${ratingAvg.toFixed(1)} average` : ""}`,
       `Copies: ${copyCount}`,
-      `Donations: ${donationTotal} USDC`,
+      `FLOP prelaunch pledges: ${donationTotal}`,
       `Owner: ${project.owner_wallet_address || "unknown"}`
     ]
   };
@@ -7115,7 +7148,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
 
   if (method === "GET" && path === "/api/wallet/balance") {
     try {
-      return sendJson(res, 200, agentGuiOsaWalletBalance(url.searchParams.get("address") || ""));
+      return sendJson(res, 200, agentGuiFlopWalletStatus(url.searchParams.get("address") || ""));
     } catch (error) {
       return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to read OSA balance" });
     }

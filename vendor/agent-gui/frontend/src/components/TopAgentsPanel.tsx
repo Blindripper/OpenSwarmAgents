@@ -39,7 +39,7 @@ function shortAddress(address: string): string {
 export function TopAgentsPanel({
   agents,
   title = "Top100 Projects",
-  subtitle = "Ranked by copies. Copy a project into Home, donate USDC to its builder, or leave a review.",
+  subtitle = "Ranked by copies. Copy a project into Home, record a prelaunch FLOP pledge, or leave a review.",
   emptyText = "Share a project to start the chart.",
   entityLabel = "agent",
   loading = false,
@@ -109,7 +109,7 @@ export function TopAgentsPanel({
     setDonationStatus(null);
     const amount = amountMode === "custom" ? Number(customAmount) : Number(amountMode);
     if (!Number.isFinite(amount) || amount <= 0) {
-      setDonationError("Enter a USDC amount greater than zero.");
+      setDonationError("Enter a FLOP pledge amount greater than zero.");
       return;
     }
     setDonationPending(true);
@@ -124,7 +124,7 @@ export function TopAgentsPanel({
         wallet_address: activeWallet.address,
         chain_id: activeWallet.chain_id,
       });
-      setDonationStatus(`${amount} USDC donation intent saved.`);
+      setDonationStatus(`${amount} FLOP prelaunch pledge saved. No tokens moved.`);
       onDonateRecorded?.();
     } catch (error) {
       setDonationError((error as Error).message || "Donation failed.");
@@ -320,7 +320,7 @@ export function TopAgentsPanel({
                     }}>
                       <span>{agent.copy_count} copies</span>
                       <span style={{ color: "var(--text-dim)", fontWeight: 700 }}>
-                        {Number(agent.donation_total_usdc || 0)} USDC earned
+                        {Number(agent.donation_total_flop || 0)} FLOP pledged
                       </span>
                       {isProjectChart && (
                         <span style={{ color: "#facc15", fontWeight: 800 }}>
@@ -408,7 +408,7 @@ export function TopAgentsPanel({
                         cursor: "pointer",
                       }}
                     >
-                      Donate
+                    Pledge
                     </button>
                     {isProjectChart && canDelete && (
                       <button
@@ -439,7 +439,7 @@ export function TopAgentsPanel({
         <div
           role="dialog"
           aria-modal="true"
-          aria-label={`Donate to ${donatingAgent.title}`}
+          aria-label={`Pledge FLOP to ${donatingAgent.title}`}
           style={{
             position: "fixed",
             inset: 0,
@@ -465,7 +465,7 @@ export function TopAgentsPanel({
           >
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 15, fontWeight: 900 }}>Donate USDC</div>
+                <div style={{ fontSize: 15, fontWeight: 900 }}>Pledge FLOP</div>
                 <div style={{
                   marginTop: 4,
                   fontSize: 12,
@@ -513,7 +513,7 @@ export function TopAgentsPanel({
                     fontWeight: 800,
                   }}
                 >
-                  {value === "custom" ? "Custom" : `${value} USDC`}
+                  {value === "custom" ? "Custom" : `${value} FLOP`}
                 </button>
               ))}
             </div>
@@ -523,7 +523,7 @@ export function TopAgentsPanel({
                 value={customAmount}
                 onChange={(e) => setCustomAmount(e.currentTarget.value)}
                 inputMode="decimal"
-                placeholder="USDC amount"
+                placeholder="FLOP pledge amount"
                 style={{
                   marginTop: 10,
                   width: "100%",
@@ -539,8 +539,7 @@ export function TopAgentsPanel({
             )}
 
             <div style={{ marginTop: 12, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.4 }}>
-              Wallet pubkeys identify OSA project donors and can later power decentralized owner/reputation views.
-              OSA keeps 5% for development and running costs, also known as the tiny infrastructure coffee tax.
+              $FLOP is not live yet. This saves a wallet-linked, non-settled pledge intent only: no token transfer, balance check, fee, or reward promise occurs. OSA will add settlement only after the official FLOP network and specification are live.
             </div>
             {wallet && (
               <div style={{ marginTop: 8, fontSize: 11, color: "#7ee0c2", fontFamily: "ui-monospace, monospace" }}>
@@ -588,7 +587,7 @@ export function TopAgentsPanel({
                   fontWeight: 900,
                 }}
               >
-                {donationPending ? "Saving" : "Donate"}
+                {donationPending ? "Saving" : "Save Pledge"}
               </button>
             </div>
           </div>

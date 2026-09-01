@@ -19,8 +19,8 @@ interface Props {
   networkStats?: {
     publicProjects: number;
     copies: number;
-    donationsUsdc: number;
-    osaBalanceLabel: string;
+    donationsFlop: number;
+    flopStatusLabel: string;
     onlineAgents: number;
     walletConnected: boolean;
     live: boolean;
@@ -251,8 +251,8 @@ export function Header({
   const stats = networkStats ?? {
     publicProjects: 0,
     copies: 0,
-    donationsUsdc: 0,
-    osaBalanceLabel: "0 OSA",
+    donationsFlop: 0,
+    flopStatusLabel: "Prelaunch",
     onlineAgents: activeCount,
     walletConnected: false,
     live: false,
@@ -324,13 +324,13 @@ export function Header({
         gap: 8,
       }}>
         <TopMetric label="PROJECTS" value={String(stats.publicProjects)} hint="Shared projects visible in Latest Projects and Top100 Projects" />
-        <TopMetric label="WORKING" value={String(stats.onlineAgents)} hint="Agents currently doing reward-eligible work on this node" tone={stats.onlineAgents > 0 ? "green" : "muted"} />
+        <TopMetric label="WORKING" value={String(stats.onlineAgents)} hint="Agents currently working on this node; future FLOP incentives are not active yet" tone={stats.onlineAgents > 0 ? "green" : "muted"} />
         <TopMetric label="COPIES" value={String(stats.copies)} hint="Total public project copies in this network view" />
-        <TopMetric label="Earned Donations" value={`${stats.donationsUsdc.toFixed(stats.donationsUsdc % 1 ? 2 : 0)} USDC`} hint="Donation intents recorded by this OSA network view" tone={stats.donationsUsdc > 0 ? "green" : "muted"} />
+        <TopMetric label="FLOP PLEDGES" value={`${stats.donationsFlop.toFixed(stats.donationsFlop % 1 ? 2 : 0)} FLOP`} hint="Prelaunch FLOP pledge intents recorded by this OSA network view; no tokens have moved" tone={stats.donationsFlop > 0 ? "green" : "muted"} />
         {technocoreDid
           ? <TechnocoreDidMetric did={technocoreDid} />
           : <TopMetric label="PEERS" value={federation.value} hint={federation.hint} tone={federation.tone} />}
-        <TopMetric label="$OSA" value={stats.osaBalanceLabel} hint="Current $OSA balance for the connected wallet. Shows 0 until token deployment and on-chain balance lookup are configured." />
+        <TopMetric label="$FLOP" value={stats.flopStatusLabel} hint="$FLOP is prelaunch. OSA does not show a balance or claim settlement until the official network is live." />
       </div>
 
       <div style={{ width: 1, height: 28, background: "var(--card-border)", flexShrink: 0 }} />

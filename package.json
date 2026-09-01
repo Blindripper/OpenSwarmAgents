@@ -3,7 +3,7 @@
   "version": "0.1.0-rc.1",
   "private": true,
   "type": "module",
-  "description": "OpenSwarmAgents is an experimental wallet-owned AI agent project network with live sharing, rankings, donations, reviews, and planned $OSA work rewards.",
+  "description": "OpenSwarmAgents is an experimental wallet-owned AI agent project network with live sharing, rankings, reviews, and prelaunch FLOP pledge intents.",
   "scripts": {
     "dev": "node apps/server/src/server.mjs",
     "start": "node apps/server/src/server.mjs",

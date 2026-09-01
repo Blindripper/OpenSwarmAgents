@@ -38,11 +38,12 @@ export interface WalletChallenge {
 
 export interface WalletBalance {
   address: string;
-  balance_osa: number;
+  balance_flop: number | null;
   formatted: string;
   source: string;
   token_contract?: string | null;
   rewards_contract?: string | null;
+  official_url?: string;
   note?: string;
 }
 
@@ -386,9 +387,9 @@ export const api = {
     create: (body: { session_id?: string; target_type?: "project"; target_id?: string; amount: number; wallet_address: string; chain_id?: string | null }) =>
       post<{
         ok: boolean;
-        donation: { id: string; amount: number; currency: "USDC"; status: "pledged"; createdAt: string; feeAmount?: number; creatorAmount?: number };
-        stats: { donation_count: number; donation_total_usdc: number; osa_fee_total_usdc?: number };
-        fee?: { percent: number; wallet: string; amount: number };
+        donation: { id: string; amount: number; currency: "FLOP"; status: "pledged"; createdAt: string; feeAmount?: number; creatorAmount?: number };
+        stats: { donation_count: number; donation_total_flop: number; platform_fee_total_flop?: number };
+        fee?: { percent: number; wallet: string | null; amount: number };
         agent?: TopAgent | null;
       }>("/donations", body),
   },

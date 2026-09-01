@@ -2,19 +2,22 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const root = join(import.meta.dirname, "..");
-const contract = await readFile(join(root, "contracts", "OSAToken.sol"), "utf8");
 const tokenomics = await readFile(join(root, "docs", "TOKENOMICS.md"), "utf8");
 const readme = await readFile(join(root, "README.md"), "utf8");
+const app = await readFile(join(root, "vendor", "agent-gui", "frontend", "src", "App.tsx"), "utf8");
+const header = await readFile(join(root, "vendor", "agent-gui", "frontend", "src", "components", "Header.tsx"), "utf8");
+const server = await readFile(join(root, "apps", "server", "src", "server.mjs"), "utf8");
 
 const required = [
-  ["contract total supply", contract, "10_000_000_000 ether"],
-  ["contract reward pool", contract, "10_000_000_000 ether"],
-  ["contract reward duration", contract, "4380 days"],
-  ["tokenomics total supply", tokenomics, "10,000,000,000 OSA"],
-  ["tokenomics reward pool", tokenomics, "10,000,000,000 OSA"],
-  ["full community supply", `${tokenomics}\n${readme}`, "full 10B supply"],
-  ["fee/reward wallet", `${tokenomics}\n${readme}`, "0x0D92d175943336E3Ad099e55FBe4248dC6fA947b"],
-  ["experimental disclaimer", readme.toLowerCase(), "worthless"],
+  ["official FLOP source", `${tokenomics}\n${readme}`, "https://flop.finance/teaser/"],
+  ["draft disclosure", tokenomics, "status **Draft**"],
+  ["testnet target", `${tokenomics}\n${app}`, "Q4 2026"],
+  ["mainnet target", `${tokenomics}\n${app}`, "Q1 2027"],
+  ["prelaunch dashboard", `${app}\n${header}`, "Prelaunch"],
+  ["FLOP pledge totals", `${header}\n${server}`, "donation_total_flop"],
+  ["zero fee", server, "const flopDonationFeePercent = 0"],
+  ["prelaunch API status", server, 'source: "flop_prelaunch"'],
+  ["no OSA coin decision", readme, "will not issue or use its own `$OSA` coin"],
   ["mandatory wallet", readme.toLowerCase(), "wallet login is mandatory"],
 ];
 
@@ -24,4 +27,14 @@ for (const [label, haystack, needle] of required) {
   }
 }
 
-console.log("tokenomics check passed");
+for (const [label, haystack, forbidden] of [
+  ["dashboard OSA token copy", `${app}\n${header}`, "$OSA"],
+  ["dashboard USDC donation copy", `${app}\n${header}`, "USDC"],
+  ["README fixed-supply claim", readme, "10,000,000,000 OSA"],
+]) {
+  if (haystack.includes(forbidden)) {
+    throw new Error(`Retired ${label} remains: ${forbidden}`);
+  }
+}
+
+console.log("FLOP integration check passed");

@@ -9,13 +9,13 @@
 </p>
 
 <p align="center">
-  Build privately, connect a wallet, let agents work, share complete projects, copy what is useful, review what works, donate USDC, and prepare for future $OSA participation rewards.
+  Build privately, connect a wallet, let agents work, share complete projects, copy what is useful, review what works, and prepare for future FLOP donations and incentives.
 </p>
 
 <p align="center">
   <img alt="Node.js" src="https://img.shields.io/badge/Node.js-22%2B-339933" />
   <img alt="Wallet Required" src="https://img.shields.io/badge/wallet-required-22d3ee" />
-  <img alt="$OSA Experimental" src="https://img.shields.io/badge/%24OSA-experimental-facc15" />
+  <img alt="$FLOP Prelaunch" src="https://img.shields.io/badge/%24FLOP-prelaunch-facc15" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
 </p>
 
@@ -25,9 +25,9 @@
 
 ## Important Warning
 
-OSA is experimental software. `$OSA` is currently an unlisted, worthless project token concept. There is no guarantee that `$OSA` will ever have monetary value, liquidity, exchange support, or production utility.
+OSA is experimental software. OSA will not issue or use its own `$OSA` coin. Donations and future incentives are planned around the external `$FLOP` currency described by the Flop Network.
 
-Nothing in this repository is financial advice, an investment offer, or a promise of profit. Treat OSA as an experimental agent-network and tokenomics prototype until the smart contracts, reward scoring, audits, and production settlement are complete.
+`$FLOP` is not live yet. Its official teaser is a draft, with testnet targeted for Q4 2026 and mainnet for Q1 2027. OSA currently records non-settled FLOP pledge intents only: no token transfer, on-chain balance, fee, guaranteed allocation, or reward promise exists. Nothing in this repository is financial advice or an investment offer.
 
 ## What OSA Is
 
@@ -39,9 +39,9 @@ OpenSwarmAgents, short **OSA**, is a local dashboard for building and publishing
 - **Latest Projects** shows the newest shared projects entering the public network.
 - **Top100 Projects** ranks public projects by copy count.
 - **Copy** imports a public project into your own private workspace.
-- **Donate** records a USDC donation intent for a public project.
+- **Pledge** records a prelaunch FLOP donation intent for a public project without moving tokens.
 - **Review** lets wallet-connected users rate public projects with stars and feedback.
-- **Wallet login is mandatory** because wallet public keys anchor project ownership, reviews, donations, and future `$OSA` work rewards.
+- **Wallet login is mandatory** because wallet public keys anchor project ownership, reviews, FLOP pledges, and possible future FLOP incentives.
 
 OSA no longer splits the public marketplace into separate Agents, Rooms, and Projects. A project is the product unit. That keeps the network understandable: users copy a complete working setup, not a loose card with missing context.
 
@@ -50,7 +50,7 @@ The dashboard starts with only two rooms:
 - **Home** for private work
 - **Latest Projects** for copy-only public projects
 
-An example project is included in Latest Projects and Top100 Projects so you can test Copy, Donate, and Review without creating fake Home work.
+An example project is included in Latest Projects and Top100 Projects so you can test Copy, FLOP Pledge, and Review without creating fake Home work.
 
 ## Demo
 
@@ -60,7 +60,7 @@ An example project is included in Latest Projects and Top100 Projects so you can
 
 ## Screenshots
 
-The repository keeps four current dashboard screenshots. They are generated with `npm run screenshots`; the capture hides the floating chat so the underlying project workflow remains readable.
+The repository keeps four current dashboard screenshots. They are generated with `npm run screenshots`; three captures hide the floating chat so the underlying workflow remains readable, while one shows the Technocore chat itself.
 
 | Home And Latest Projects | Technocore Chat |
 | --- | --- |
@@ -135,9 +135,9 @@ PORT=8790 npm run dev
 8. Watch new entries appear in **Latest Projects**.
 9. Open **Top100 Projects** to see which public projects are being copied.
 10. Open **OSA Network Activity** and the floating **osa-network** chat to watch OSA public activity and Technocore feedback.
-11. Copy, donate, and review public projects from your wallet identity.
+11. Copy, pledge FLOP, and review public projects from your wallet identity.
 
-The topbar shows the live network state, public project count, active working agents, copy count, **Earned Donations**, and the connected wallet's `$OSA` balance. When Technocore signing is active, the old peer metric slot becomes a compact `TC DID` tile with a copy button for the node's full `did:key`. Until the token is deployed and balance reads are configured, the `$OSA` balance is shown honestly as `0 OSA`.
+The topbar shows the live network state, public project count, active working agents, copy count, recorded **FLOP Pledges**, and `$FLOP: Prelaunch`. When Technocore signing is active, the old peer metric slot becomes a compact `TC DID` tile with a copy button for the node's full `did:key`. OSA intentionally shows no FLOP balance while the token and network are not live.
 
 The right-side **Canvas** is the desk output sandbox. Select a desk and it shows the agent's latest result, cached manager audit, task spec, and available files in one collapsible panel while the room stays visible.
 
@@ -213,12 +213,12 @@ Each row shows:
 - project name
 - number of copied agents/rooms inside the project
 - public copy count
-- total USDC donation intents earned
+- total prelaunch FLOP pledge intents
 - average project rating
 - review count
 - **Details**
 - **Copy**
-- **Donate**
+- **Pledge**
 - **Review**
 
 Rankings update live when projects are shared, copied, donated to, reviewed, or imported from a peer node.
@@ -281,7 +281,7 @@ OSA_TECHNOCORE_SIGNED=1
 
 When **Share Project** succeeds, OSA first publishes and signs the project in its own Public Projects feed. The share dialog lets the owner choose the Technocore announcement rooms; `osa-network` is checked by default and rooms such as `credence`, `kibble`, and `flop-market` are optional. If `OSA_TECHNOCORE_ANNOUNCE=1`, OSA posts a short background announcement to the selected rooms. The announcement contains the project name, project id, room count, agent count, and the public dashboard URL when `OSA_PUBLIC_URL` or `OSA_FEDERATION_ADVERTISE_URL` is configured. With `OSA_TECHNOCORE_SIGNED=1`, that announcement is signed by the node DID. A Technocore outage does not block the OSA project share.
 
-Current scope: OSA can discover Technocore rooms, pin them as chat tabs, read room tails, post signed room messages, mirror `osa-network` chat, announce shared projects to selected rooms, dedupe mirrored local messages, display the node DID, and let owners delete their own public project listing from Latest Projects and Top100. OSA does not yet claim `kibble` jobs, post `RESULT` lines from completed desks, turn Technocore replies into project reviews, or use `credence`/`kibble` attestations for OSA rewards.
+Current scope: OSA can discover Technocore rooms, pin them as chat tabs, read room tails, post signed room messages, mirror `osa-network` chat, announce shared projects to selected rooms, dedupe mirrored local messages, display the node DID, and let owners delete their own public project listing from Latest Projects and Top100. OSA does not yet claim `kibble` jobs, post `RESULT` lines from completed desks, turn Technocore replies into project reviews, or use `credence`/`kibble` attestations for FLOP incentives.
 
 `credence` messages such as `Vouch v1`, `Task v1`, `Accept v1`, and `Submit v1` are protocol-shaped work and reputation records, not generic project announcements. OSA project sharing currently sends an OSA announcement; a deeper OSA-Credence bridge should emit and parse those prefixes only when OSA is actually creating tasks, accepting work, submitting results, or vouching for another DID.
 
@@ -295,7 +295,7 @@ When `OSA_FEDERATION_ADVERTISE_URL` is configured, a node also includes a signed
 
 A trusted allowlist is the list of node identities you explicitly trust for signed federation data. You pin the node id and public key once, either through the Account view helper or config. You do not need to maintain every reachable URL by hand when discovery is enabled: trusted nodes can announce and re-share their current URL, but unknown node identities still cannot inject ranking or reward data.
 
-Blockchain should be used later for public checkpoints, reward epochs, USDC settlement proof, and `$OSA` distribution. It should not be used as the transport layer for every project, review, copy, or node-sync message.
+Blockchain may later be used for public checkpoints and official FLOP settlement once the Flop Network specification and mainnet are live. It should not be used as the transport layer for every project, review, copy, or node-sync message.
 
 ## Copy Mechanics
 
@@ -317,81 +317,29 @@ OSA uses the connected EVM public key for:
 
 - project owner identity
 - copy provenance
-- donation identity
+- FLOP pledge identity
 - project reviews
-- future `$OSA` work rewards
+- possible future FLOP work incentives
 - decentralized reputation and anti-spam signals
-- showing the current `$OSA` balance in the dashboard topbar
+- showing the honest `$FLOP: Prelaunch` state in the dashboard topbar
 
 The current dashboard login asks the wallet for an account address and chain id, then verifies a short-lived server nonce with `personal_sign`. It does not request a private key and does not send a transaction. Successful wallet login creates a normal HttpOnly OSA browser session, so server-side APIs can treat the wallet pubkey as authenticated local identity.
 
-## Donations
+## FLOP Donations And Incentives
 
-Public projects can receive USDC donation intents.
+OSA will use `$FLOP`, not an OSA-issued coin, for future donations and incentives. The dashboard currently offers `1 FLOP`, `5 FLOP`, and custom pledge amounts for public projects.
 
-The dashboard offers:
+These are **prelaunch pledge intents**. Saving one associates an amount with the authenticated wallet and public project, but:
 
-- `1 USDC`
-- `5 USDC`
-- custom USDC amount
+- no FLOP token is transferred or reserved;
+- OSA does not display a fictional wallet balance;
+- OSA charges no donation fee;
+- a pledge is not a guaranteed allocation or legally binding payment;
+- incentive scoring does not mint or promise FLOP.
 
-OSA keeps **5%** of donations for development and operating costs. Think of it as the infrastructure snack budget: tiny compared with the builder's 95%, but still what keeps servers, audits, and late-night fixes from being funded by vibes.
+According to the official [Flop Network teaser](https://flop.finance/teaser/), `$FLOP` is planned as the network's native currency for useful inference, staking, and agent commerce. That document is version `0.1`, marked **Draft**, and says the definitive Yellow Paper is not final. It currently targets testnet in Q4 2026 and mainnet in Q1 2027. Those dates and parameters can change.
 
-Fee wallet:
-
-```text
-0x0D92d175943336E3Ad099e55FBe4248dC6fA947b
-```
-
-The current implementation records donation intents. Before production settlement, OSA must wire in real USDC transfers and transaction-hash verification.
-
-## $OSA Tokenomics
-
-Planned fixed supply:
-
-```text
-10,000,000,000 OSA
-```
-
-Planned community distribution:
-
-```text
-10,000,000,000 OSA over 12 years
-```
-
-**The entire 10 billion token supply is committed to community distribution. There are no team, investor, advisor, foundation, or private-sale token allocations. Tokens enter circulation gradually through published project, node, review, adoption, liquidity, contribution, and security reward programs.**
-
-The split is not an insider reserve. It is a set of community program buckets: 5B OSA for useful public project creators and maintainers, and the other 5B OSA for the surrounding network work that makes those projects valuable and harder to fake: node operation, reviews, curation, bounties, verified adoption, launch liquidity, and security challenges.
-
-The reward idea is simple: connected accounts should earn `$OSA` when they let useful agents work in the network.
-
-The recommended distribution model is weekly epochs over 12 years. Use the Top100 Projects chart as the main reward surface, but score a rolling 28-day window instead of paying one instant snapshot. A production scoring system should consider active agent work, accepted results, retained project usefulness, copy activity, reviews, peer validation, federation uptime with real public data, and anti-spam caps.
-
-See [docs/TOKENOMICS.md](docs/TOKENOMICS.md) for the current allocation and reward-distribution draft.
-
-## Smart Contracts
-
-The repository includes a draft Solidity implementation:
-
-- [contracts/OSAToken.sol](contracts/OSAToken.sol)
-
-It contains:
-
-- `OSAToken`: fixed-supply ERC-20 token.
-- `OSAWorkRewardsDistributor`: Merkle-based reward distributor capped by a twelve-year community unlock.
-
-This is a draft. Do not deploy it as production financial infrastructure before tests, deployment planning, multisig setup, timelocks, reward-scoring audits, and an independent audit.
-
-Recommended next steps before deployment:
-
-- choose chain
-- choose deployment tooling
-- use a multisig for contract ownership and reward root publication
-- define timelocks and challenge windows for reward roots
-- write Solidity tests and invariant tests
-- build reward epoch generation and Merkle proof tooling
-- run an independent security audit
-- verify contracts on the chain explorer
+OSA will only add actual settlement, balance reads, fees, or reward distribution after official FLOP chain identifiers, token/asset semantics, transaction verification, and production APIs are published and reviewed. See [docs/TOKENOMICS.md](docs/TOKENOMICS.md) for the integration policy.
 
 ## Project Reviews
 
@@ -465,25 +413,24 @@ If wallet login does not appear, open OSA in a browser with an EVM wallet extens
 
 ## Security Notes
 
-Security matters because OSA now touches wallets, donations, rewards, and public network data.
+Security matters because OSA touches wallets, pledge intents, future incentives, and public network data.
 
 Current safety posture:
 
 - dashboard wallet login is required
 - wallet login uses a short-lived signed nonce and blocks challenge replay
-- donation flow is intent-only until on-chain settlement is added
-- `$OSA` contract is draft-only
-- reward distribution is designed around capped Merkle claims
+- FLOP donation flow is explicitly prelaunch and intent-only
+- no OSA token or FLOP balance is created or simulated
+- FLOP settlement and incentives remain disabled until official production specifications exist
 - public projects are copy-only templates, not remote execution handles
 - local runtime data stays local by default
 
 Before production money moves, add:
 
-- USDC transfer execution and verification
-- chain and contract allowlists
-- reward scoring audit trail
-- smart contract tests and independent audit
-- multisig ownership
+- official FLOP chain/asset identifiers and transaction verification
+- chain and contract allowlists derived from official FLOP releases
+- incentive-scoring audit trail and anti-sybil rules
+- independent review of the eventual settlement integration
 - incident response plan
 
 ## License

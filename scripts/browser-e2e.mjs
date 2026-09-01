@@ -55,7 +55,7 @@ try {
   let top = await getJson("/api/top-projects?limit=100");
   assert(Array.isArray(top.agents) && top.agents.some((agent) => agent.target_id === "osa-example-reward-engine"), "fresh Top100 should include the example project");
   const balance = await getJson(`/api/wallet/balance?address=${testWalletAddress}`);
-  assert(balance.formatted === "0 OSA" && balance.source === "not_deployed", "wallet balance should honestly report undeployed $OSA state");
+  assert(balance.balance_flop === null && balance.formatted === "Prelaunch" && balance.source === "flop_prelaunch", "wallet endpoint should honestly report FLOP prelaunch state");
   let config = await getJson("/api/gui-config");
   const agentIds = config.agents.map((agent) => agent.id);
   for (const id of ["technocore-specialist", "coder", "bugfixer", "info-guy", "coinexpert", "graphicsexpert", "moneymaker", "security-expert", "explorer"]) {
@@ -149,7 +149,8 @@ try {
 
   await page.goto(`${baseUrl}/osa-network/`, { waitUntil: "networkidle" });
   await expectText(page, "body", "Connect Wallet");
-  await expectText(page, "body", "$OSA wallet identity required");
+  await expectText(page, "body", "Wallet identity required");
+  await expectText(page, "body", "$FLOP is not live yet");
   await page.getByRole("button", { name: "Connect Wallet" }).click();
   await expectText(page, "body", "Home");
   await expectText(page, "body", "Latest Projects");
@@ -212,8 +213,9 @@ try {
   assert(!bodyText.includes("Top100 Rooms"), "room charts should not render");
   assert(!bodyText.includes("Public Rooms"), "legacy Public Rooms should not render");
   assert(!bodyText.includes("Agent Chain"), "old Agent Chain label should not render");
-  assert(bodyText.includes("Earned Donations"), "topbar should label donation totals clearly");
-  assert(bodyText.includes("0 OSA"), "topbar should show connected wallet $OSA balance");
+  assert(bodyText.includes("FLOP PLEDGES"), "topbar should label prelaunch FLOP pledge totals clearly");
+  assert(bodyText.includes("Prelaunch"), "topbar should show the honest FLOP prelaunch state");
+  assert(!bodyText.includes("0 OSA"), "topbar should not present a retired OSA token balance");
   assert(bodyText.includes("Save Project"), "project save control should replace Load Desk/Snapshots");
   assert(!bodyText.includes("Save/Load Project"), "topbar should not expose the old Save/Load Project wording");
   assert(!bodyText.includes("Snapshots"), "topbar should not expose the old snapshots wording");
@@ -336,8 +338,8 @@ try {
   topProjects = await getJson("/api/top-projects?limit=100");
   const copiedSharedProject = topProjects.agents.find((agent) => agent.target_id === projectId);
   assert(copiedSharedProject?.copy_count === 1, "Top100 Projects should count project copies");
-  assert(copiedSharedProject?.donation_total_usdc === 0, "Top100 Projects should expose donation totals");
-  await postJson("/api/donations", {
+  assert(copiedSharedProject?.donation_total_flop === 0, "Top100 Projects should expose FLOP pledge totals");
+  const pledge = await postJson("/api/donations", {
     session_id: projectShare.project.id,
     target_type: "project",
     target_id: projectId,
@@ -345,6 +347,7 @@ try {
     wallet_address: walletAddress,
     chain_id: "0x1"
   });
+  assert(pledge.donation?.currency === "FLOP" && pledge.donation?.feeAmount === 0, "donations should be zero-fee FLOP prelaunch pledges");
   const review = await postJson(`/api/public/projects/${encodeURIComponent(projectId)}/reviews`, {
     wallet_address: walletAddress,
     rating: 5,
@@ -372,7 +375,7 @@ try {
   assert(!activity.events?.some((item) => item.type === "agent_registered"), "Network activity should not leak private Home agent registrations");
   topProjects = await getJson("/api/top-projects?limit=100");
   const donatedSharedProject = topProjects.agents.find((agent) => agent.target_id === projectId);
-  assert(donatedSharedProject?.donation_total_usdc === 1, "Top100 Projects should sum project donations");
+  assert(donatedSharedProject?.donation_total_flop === 1, "Top100 Projects should sum FLOP pledge intents");
   assert(donatedSharedProject?.review_count === 1, "Top100 Projects should expose review counts");
   assert(donatedSharedProject?.rating_avg === 5, "Top100 Projects should expose average ratings");
 
@@ -402,7 +405,7 @@ try {
   await page.getByRole("button", { name: "Top100 Projects" }).click();
   await expectText(page, "body", "Top100 Projects");
   await expectText(page, "body", "Browser E2E Project");
-  await expectText(page, "body", "1 USDC earned");
+  await expectText(page, "body", "1 FLOP pledged");
   await expectText(page, "body", "5.0 stars");
   await expectText(page, "body", "Details");
   await expectText(page, "body", "Review");

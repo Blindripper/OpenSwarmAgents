@@ -39,8 +39,8 @@ export interface Session {
   copy_count?: number;
   last_copied_at?: string | null;
   donation_count?: number;
-  donation_total_usdc?: number;
-  osa_fee_total_usdc?: number;
+  donation_total_flop?: number;
+  platform_fee_total_flop?: number;
   review_count?: number;
   rating_avg?: number;
   latest_review?: ProjectReviewSummary | null;
@@ -63,8 +63,8 @@ export interface TopAgent {
   goal: string;
   copy_count: number;
   donation_count?: number;
-  donation_total_usdc?: number;
-  osa_fee_total_usdc?: number;
+  donation_total_flop?: number;
+  platform_fee_total_flop?: number;
   review_count?: number;
   rating_avg?: number;
   latest_review?: ProjectReviewSummary | null;
@@ -114,8 +114,8 @@ export interface PublicProjectDetail {
     copy_count: number;
     copy_event_count?: number;
     donation_count?: number;
-    donation_total_usdc?: number;
-    osa_fee_total_usdc?: number;
+    donation_total_flop?: number;
+    platform_fee_total_flop?: number;
     review_count?: number;
     rating_avg?: number;
   };
