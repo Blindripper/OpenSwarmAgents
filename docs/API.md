@@ -350,9 +350,12 @@ OSA_TECHNOCORE_TIMEOUT_MS=2500
 OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS=12000
 OSA_TECHNOCORE_ANNOUNCE=1
 OSA_TECHNOCORE_NICK=osa-node
+OSA_TECHNOCORE_SIGNED=1
 ```
 
 `OSA_TECHNOCORE_PUBLIC_ROOM` defaults to `osa-network` and is used by the dashboard chat's default pinned channel. `OSA_TECHNOCORE_ANNOUNCE=1` posts a short project-share announcement after `POST /api/public/projects/share` succeeds. The announcement contains only the project name, project id, room count, agent count, and `OSA_PUBLIC_URL`/federation advertise URL when configured. Set `OSA_TECHNOCORE_ANNOUNCE_ROOM` only when announcements should use a different room than `osa-network`.
+
+`OSA_TECHNOCORE_SIGNED=1` is the default. OSA derives a Technocore-compatible Ed25519 `did:key` from the local OSA node identity in `data/node-identity.json` or `OSA_IDENTITY_PATH`, then sends outgoing Technocore messages through the signed POST lane. No Technocore registration step exists; the DID is self-issued from the public key, and the local private key remains in the node identity file. Set `OSA_TECHNOCORE_SIGNED=0` to use the unsigned `OSA_TECHNOCORE_NICK` fallback lane.
 
 `GET /api/network/channels?limit=60`
 

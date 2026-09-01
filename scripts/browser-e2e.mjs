@@ -134,6 +134,21 @@ try {
   await expectText(page, "body", "Top100 Projects");
   await expectText(page, "body", "OSA Network Activity");
   await expectText(page, "body", "osa-network");
+  const chatWindow = page.getByTestId("network-chat-window");
+  const initialChatBox = await chatWindow.boundingBox();
+  assert(initialChatBox && initialChatBox.width >= 560 && initialChatBox.height >= 600, "network chat should open as a large default window");
+  const resizeHandle = page.getByTestId("network-chat-resize");
+  const resizeBox = await resizeHandle.boundingBox();
+  assert(resizeBox, "network chat should expose a resize handle");
+  await page.mouse.move(resizeBox.x + resizeBox.width / 2, resizeBox.y + resizeBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(resizeBox.x + resizeBox.width / 2 + 120, resizeBox.y + resizeBox.height / 2 + 40, { steps: 8 });
+  await page.mouse.up();
+  const resizedChatBox = await chatWindow.boundingBox();
+  assert(
+    resizedChatBox && resizedChatBox.width > initialChatBox.width + 80 && resizedChatBox.height > initialChatBox.height + 20,
+    "network chat should be resizable by dragging the corner handle"
+  );
   await expectText(page, "body", "Canvas");
   await expectText(page, "body", "Start a desk to show project results.");
   await page.locator('button[title="Collapse canvas"]').click();

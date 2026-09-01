@@ -62,6 +62,8 @@ try {
   assert(health.runtime.technocoreRooms?.includes("osa-lab"), "Technocore runtime status should expose configured read rooms");
   assert(health.runtime.technocoreRooms?.includes("osa-network"), "Technocore public channel should be included in read rooms");
   assert(health.runtime.technocoreAnnounceEnabled === true, "Technocore announce status should be visible when configured");
+  assert(health.runtime.technocoreSignedMessages === true, "Technocore writes should use the signed DID lane by default");
+  assert(String(health.runtime.technocoreDid || "").startsWith("did:key:z6Mk"), "Technocore DID should be derived from the OSA node identity");
   const channels = await getJson("/api/network/channels?limit=10");
   assert(channels.channels.some((item) => item.id === "osa-network" && item.pinned === true), "Channel list should include pinned osa-network");
   assert(channels.channels.some((item) => item.id === "osa-lab"), "Channel list should include available Technocore channels");
@@ -77,13 +79,13 @@ try {
     message: "RC smoke direct Technocore channel write"
   });
   assert(labPost.message?.source === "technocore" && labPost.message?.room === "osa-lab", "Non-public Technocore channel posts should stay external");
-  assert(technocoreWrites.some((item) => item.room === "osa-lab" && item.text.includes("RC smoke direct Technocore channel write")), "Technocore fixture should receive selected-channel text");
+  assert(technocoreWrites.some((item) => item.room === "osa-lab" && item.text.includes("RC smoke direct Technocore channel write") && item.from.startsWith("did:key:z6Mk")), "Technocore fixture should receive selected-channel text from the OSA DID");
   const mirroredChat = await postJson("/api/network/chat", {
     message: "RC smoke public channel mirror",
     wallet_address: testWalletAddress
   });
   assert(mirroredChat.technocore_mirrored === true, "osa-network posts should mirror to the Technocore OSA room when enabled");
-  assert(technocoreWrites.some((item) => item.room === "osa-network" && item.text.includes("RC smoke public channel mirror")), "Technocore fixture should receive mirrored osa-network text");
+  assert(technocoreWrites.some((item) => item.room === "osa-network" && item.text.includes("RC smoke public channel mirror") && item.from.startsWith("did:key:z6Mk")), "Technocore fixture should receive mirrored osa-network text from the OSA DID");
   const mirroredChannel = await getJson("/api/network/chat?limit=20");
   assert(
     mirroredChannel.messages.filter((item) => item.message === "RC smoke public channel mirror").length === 1,
@@ -453,7 +455,7 @@ function startTechnocoreFixture() {
       }));
       return;
     }
-    if (url.pathname === "/r/osa-lab" || url.pathname === "/r/osa-network") {
+    if ((url.pathname === "/r/osa-lab" || url.pathname === "/r/osa-network") && req.method === "GET") {
       const room = url.pathname.split("/").at(-1);
       const baseMessages = [{
         seq: 41,
@@ -466,7 +468,9 @@ function startTechnocoreFixture() {
         .map((item, index) => ({
           seq: 42 + index,
           ts: "2026-09-01T06:00:10.000Z",
-          from: "osa-node",
+          from: item.from,
+          nonce: item.nonce,
+          sig: item.sig,
           text: item.text
         }));
       const messages = [...baseMessages, ...mirroredMessages];
@@ -481,10 +485,37 @@ function startTechnocoreFixture() {
       }));
       return;
     }
+    if ((url.pathname === "/r/osa-lab" || url.pathname === "/r/osa-network") && req.method === "POST") {
+      const room = url.pathname.split("/").at(-1);
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        const parsed = JSON.parse(body || "{}");
+        if (!String(parsed.did || "").startsWith("did:key:z6Mk") || !parsed.sig || !parsed.nonce || !parsed.text) {
+          res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+          res.end("bad signed technocore fixture write\n");
+          return;
+        }
+        technocoreWrites.push({
+          room,
+          from: parsed.did,
+          sig: parsed.sig,
+          nonce: parsed.nonce,
+          text: parsed.text
+        });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, room }));
+      });
+      return;
+    }
     const sayMatch = url.pathname.match(/^\/r\/([^/]+)\/say\/osa-node\/(.+)$/);
     if (sayMatch) {
       technocoreWrites.push({
         room: sayMatch[1],
+        from: "osa-node",
         text: decodeURIComponent(sayMatch[2])
       });
       res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });

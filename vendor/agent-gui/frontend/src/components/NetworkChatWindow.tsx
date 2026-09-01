@@ -10,6 +10,14 @@ interface Props {
 
 const defaultChannel = "osa-network";
 const pinnedChannelsKey = "osa-network-chat-pinned-channels";
+const minimizedChatSize = { width: 240, height: 38 };
+const minChatSize = { width: 340, height: 360 };
+const preferredChatSize = { width: 600, height: 680 };
+
+interface ChatSize {
+  width: number;
+  height: number;
+}
 
 function shortAddress(address?: string | null): string {
   if (!address) return "node";
@@ -45,9 +53,28 @@ function timeLabel(value: string): string {
   return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-function defaultChatPos(dockRightOffset: number, minimized = false) {
-  const width = minimized ? 240 : 390;
-  const height = minimized ? 38 : 470;
+function maxChatSize(dockRightOffset: number): ChatSize {
+  return {
+    width: Math.max(minChatSize.width, window.innerWidth - dockRightOffset - 24),
+    height: Math.max(minChatSize.height, window.innerHeight - 120),
+  };
+}
+
+function clampChatSize(size: ChatSize, dockRightOffset: number): ChatSize {
+  const maxSize = maxChatSize(dockRightOffset);
+  return {
+    width: Math.max(minChatSize.width, Math.min(maxSize.width, size.width)),
+    height: Math.max(minChatSize.height, Math.min(maxSize.height, size.height)),
+  };
+}
+
+function defaultChatSize(dockRightOffset: number): ChatSize {
+  return clampChatSize(preferredChatSize, dockRightOffset);
+}
+
+function defaultChatPos(dockRightOffset: number, size: ChatSize, minimized = false) {
+  const width = minimized ? minimizedChatSize.width : size.width;
+  const height = minimized ? minimizedChatSize.height : size.height;
   return {
     left: Math.max(16, window.innerWidth - dockRightOffset - width),
     top: Math.max(80, window.innerHeight - height - 40),
@@ -68,14 +95,18 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minimized, setMinimized] = useState(false);
-  const [pos, setPos] = useState(() => defaultChatPos(dockRightOffset));
+  const [size, setSize] = useState(() => defaultChatSize(dockRightOffset));
+  const [pos, setPos] = useState(() => defaultChatPos(dockRightOffset, defaultChatSize(dockRightOffset)));
   const dragRef = useRef<{ dx: number; dy: number } | null>(null);
+  const resizeRef = useRef<{ startX: number; startY: number; width: number; height: number } | null>(null);
   const userMovedRef = useRef(false);
+  const userResizedRef = useRef(false);
 
   const channelById = new Map(channels.map((channel) => [channel.id, channel]));
   const pinnedTabs = pinnedChannels.map((id) => channelById.get(id) || defaultChannelRecord(id));
   const availableChannels = channels.filter((channel) => !pinnedChannels.includes(channel.id));
   const activeName = channelById.get(activeChannel)?.name || activeChannel || defaultChannel;
+  const visibleSize = minimized ? minimizedChatSize : size;
 
   async function refreshMessages(channel = activeChannel) {
     try {
@@ -128,20 +159,32 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
   }, [activeChannel, pinnedChannels]);
 
   useEffect(() => {
-    if (userMovedRef.current) return;
-    setPos(defaultChatPos(dockRightOffset, minimized));
+    const nextSize = userResizedRef.current ? clampChatSize(size, dockRightOffset) : defaultChatSize(dockRightOffset);
+    if (!userResizedRef.current) setSize(nextSize);
+    if (!userMovedRef.current) setPos(defaultChatPos(dockRightOffset, nextSize, minimized));
   }, [dockRightOffset, minimized]);
 
   useEffect(() => {
     function onMove(event: MouseEvent) {
+      if (resizeRef.current) {
+        userResizedRef.current = true;
+        const maxWidth = Math.max(minChatSize.width, window.innerWidth - pos.left - 8);
+        const maxHeight = Math.max(minChatSize.height, window.innerHeight - pos.top - 8);
+        setSize({
+          width: Math.max(minChatSize.width, Math.min(maxWidth, resizeRef.current.width + event.clientX - resizeRef.current.startX)),
+          height: Math.max(minChatSize.height, Math.min(maxHeight, resizeRef.current.height + event.clientY - resizeRef.current.startY)),
+        });
+        return;
+      }
       if (!dragRef.current) return;
       setPos({
-        left: Math.max(8, Math.min(window.innerWidth - 180, event.clientX - dragRef.current.dx)),
+        left: Math.max(8, Math.min(window.innerWidth - visibleSize.width - 8, event.clientX - dragRef.current.dx)),
         top: Math.max(8, Math.min(window.innerHeight - 40, event.clientY - dragRef.current.dy)),
       });
     }
     function onUp() {
       dragRef.current = null;
+      resizeRef.current = null;
     }
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -149,7 +192,7 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, []);
+  }, [pos.left, pos.top, visibleSize.width]);
 
   function pinChannel(id: string) {
     setPinnedChannels((previous) => uniqueChannels([...previous, id]));
@@ -185,12 +228,13 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
 
   return (
     <div
+      data-testid="network-chat-window"
       style={{
         position: "fixed",
         left: pos.left,
         top: pos.top,
-        width: minimized ? 240 : 390,
-        height: minimized ? 38 : 470,
+        width: visibleSize.width,
+        height: visibleSize.height,
         zIndex: 3100,
         border: "1px solid #273453",
         borderRadius: 8,
@@ -352,7 +396,7 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
             )}
           </div>
 
-          <div style={{ overflow: "auto", minWidth: 0, padding: 10, display: "grid", gap: 8, alignContent: "end", boxSizing: "border-box" }}>
+          <div style={{ overflowY: "auto", overflowX: "hidden", minWidth: 0, padding: 10, display: "grid", gap: 8, alignContent: "end", boxSizing: "border-box" }}>
             {messages.length === 0 ? (
               <div style={{ color: "var(--text-dim)", fontSize: 12, alignSelf: "center", justifySelf: "center" }}>
                 No messages in {activeName}.
@@ -418,6 +462,31 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
               Send
             </button>
           </form>
+          <div
+            data-testid="network-chat-resize"
+            title="Resize chat"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              userResizedRef.current = true;
+              resizeRef.current = {
+                startX: event.clientX,
+                startY: event.clientY,
+                width: size.width,
+                height: size.height,
+              };
+            }}
+            style={{
+              position: "absolute",
+              right: 3,
+              bottom: 3,
+              width: 16,
+              height: 16,
+              cursor: "nwse-resize",
+              background: "linear-gradient(135deg, transparent 0 45%, #2a3558 45% 55%, transparent 55%), linear-gradient(135deg, transparent 0 65%, #7ee0c2 65% 75%, transparent 75%)",
+              opacity: 0.9,
+            }}
+          />
         </div>
       )}
     </div>

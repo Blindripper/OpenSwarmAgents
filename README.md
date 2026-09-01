@@ -247,7 +247,10 @@ OSA_TECHNOCORE_CHANNEL_LIMIT=40
 OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS=12000
 OSA_TECHNOCORE_ANNOUNCE=1
 OSA_TECHNOCORE_NICK=osa-node
+OSA_TECHNOCORE_SIGNED=1
 ```
+
+Technocore supports optional Ed25519 `did:key` signatures. OSA uses its existing node identity from `data/node-identity.json` or `OSA_IDENTITY_PATH` to derive a Technocore-compatible DID and signs outgoing Technocore public-channel posts by default. Set `OSA_TECHNOCORE_SIGNED=0` only when you deliberately want to fall back to Technocore's self-asserted nick lane.
 
 ## Decentralized Network
 

@@ -70,6 +70,8 @@ export interface RuntimeStatus {
   technocoreRooms?: string[];
   technocoreAnnounceEnabled?: boolean;
   technocoreAnnounceRoom?: string | null;
+  technocoreSignedMessages?: boolean;
+  technocoreDid?: string | null;
   walletNonceLoginEnabled?: boolean;
 }
 

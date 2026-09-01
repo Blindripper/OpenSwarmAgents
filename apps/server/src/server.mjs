@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { join, extname, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  createPublicKey,
   createHash,
   generateKeyPairSync,
   pbkdf2Sync,
@@ -66,7 +67,9 @@ const technocoreChannelTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_CHAN
 const technocoreAnnounceEnabled = process.env.OSA_TECHNOCORE_ANNOUNCE === "1";
 const technocoreAnnounceRoom = normalizeTechnocoreName(process.env.OSA_TECHNOCORE_ANNOUNCE_ROOM || technocorePublicRoom);
 const technocoreNick = normalizeTechnocoreName(process.env.OSA_TECHNOCORE_NICK || "osa-node") || "osa-node";
+const technocoreSignedMessages = process.env.OSA_TECHNOCORE_SIGNED !== "0";
 const technocoreChannelsCache = { key: "", expiresAt: 0, channels: [], error: null };
+const technocoreNonceByRoom = new Map();
 const managedConnectorProcesses = new Map();
 const managedConnectorLogLimit = 12 * 1024;
 const agentGuiCodexRunnerEnabled = process.env.OSA_AGENTGUI_ENABLE_CODEX_RUNNER === "1";
@@ -137,6 +140,7 @@ const rateLimitBuckets = new Map();
 const realtimeClients = new Set();
 validateRuntimeConfig();
 const nodeIdentity = await loadNodeIdentity();
+const technocoreDid = technocoreSignedMessages ? didKeyFromEd25519PublicKeyPem(nodeIdentity.publicKeyPem) : null;
 let store = await loadStore();
 
 async function loadStore() {
@@ -3634,6 +3638,8 @@ function publicRuntime() {
     technocoreChannelTimeoutMs,
     technocoreAnnounceEnabled: technocoreEnabled && technocoreAnnounceEnabled && Boolean(technocoreAnnounceRoom),
     technocoreAnnounceRoom: technocoreEnabled && technocoreAnnounceRoom ? technocoreAnnounceRoom : null,
+    technocoreSignedMessages: technocoreEnabled && technocoreSignedMessages && Boolean(technocoreDid),
+    technocoreDid: technocoreEnabled && technocoreDid ? technocoreDid : null,
     node: publicNodeIdentity(),
     oauthConfigured: Object.fromEntries(
       Object.keys(oauthProviderConfig).map((provider) => [provider, Boolean(providerCredentials(provider))])
@@ -5808,7 +5814,8 @@ async function publicNetworkChatMessages(limit = 60, channel = technocorePublicR
 }
 
 function isMirroredLocalNetworkChat(externalMessage, localMessages) {
-  if (externalMessage.source !== "technocore" || externalMessage.from !== technocoreNick) return false;
+  if (externalMessage.source !== "technocore") return false;
+  if (externalMessage.from !== technocoreNick && externalMessage.from !== technocoreDid) return false;
   return localMessages.some((localMessage) => localMessage.message === externalMessage.message);
 }
 
@@ -5866,7 +5873,7 @@ async function createNetworkChatMessage(body = {}) {
       error.statusCode = 400;
       throw error;
     }
-    await technocoreSay(room, text);
+    const technocoreWrite = await technocoreSay(room, text);
     return {
       ok: true,
       technocore_mirrored: true,
@@ -5880,8 +5887,8 @@ async function createNetworkChatMessage(body = {}) {
         external: true,
         untrusted: true,
         room,
-        from: technocoreNick,
-        signed: false
+        from: technocoreWrite.from || technocoreNick,
+        signed: technocoreWrite.signed === true
       }
     };
   }
@@ -5940,6 +5947,14 @@ async function mirrorNetworkChatToTechnocore(message) {
 }
 
 async function technocoreSay(room, text) {
+  if (technocoreSignedMessages && technocoreDid) {
+    try {
+      await technocoreSaySigned(room, text);
+      return { signed: true, from: technocoreDid };
+    } catch (error) {
+      console.warn(`Technocore signed write failed, falling back to unsigned nick: ${error.message}`);
+    }
+  }
   const path = `/r/${room}/say/${technocoreNick}/${encodeURIComponent(text)}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), technocoreTimeoutMs);
@@ -5949,10 +5964,41 @@ async function technocoreSay(room, text) {
       headers: { accept: "text/plain" }
     });
     if (!response.ok) throw new Error(`Technocore returned ${response.status}`);
+    return { signed: false, from: technocoreNick };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function technocoreSaySigned(room, text) {
+  const nonce = nextTechnocoreNonce(room);
+  const payload = `${room}|${nonce}|${text}`;
+  const sig = signPayload(null, Buffer.from(payload, "utf8"), nodeIdentity.privateKeyPem).toString("base64url");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), technocoreTimeoutMs);
+  try {
+    const response = await fetch(technocoreUrl(`/r/${room}`), {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ did: technocoreDid, sig, nonce, text })
+    });
+    if (!response.ok) throw new Error(`Technocore returned ${response.status}`);
     return true;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function nextTechnocoreNonce(room) {
+  const nowMicros = BigInt(Date.now()) * 1000n + (process.hrtime.bigint() % 1000n);
+  const previous = technocoreNonceByRoom.get(room) || 0n;
+  const next = nowMicros > previous ? nowMicros : previous + 1n;
+  technocoreNonceByRoom.set(room, next);
+  return next.toString();
 }
 
 function publicProjectTaskSummary(task) {
@@ -6322,6 +6368,28 @@ function normalizeTechnocoreBaseUrl(value) {
   } catch {
     return "https://technocore.chat";
   }
+}
+
+function didKeyFromEd25519PublicKeyPem(publicKeyPem) {
+  const der = createPublicKey(publicKeyPem).export({ type: "spki", format: "der" });
+  const rawPublicKey = Buffer.from(der).slice(-32);
+  return `did:key:z${base58btcEncode(Buffer.concat([Buffer.from([0xed, 0x01]), rawPublicKey]))}`;
+}
+
+function base58btcEncode(bytes) {
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let value = BigInt(`0x${Buffer.from(bytes).toString("hex") || "0"}`);
+  let output = "";
+  while (value > 0n) {
+    const remainder = Number(value % 58n);
+    output = alphabet[remainder] + output;
+    value /= 58n;
+  }
+  for (const byte of bytes) {
+    if (byte !== 0) break;
+    output = alphabet[0] + output;
+  }
+  return output || alphabet[0];
 }
 
 function boundedNumber(value, fallback, min, max) {
