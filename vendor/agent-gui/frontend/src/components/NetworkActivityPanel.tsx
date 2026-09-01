@@ -10,6 +10,7 @@ interface Props {
 }
 
 function eventTone(type: string): { color: string; label: string; state: "idle" | "working" | "thinking" } {
+  if (type.includes("technocore")) return { color: "#38bdf8", label: "Technocore Share", state: "thinking" };
   if (type.includes("copied")) return { color: "#22d3ee", label: "Copy", state: "working" };
   if (type.includes("review")) return { color: "#facc15", label: "Review", state: "thinking" };
   if (type.includes("donation")) return { color: "#7ee0c2", label: "Donation", state: "working" };
@@ -23,6 +24,15 @@ function eventProjectId(event: NetworkEvent): string | null {
   const data = event.data || {};
   const raw = data.publicProjectId || data.targetId || data.publicId;
   return typeof raw === "string" && raw ? raw : null;
+}
+
+function eventSource(event: NetworkEvent): string | null {
+  const source = event.data?.source;
+  return typeof source === "string" && source ? source : null;
+}
+
+function isExternalEvent(event: NetworkEvent): boolean {
+  return event.data?.external === true || event.data?.untrusted === true || eventSource(event) === "technocore";
 }
 
 function timeLabel(value: string): string {
@@ -44,9 +54,9 @@ export function NetworkActivityPanel({ events, live, loading = false, onRefresh,
       <div style={{ maxWidth: 1040, margin: "0 auto", display: "grid", gap: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 900 }}>Network Activity</div>
+            <div style={{ fontSize: 18, fontWeight: 900 }}>OSA Network Activity</div>
             <div style={{ marginTop: 3, fontSize: 11, color: "var(--text-dim)" }}>
-              Public OSA shares, copies, reviews, donations, syncs, and chat activity from this node and trusted peers.
+              OSA shares, copies, reviews, donations, syncs, local chat, and own Technocore shares from this node and trusted peers.
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -132,6 +142,40 @@ export function NetworkActivityPanel({ events, live, loading = false, onRefresh,
                 <div style={{ minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ color: tone.color, fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>{tone.label}</span>
+                    {eventSource(event) && (
+                      <span style={{
+                        height: 18,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        padding: "0 6px",
+                        borderRadius: 5,
+                        border: "1px solid #2a3558",
+                        color: isExternalEvent(event) ? "#93c5fd" : "var(--text-dim)",
+                        background: isExternalEvent(event) ? "#0b2540" : "#121828",
+                        fontSize: 10,
+                        fontWeight: 900,
+                        textTransform: "uppercase",
+                      }}>
+                        {eventSource(event)}
+                      </span>
+                    )}
+                    {isExternalEvent(event) && (
+                      <span style={{
+                        height: 18,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        padding: "0 6px",
+                        borderRadius: 5,
+                        border: "1px solid #3b2f1c",
+                        color: "#facc15",
+                        background: "#231a0c",
+                        fontSize: 10,
+                        fontWeight: 900,
+                        textTransform: "uppercase",
+                      }}>
+                        untrusted
+                      </span>
+                    )}
                     <span style={{ color: "var(--text-dim)", fontSize: 11 }}>{timeLabel(event.createdAt)}</span>
                   </div>
                   <div style={{ marginTop: 4, fontSize: 13, fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

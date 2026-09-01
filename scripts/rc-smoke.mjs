@@ -2,20 +2,26 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 
 const rootDir = join(import.meta.dirname, "..");
 const port = Number(process.env.OSA_RC_SMOKE_PORT || 19080 + Math.floor(Math.random() * 800));
+const technocorePort = port + 1;
 const baseUrl = `http://127.0.0.1:${port}`;
+const technocoreBaseUrl = `http://127.0.0.1:${technocorePort}`;
 const dataDir = await mkdtemp(join(tmpdir(), "osa-rc-smoke-"));
 const testWalletPrivateKey = Uint8Array.from(Buffer.from("1111111111111111111111111111111111111111111111111111111111111111", "hex"));
 const testWalletAddress = ethereumAddressFromPrivateKey(testWalletPrivateKey);
+const technocoreWrites = [];
 let server = null;
+let technocoreServer = null;
 
 try {
   await assertProductionLocalValidation();
+  technocoreServer = await startTechnocoreFixture();
   server = spawn(process.execPath, ["apps/server/src/server.mjs"], {
     cwd: rootDir,
     env: {
@@ -27,6 +33,13 @@ try {
       OSA_LOCAL_PASSWORD_REQUIRED: "1",
       OSA_DEMO_ENDPOINTS: "0",
       OSA_RATE_LIMIT_MULTIPLIER: "0",
+      OSA_TECHNOCORE_ENABLED: "1",
+      OSA_TECHNOCORE_URL: technocoreBaseUrl,
+      OSA_TECHNOCORE_PUBLIC_ROOM: "osa-network",
+      OSA_TECHNOCORE_ROOMS: "osa-lab",
+      OSA_TECHNOCORE_ROOM_LIMIT: "2",
+      OSA_TECHNOCORE_ANNOUNCE: "1",
+      OSA_PUBLIC_URL: "https://osa.example",
       AGENTSWARM_PROPOSAL_VOTING_MS: "1",
       OSA_GITHUB_CLIENT_ID: "rc-smoke-github-client",
       OSA_GITHUB_CLIENT_SECRET: "rc-smoke-github-secret"
@@ -44,6 +57,38 @@ try {
   assert(health.runtime.localPasswordRequired === true, "local password should be required in smoke");
   assert(health.runtime.walletNonceLoginEnabled === true, "wallet login should require signed nonce challenges");
   assert(health.runtime.node?.nodeId, "node identity should be public");
+  assert(health.runtime.technocoreEnabled === true, "Technocore bridge should be visible in runtime status when enabled");
+  assert(health.runtime.technocorePublicRoom === "osa-network", "Technocore public channel room should be visible in runtime status");
+  assert(health.runtime.technocoreRooms?.includes("osa-lab"), "Technocore runtime status should expose configured read rooms");
+  assert(health.runtime.technocoreRooms?.includes("osa-network"), "Technocore public channel should be included in read rooms");
+  assert(health.runtime.technocoreAnnounceEnabled === true, "Technocore announce status should be visible when configured");
+  const channels = await getJson("/api/network/channels?limit=10");
+  assert(channels.channels.some((item) => item.id === "osa-network" && item.pinned === true), "Channel list should include pinned osa-network");
+  assert(channels.channels.some((item) => item.id === "osa-lab"), "Channel list should include available Technocore channels");
+  const bridgedActivity = await getJson("/api/network/activity?limit=10");
+  const bridgedEvent = bridgedActivity.events.find((item) => item.type === "technocore_chat_message");
+  assert(!bridgedEvent, "OSA Network Activity should not include raw Technocore room messages");
+  const publicChannel = await getJson("/api/network/chat?limit=10&channel=osa-network");
+  assert(publicChannel.messages.some((item) => item.source === "technocore" && item.room === "osa-network"), "osa-network should include the Technocore OSA room");
+  const labChannel = await getJson("/api/network/chat?limit=10&channel=osa-lab");
+  assert(labChannel.messages.some((item) => item.source === "technocore" && item.room === "osa-lab"), "Pinned Technocore channels should read their selected room");
+  const labPost = await postJson("/api/network/chat", {
+    channel: "osa-lab",
+    message: "RC smoke direct Technocore channel write"
+  });
+  assert(labPost.message?.source === "technocore" && labPost.message?.room === "osa-lab", "Non-public Technocore channel posts should stay external");
+  assert(technocoreWrites.some((item) => item.room === "osa-lab" && item.text.includes("RC smoke direct Technocore channel write")), "Technocore fixture should receive selected-channel text");
+  const mirroredChat = await postJson("/api/network/chat", {
+    message: "RC smoke public channel mirror",
+    wallet_address: testWalletAddress
+  });
+  assert(mirroredChat.technocore_mirrored === true, "osa-network posts should mirror to the Technocore OSA room when enabled");
+  assert(technocoreWrites.some((item) => item.room === "osa-network" && item.text.includes("RC smoke public channel mirror")), "Technocore fixture should receive mirrored osa-network text");
+  const mirroredChannel = await getJson("/api/network/chat?limit=20");
+  assert(
+    mirroredChannel.messages.filter((item) => item.message === "RC smoke public channel mirror").length === 1,
+    "osa-network should not duplicate local messages mirrored back from Technocore"
+  );
 
   const rootShell = await fetch(`${baseUrl}/`, { redirect: "manual" });
   assert(rootShell.status === 302 && rootShell.headers.get("location") === "/agent-gui/", "root should redirect to AgentGUI");
@@ -390,7 +435,76 @@ try {
   console.log(`RC smoke passed on ${baseUrl}`);
 } finally {
   if (server) server.kill("SIGTERM");
+  if (technocoreServer) await closeServer(technocoreServer);
   await rm(dataDir, { recursive: true, force: true });
+}
+
+function startTechnocoreFixture() {
+  const fixture = createServer((req, res) => {
+    const url = new URL(req.url || "/", technocoreBaseUrl);
+    if (url.pathname === "/rooms") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        rooms: [
+          { room: "osa-network", count: 2, last_seq: 42, idle_seconds: 4 },
+          { room: "osa-lab", count: 1, last_seq: 41, idle_seconds: 8 },
+          { room: "credence", count: 3, last_seq: 45, idle_seconds: 12 }
+        ]
+      }));
+      return;
+    }
+    if (url.pathname === "/r/osa-lab" || url.pathname === "/r/osa-network") {
+      const room = url.pathname.split("/").at(-1);
+      const baseMessages = [{
+        seq: 41,
+        ts: "2026-09-01T06:00:00.000Z",
+        from: "did:key:z6MkRcSmokeTechnocoreFixture",
+        text: room === "osa-network" ? "OSA public channel fixture message" : "External bridge fixture message"
+      }];
+      const mirroredMessages = technocoreWrites
+        .filter((item) => item.room === room)
+        .map((item, index) => ({
+          seq: 42 + index,
+          ts: "2026-09-01T06:00:10.000Z",
+          from: "osa-node",
+          text: item.text
+        }));
+      const messages = [...baseMessages, ...mirroredMessages];
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        room,
+        count: messages.length,
+        first_seq: 41,
+        last_seq: messages.at(-1)?.seq || 41,
+        generation: 0,
+        messages
+      }));
+      return;
+    }
+    const sayMatch = url.pathname.match(/^\/r\/([^/]+)\/say\/osa-node\/(.+)$/);
+    if (sayMatch) {
+      technocoreWrites.push({
+        room: sayMatch[1],
+        text: decodeURIComponent(sayMatch[2])
+      });
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+      res.end("ok\n");
+      return;
+    }
+    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    res.end("not found\n");
+  });
+  return new Promise((resolve, reject) => {
+    fixture.once("error", reject);
+    fixture.listen(technocorePort, "127.0.0.1", () => {
+      fixture.off("error", reject);
+      resolve(fixture);
+    });
+  });
+}
+
+function closeServer(instance) {
+  return new Promise((resolve) => instance.close(resolve));
 }
 
 async function assertProductionLocalValidation() {

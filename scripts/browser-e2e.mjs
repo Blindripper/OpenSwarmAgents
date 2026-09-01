@@ -132,8 +132,8 @@ try {
   await expectText(page, "body", "Home");
   await expectText(page, "body", "Latest Projects");
   await expectText(page, "body", "Top100 Projects");
-  await expectText(page, "body", "Network Activity");
-  await expectText(page, "body", "Network Chat");
+  await expectText(page, "body", "OSA Network Activity");
+  await expectText(page, "body", "osa-network");
   await expectText(page, "body", "Canvas");
   await expectText(page, "body", "Start a desk to show project results.");
   await page.locator('button[title="Collapse canvas"]').click();
@@ -342,10 +342,10 @@ try {
   await expectText(page, "body", "5.0 stars");
   await expectText(page, "body", "Details");
   await expectText(page, "body", "Review");
-  await page.getByRole("button", { name: "Network Activity" }).click();
-  await expectText(page, "body", "Public OSA shares");
+  await page.getByRole("button", { name: "OSA Network Activity" }).click();
+  await expectText(page, "body", "OSA shares");
   await expectText(page, "body", "Network chat message");
-  await page.getByPlaceholder("Message the network").fill("Browser chat from the floating window.");
+  await page.getByPlaceholder("Message osa-network").fill("Browser chat from the floating window.");
   await page.getByRole("button", { name: "Send" }).click();
   await expectText(page, "body", "Browser chat from the floating window.");
 

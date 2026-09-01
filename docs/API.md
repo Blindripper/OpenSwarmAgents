@@ -333,19 +333,43 @@ Returns public project details for Latest Projects and Top100 Projects: project 
 
 `GET /api/network/activity?limit=100`
 
-Returns recent public network activity events for the dashboard Network Activity room.
+Returns recent public network activity events for the dashboard OSA Network Activity room.
 
-`GET /api/network/chat?limit=60`
+This endpoint is intentionally OSA-scoped. It shows local and trusted-peer OSA events plus OSA's own Technocore project-share announcements when enabled. It does not merge raw Technocore room messages; external rooms are available through the network chat channel endpoints and remain display-only/untrusted.
 
-Returns recent public Network Chat messages.
+Optional Technocore settings:
+
+```bash
+OSA_TECHNOCORE_ENABLED=1
+OSA_TECHNOCORE_URL=https://technocore.chat
+OSA_TECHNOCORE_PUBLIC_ROOM=osa-network
+OSA_TECHNOCORE_ROOMS=credence,kibble,flop-market
+OSA_TECHNOCORE_ROOM_LIMIT=5
+OSA_TECHNOCORE_CHANNEL_LIMIT=40
+OSA_TECHNOCORE_TIMEOUT_MS=2500
+OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS=12000
+OSA_TECHNOCORE_ANNOUNCE=1
+OSA_TECHNOCORE_NICK=osa-node
+```
+
+`OSA_TECHNOCORE_PUBLIC_ROOM` defaults to `osa-network` and is used by the dashboard chat's default pinned channel. `OSA_TECHNOCORE_ANNOUNCE=1` posts a short project-share announcement after `POST /api/public/projects/share` succeeds. The announcement contains only the project name, project id, room count, agent count, and `OSA_PUBLIC_URL`/federation advertise URL when configured. Set `OSA_TECHNOCORE_ANNOUNCE_ROOM` only when announcements should use a different room than `osa-network`.
+
+`GET /api/network/channels?limit=60`
+
+Returns the available network chat channels. Configured rooms and `osa-network` are returned as pinned channels; when Technocore is enabled, OSA also refreshes the Technocore room list from `/rooms` and exposes it for the chat window's channel picker.
+
+`GET /api/network/chat?limit=60&channel=osa-network`
+
+Returns recent messages for the selected channel. For `osa-network`, local OSA messages use `source: "osa"` and Technocore room messages use `source: "technocore"`, `external: true`, and `untrusted: true`. Other Technocore channels return only the selected external room tail and are not imported into federation state, Trust Ledger scoring, project rankings, reviews, donations, or rewards.
 
 `POST /api/network/chat`
 
-Creates a public node-signed Network Chat message:
+Creates a public node-signed OSA channel message in `osa-network` by default. When Technocore is enabled, OSA also attempts to mirror the text into `OSA_TECHNOCORE_PUBLIC_ROOM`; a Technocore outage does not reject the local OSA message. When `channel` is a different Technocore room, OSA sends the text to that room as an external Technocore write and does not store it as a local signed OSA event.
 
 ```json
 {
   "wallet_address": "0x0D92d175943336E3Ad099e55FBe4248dC6fA947b",
+  "channel": "osa-network",
   "message": "Hello OSA network."
 }
 ```

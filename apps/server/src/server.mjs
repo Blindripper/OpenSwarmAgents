@@ -52,6 +52,21 @@ const federationSyncMs = Math.max(1000, Number(process.env.OSA_FEDERATION_SYNC_M
 const federationCollectionLimit = Math.max(100, Math.min(5000, Number(process.env.OSA_FEDERATION_COLLECTION_LIMIT || 2000)));
 const federationSnapshotMaxBytes = Math.max(maxJsonBytes, Number(process.env.OSA_FEDERATION_SNAPSHOT_MAX_BYTES || maxJsonBytes * 4));
 const federationPeerSyncs = new Set();
+const technocoreEnabled = process.env.OSA_TECHNOCORE_ENABLED === "1";
+const technocoreBaseUrl = normalizeTechnocoreBaseUrl(process.env.OSA_TECHNOCORE_URL || "https://technocore.chat");
+const technocorePublicRoom = normalizeTechnocoreName(process.env.OSA_TECHNOCORE_PUBLIC_ROOM || process.env.OSA_TECHNOCORE_ANNOUNCE_ROOM || "osa-network");
+const technocoreRooms = uniqueTechnocoreRooms([
+  ...normalizeTechnocoreRooms(process.env.OSA_TECHNOCORE_ROOMS || ""),
+  technocorePublicRoom
+]);
+const technocoreRoomLimit = boundedNumber(process.env.OSA_TECHNOCORE_ROOM_LIMIT, 5, 1, 20);
+const technocoreChannelLimit = boundedNumber(process.env.OSA_TECHNOCORE_CHANNEL_LIMIT, 40, 5, 100);
+const technocoreTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_TIMEOUT_MS, 2500, 500, 10000);
+const technocoreChannelTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS, Math.max(technocoreTimeoutMs, 12000), 1000, 15000);
+const technocoreAnnounceEnabled = process.env.OSA_TECHNOCORE_ANNOUNCE === "1";
+const technocoreAnnounceRoom = normalizeTechnocoreName(process.env.OSA_TECHNOCORE_ANNOUNCE_ROOM || technocorePublicRoom);
+const technocoreNick = normalizeTechnocoreName(process.env.OSA_TECHNOCORE_NICK || "osa-node") || "osa-node";
+const technocoreChannelsCache = { key: "", expiresAt: 0, channels: [], error: null };
 const managedConnectorProcesses = new Map();
 const managedConnectorLogLimit = 12 * 1024;
 const agentGuiCodexRunnerEnabled = process.env.OSA_AGENTGUI_ENABLE_CODEX_RUNNER === "1";
@@ -2424,6 +2439,7 @@ function isPublicNetworkEventType(type) {
     "agentgui_project_review_created",
     "agentgui_project_review_updated",
     "network_chat_message",
+    "technocore_project_announced",
     "federation_imported"
   ].includes(type);
 }
@@ -3610,6 +3626,14 @@ function publicRuntime() {
     federationSignatureVerificationEnabled: federationSignatureVerificationEnabled(),
     federationTrustedNodeCount: federationTrust.trustedPeerCount,
     federationTrustConfigError: federationTrust.error,
+    technocoreEnabled,
+    technocoreUrl: technocoreEnabled ? technocoreBaseUrl : null,
+    technocorePublicRoom: technocoreEnabled ? technocorePublicRoom : null,
+    technocoreRooms,
+    technocoreChannelLimit,
+    technocoreChannelTimeoutMs,
+    technocoreAnnounceEnabled: technocoreEnabled && technocoreAnnounceEnabled && Boolean(technocoreAnnounceRoom),
+    technocoreAnnounceRoom: technocoreEnabled && technocoreAnnounceRoom ? technocoreAnnounceRoom : null,
     node: publicNodeIdentity(),
     oauthConfigured: Object.fromEntries(
       Object.keys(oauthProviderConfig).map((provider) => [provider, Boolean(providerCredentials(provider))])
@@ -5388,6 +5412,9 @@ async function shareAgentGuiProject(body = {}) {
     shareFileRepo: next.shareFileRepo
   });
   await saveStore();
+  announceTechnocoreProjectShare(next).catch((error) => {
+    console.warn(`Technocore announcement failed: ${error.message}`);
+  });
   return { ok: true, shared_public: true, project: agentGuiPublicCollectionSession(next, "project") };
 }
 
@@ -5583,7 +5610,7 @@ function publicProjectReviews(projectId) {
     .map(publicProjectReview);
 }
 
-function publicNetworkActivity(limit = 100) {
+function localPublicNetworkActivity(limit = 100) {
   const max = Math.max(1, Math.min(100, Number(limit || 100)));
   return store.events
     .filter((entry) => isPublicNetworkEventType(entry.type))
@@ -5591,20 +5618,232 @@ function publicNetworkActivity(limit = 100) {
     .map(publicFederatedEvent);
 }
 
-function publicNetworkChatMessages(limit = 60) {
+async function publicNetworkActivity(limit = 100) {
+  const max = Math.max(1, Math.min(100, Number(limit || 100)));
+  return localPublicNetworkActivity(max);
+}
+
+async function publicNetworkChannels(limit = technocoreChannelLimit) {
+  const max = Math.max(5, Math.min(100, Number(limit || technocoreChannelLimit)));
+  const configuredRooms = uniqueTechnocoreRooms([technocorePublicRoom, ...technocoreRooms]);
+  const configuredSet = new Set(configuredRooms);
+  const channels = configuredRooms.map((room) => technocoreChannel(room, {
+    source: technocoreEnabled ? "technocore" : "osa",
+    pinned: true,
+    public: room === technocorePublicRoom
+  }));
+  const externalChannels = await technocoreChannels(max);
+  const byId = new Map();
+  for (const channel of [...channels, ...externalChannels]) {
+    if (!channel?.id || byId.has(channel.id)) continue;
+    byId.set(channel.id, {
+      ...channel,
+      pinned: channel.pinned === true || configuredSet.has(channel.id),
+      public: channel.public === true || channel.id === technocorePublicRoom
+    });
+  }
+  return [...byId.values()].slice(0, max);
+}
+
+async function technocoreChannels(limit = technocoreChannelLimit) {
+  if (!technocoreEnabled) return [];
+  const key = `${technocoreBaseUrl}|rooms|${technocoreChannelLimit}`;
+  const timestamp = Date.now();
+  if (technocoreChannelsCache.key === key && technocoreChannelsCache.expiresAt > timestamp) {
+    return technocoreChannelsCache.channels.slice(0, limit);
+  }
+  try {
+    const channels = (await fetchTechnocoreRoomChannels(limit)).slice(0, limit);
+    technocoreChannelsCache.key = key;
+    technocoreChannelsCache.expiresAt = timestamp + 15_000;
+    technocoreChannelsCache.channels = channels;
+    technocoreChannelsCache.error = null;
+    return channels;
+  } catch (error) {
+    console.warn(`Technocore rooms fetch failed: ${error.message}`);
+    technocoreChannelsCache.key = key;
+    technocoreChannelsCache.expiresAt = timestamp + 15_000;
+    technocoreChannelsCache.channels = [];
+    technocoreChannelsCache.error = error.message || "Technocore rooms fetch failed";
+    return [];
+  }
+}
+
+async function fetchTechnocoreRoomChannels(limit) {
+  try {
+    const view = await fetchTechnocoreJson("/rooms", {
+      format: "json",
+      limit: technocoreChannelLimit
+    }, Math.min(technocoreChannelTimeoutMs, 1500));
+    return technocoreChannelsFromView(view);
+  } catch {
+    const view = await fetchTechnocoreJson("/r/events", {
+      format: "json",
+      limit: Math.max(limit, technocoreChannelLimit)
+    }, Math.min(technocoreChannelTimeoutMs, 5000));
+    return technocoreChannelsFromEvents(view);
+  }
+}
+
+function technocoreChannelsFromView(view) {
+  const rooms = Array.isArray(view?.rooms) ? view.rooms : Array.isArray(view) ? view : [];
+  return rooms
+    .map((entry) => {
+      const rawRoom = typeof entry === "string" ? entry : entry?.room || entry?.name || entry?.id;
+      const room = normalizeTechnocoreName(rawRoom);
+      if (!room) return null;
+      return technocoreChannel(room, {
+        source: "technocore",
+        pinned: false,
+        public: room === technocorePublicRoom,
+        count: finiteNumber(entry?.count),
+        last_seq: finiteNumber(entry?.last_seq || entry?.lastSeq),
+        idle_seconds: finiteNumber(entry?.idle_seconds || entry?.idleSeconds),
+        url: `${technocoreBaseUrl}/r/${room}`
+      });
+    })
+    .filter(Boolean);
+}
+
+function technocoreChannelsFromEvents(view) {
+  const messages = Array.isArray(view?.messages) ? view.messages.slice().reverse() : [];
+  const byId = new Map();
+  for (const message of messages) {
+    const room = normalizeTechnocoreName(String(message?.text || "").match(/^created\s+([a-z0-9][a-z0-9_-]{0,47})$/)?.[1]);
+    if (!room || byId.has(room)) continue;
+    byId.set(room, technocoreChannel(room, {
+      source: "technocore",
+      pinned: false,
+      public: room === technocorePublicRoom,
+      last_seq: finiteNumber(message?.seq),
+      idle_seconds: idleSecondsSince(message?.ts),
+      url: `${technocoreBaseUrl}/r/${room}`
+    }));
+  }
+  return [...byId.values()];
+}
+
+function technocoreChannel(room, options = {}) {
+  return {
+    id: room,
+    name: room,
+    source: options.source || "technocore",
+    pinned: options.pinned === true,
+    public: options.public === true,
+    count: options.count ?? null,
+    last_seq: options.last_seq ?? null,
+    idle_seconds: options.idle_seconds ?? null,
+    url: options.url || (technocoreEnabled ? `${technocoreBaseUrl}/r/${room}` : null)
+  };
+}
+
+function finiteNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function idleSecondsSince(value) {
+  const date = new Date(String(value || ""));
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+}
+
+function validIsoTimestamp(value) {
+  const date = new Date(String(value || ""));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function technocoreAnnouncementText(project) {
+  const roomCount = Array.isArray(project.rooms) ? project.rooms.length : 0;
+  const agentCount = Array.isArray(project.taskIds) ? project.taskIds.length : 0;
+  const base = String(process.env.OSA_PUBLIC_URL || federationAdvertiseUrl || "").replace(/\/$/, "");
+  const url = base ? ` ${base}/agent-gui/` : "";
+  return `OSA project shared: ${project.name} (${roomCount} ${roomCount === 1 ? "room" : "rooms"}, ${agentCount} ${agentCount === 1 ? "agent" : "agents"}) id=${project.id}${url}`;
+}
+
+async function announceTechnocoreProjectShare(project) {
+  if (!technocoreEnabled || !technocoreAnnounceEnabled || !technocoreAnnounceRoom) return false;
+  const text = technocoreAnnouncementText(project).replace(/\s+/g, " ").trim().slice(0, 500);
+  if (!text) return false;
+  await technocoreSay(technocoreAnnounceRoom, text);
+  event("technocore_project_announced", "Project announced on Technocore", {
+    source: "technocore",
+    external: true,
+    untrusted: true,
+    publicProjectId: project.id,
+    room: technocoreAnnounceRoom,
+    url: `${technocoreBaseUrl}/r/${technocoreAnnounceRoom}`
+  });
+  await saveStore();
+  return true;
+}
+
+async function publicNetworkChatMessages(limit = 60, channel = technocorePublicRoom) {
   const max = Math.max(1, Math.min(100, Number(limit || 60)));
-  return normalizeNetworkChatMessages(store.networkChatMessages || [])
-    .slice()
-    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+  const room = normalizeTechnocoreName(channel) || technocorePublicRoom;
+  const includeLocal = !room || room === technocorePublicRoom;
+  const localMessages = includeLocal
+    ? normalizeNetworkChatMessages(store.networkChatMessages || [])
+      .slice()
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+      .slice(0, max)
+      .map((message) => ({
+        id: message.id,
+        node_id: message.nodeId,
+        wallet_address: message.walletAddress,
+        message: message.message,
+        created_at: message.createdAt,
+        source: "osa",
+        external: false,
+        untrusted: false,
+        room: technocorePublicRoom
+      }))
+    : [];
+  const externalMessages = await technocorePublicChatMessages(max, room);
+  const dedupedExternalMessages = externalMessages.filter((message) => !isMirroredLocalNetworkChat(message, localMessages));
+  return [...localMessages, ...dedupedExternalMessages]
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))
     .slice(0, max)
-    .map((message) => ({
-      id: message.id,
-      node_id: message.nodeId,
-      wallet_address: message.walletAddress,
-      message: message.message,
-      created_at: message.createdAt
-    }))
     .reverse();
+}
+
+function isMirroredLocalNetworkChat(externalMessage, localMessages) {
+  if (externalMessage.source !== "technocore" || externalMessage.from !== technocoreNick) return false;
+  return localMessages.some((localMessage) => localMessage.message === externalMessage.message);
+}
+
+async function technocorePublicChatMessages(limit = 60, channel = technocorePublicRoom) {
+  const room = normalizeTechnocoreName(channel) || technocorePublicRoom;
+  if (!technocoreEnabled || !room) return [];
+  try {
+    const view = await fetchTechnocoreJson(`/r/${room}`, {
+      format: "json",
+      limit: Math.min(limit, technocoreRoomLimit)
+    });
+    const messages = Array.isArray(view?.messages) ? view.messages : [];
+    return messages
+      .filter((message) => message && Number.isFinite(Number(message.seq)))
+      .map((message) => {
+        const from = String(message.from || "unknown").slice(0, 120);
+        const text = String(message.text || "").trim().replace(/\s+/g, " ").slice(0, 500);
+        return {
+          id: `technocore-chat-${room}-${Number(message.seq)}`,
+          node_id: "technocore",
+          wallet_address: null,
+          message: text,
+          created_at: validIsoTimestamp(message.ts) || now(),
+          source: "technocore",
+          external: true,
+          untrusted: true,
+          room,
+          from,
+          seq: Number(message.seq),
+          signed: from.startsWith("did:key:")
+        };
+      });
+  } catch {
+    return [];
+  }
 }
 
 async function createNetworkChatMessage(body = {}) {
@@ -5613,6 +5852,38 @@ async function createNetworkChatMessage(body = {}) {
     const error = new Error("Network chat message is required.");
     error.statusCode = 400;
     throw error;
+  }
+  const requestedRoom = body.channel || body.room;
+  const room = requestedRoom ? normalizeTechnocoreName(requestedRoom) : technocorePublicRoom;
+  if (!room) {
+    const error = new Error("Valid network channel is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (room !== technocorePublicRoom) {
+    if (!technocoreEnabled) {
+      const error = new Error("Technocore channel is unavailable.");
+      error.statusCode = 400;
+      throw error;
+    }
+    await technocoreSay(room, text);
+    return {
+      ok: true,
+      technocore_mirrored: true,
+      message: {
+        id: `technocore-chat-outgoing-${room}-${randomUUID()}`,
+        node_id: "technocore",
+        wallet_address: null,
+        message: text,
+        created_at: now(),
+        source: "technocore",
+        external: true,
+        untrusted: true,
+        room,
+        from: technocoreNick,
+        signed: false
+      }
+    };
   }
   let walletAddress = null;
   if (body.wallet_address || body.walletAddress) walletAddress = normalizeWalletAddress(body.wallet_address || body.walletAddress);
@@ -5637,16 +5908,51 @@ async function createNetworkChatMessage(body = {}) {
     walletAddress
   });
   await saveStore();
+  const technocoreMirrored = await mirrorNetworkChatToTechnocore(message);
   return {
     ok: true,
+    technocore_mirrored: technocoreMirrored,
     message: {
       id: message.id,
       node_id: message.nodeId,
       wallet_address: message.walletAddress,
       message: message.message,
-      created_at: message.createdAt
+      created_at: message.createdAt,
+      source: "osa",
+      external: false,
+      untrusted: false,
+      room: technocorePublicRoom
     }
   };
+}
+
+async function mirrorNetworkChatToTechnocore(message) {
+  if (!technocoreEnabled || !technocorePublicRoom) return false;
+  const text = String(message.message || "").replace(/\s+/g, " ").trim().slice(0, 500);
+  if (!text) return false;
+  try {
+    await technocoreSay(technocorePublicRoom, text);
+    return true;
+  } catch (error) {
+    console.warn(`Technocore network chat mirror failed: ${error.message}`);
+    return false;
+  }
+}
+
+async function technocoreSay(room, text) {
+  const path = `/r/${room}/say/${technocoreNick}/${encodeURIComponent(text)}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), technocoreTimeoutMs);
+  try {
+    const response = await fetch(technocoreUrl(path), {
+      signal: controller.signal,
+      headers: { accept: "text/plain" }
+    });
+    if (!response.ok) throw new Error(`Technocore returned ${response.status}`);
+    return true;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function publicProjectTaskSummary(task) {
@@ -6004,6 +6310,66 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
+function normalizeTechnocoreBaseUrl(value) {
+  try {
+    const parsed = new URL(String(value || "https://technocore.chat").trim());
+    if (!["http:", "https:"].includes(parsed.protocol)) return "https://technocore.chat";
+    parsed.username = "";
+    parsed.password = "";
+    parsed.hash = "";
+    parsed.search = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return "https://technocore.chat";
+  }
+}
+
+function boundedNumber(value, fallback, min, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function normalizeTechnocoreName(value) {
+  const name = String(value || "").trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]{0,47}$/.test(name) ? name : "";
+}
+
+function normalizeTechnocoreRooms(value) {
+  return String(value || "")
+    .split(",")
+    .map((room) => normalizeTechnocoreName(room))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function uniqueTechnocoreRooms(rooms) {
+  return [...new Set(rooms.filter(Boolean))].slice(0, 8);
+}
+
+function technocoreUrl(path, query = {}) {
+  const url = new URL(`${technocoreBaseUrl}${path}`);
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
+  }
+  return url;
+}
+
+async function fetchTechnocoreJson(path, query = {}, timeoutMs = technocoreTimeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(technocoreUrl(path, query), {
+      signal: controller.signal,
+      headers: { accept: "application/json" }
+    });
+    if (!response.ok) throw new Error(`Technocore returned ${response.status}`);
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function openClawCommandOutput(result) {
   return String(`${result.stdout || ""}${result.stderr || ""}`).trim().slice(-8000);
 }
@@ -6060,11 +6426,20 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
   }
 
   if (method === "GET" && path === "/api/network/activity") {
-    return sendJson(res, 200, { events: publicNetworkActivity(url.searchParams.get("limit") || 100) });
+    return sendJson(res, 200, { events: await publicNetworkActivity(url.searchParams.get("limit") || 100) });
+  }
+
+  if (method === "GET" && path === "/api/network/channels") {
+    return sendJson(res, 200, {
+      channels: await publicNetworkChannels(url.searchParams.get("limit") || technocoreChannelLimit),
+      generated_at: now()
+    });
   }
 
   if (method === "GET" && path === "/api/network/chat") {
-    return sendJson(res, 200, { messages: publicNetworkChatMessages(url.searchParams.get("limit") || 60) });
+    return sendJson(res, 200, {
+      messages: await publicNetworkChatMessages(url.searchParams.get("limit") || 60, url.searchParams.get("channel") || technocorePublicRoom)
+    });
   }
 
   if (method === "POST" && path === "/api/network/chat") {

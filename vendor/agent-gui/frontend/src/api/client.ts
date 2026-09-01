@@ -1,4 +1,4 @@
-import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChatMessage, ProjectExplorerReport, PublicProjectDetail, PublicProjectReview, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
+import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, PublicProjectDetail, PublicProjectReview, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
 
 const BASE = "/api";
 const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
@@ -64,6 +64,12 @@ export interface RuntimeStatus {
   federationSignatureVerificationEnabled?: boolean;
   federationTrustedNodeCount?: number;
   federationTrustConfigError?: string | null;
+  technocoreEnabled?: boolean;
+  technocoreUrl?: string | null;
+  technocorePublicRoom?: string | null;
+  technocoreRooms?: string[];
+  technocoreAnnounceEnabled?: boolean;
+  technocoreAnnounceRoom?: string | null;
   walletNonceLoginEnabled?: boolean;
 }
 
@@ -349,10 +355,12 @@ export const api = {
   network: {
     activity: (limit = 100) =>
       get<{ events: NetworkEvent[] }>(`/network/activity?limit=${limit}`),
-    chat: (limit = 60) =>
-      get<{ messages: NetworkChatMessage[] }>(`/network/chat?limit=${limit}`),
-    sendChat: (body: { message: string; wallet_address?: string | null }) =>
-      post<{ ok: boolean; message: NetworkChatMessage }>("/network/chat", body),
+    channels: (limit = 60) =>
+      get<{ channels: NetworkChannel[]; generated_at: string }>(`/network/channels?limit=${limit}`),
+    chat: (limit = 60, channel?: string) =>
+      get<{ messages: NetworkChatMessage[] }>(`/network/chat?limit=${limit}${channel ? `&channel=${encodeURIComponent(channel)}` : ""}`),
+    sendChat: (body: { message: string; wallet_address?: string | null; channel?: string }) =>
+      post<{ ok: boolean; technocore_mirrored?: boolean; message: NetworkChatMessage }>("/network/chat", body),
   },
   wallet: {
     challenge: (body: { address: string; chain_id?: string | null }) =>

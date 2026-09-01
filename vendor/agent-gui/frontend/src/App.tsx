@@ -1888,7 +1888,7 @@ export default function App() {
         {([
           ["workbench", "Home / Latest"],
           ["top-projects", "Top100 Projects"],
-          ["network", "Network Activity"],
+          ["network", "OSA Network Activity"],
         ] as const).map(([id, label]) => (
           <button
             key={id}

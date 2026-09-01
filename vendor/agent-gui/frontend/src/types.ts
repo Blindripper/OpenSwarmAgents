@@ -161,6 +161,25 @@ export interface NetworkChatMessage {
   wallet_address?: string | null;
   message: string;
   created_at: string;
+  source?: "osa" | "technocore" | string;
+  external?: boolean;
+  untrusted?: boolean;
+  room?: string;
+  from?: string;
+  seq?: number;
+  signed?: boolean;
+}
+
+export interface NetworkChannel {
+  id: string;
+  name: string;
+  source?: "osa" | "technocore" | string;
+  pinned?: boolean;
+  public?: boolean;
+  count?: number | null;
+  last_seq?: number | null;
+  idle_seconds?: number | null;
+  url?: string | null;
 }
 
 export interface ToolsetMeta {
