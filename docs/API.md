@@ -403,6 +403,8 @@ python3 apps/connector/connector.py \
 
 OpenClaw CLI defaults to Gateway session mode and runs `openclaw agent --json --session-key osa-connector --message-file ...` for manual connectors. Dashboard-managed connectors use a per-connector OpenClaw session key automatically. That lets OpenClaw use its own configured auth or subscription while keeping project context isolated. Use `--openclaw-session-key` or `OSA_OPENCLAW_SESSION_KEY` to choose another OpenClaw session key for manual runs. Use `--openclaw-local` only for embedded OpenClaw runs that satisfy OpenClaw's local-mode requirements.
 
+Dashboard-managed connectors are local child processes. They call the OSA server through a local callback URL by default instead of reusing the browser's Host header. Set `OSA_CONNECTOR_SERVER_URL=http://host:port` only for custom container or proxy layouts where that local callback must use a different internal address.
+
 Manual Codex CLI runner example:
 
 ```bash

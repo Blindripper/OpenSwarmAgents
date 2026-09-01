@@ -175,6 +175,8 @@ OSA_OPENCLAW_CONNECT_COMMAND="openclaw dashboard" \
 npm run dev
 ```
 
+Dashboard-managed connectors are spawned on the same host as the OSA server and call back through a local URL by default. If you run a custom container or proxy layout where the connector must reach the server through a different internal address, set `OSA_CONNECTOR_SERVER_URL=http://host:port`.
+
 ## Manager Audits
 
 Each private room has a Manager tile. Click it to choose:

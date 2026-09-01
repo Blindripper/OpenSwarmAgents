@@ -30,6 +30,7 @@ const seedPath = join(rootDir, "data/seed.json");
 const storePath = join(dataDir, "agentswarm.json");
 const port = Number(process.env.PORT || 8789);
 const host = process.env.HOST || "127.0.0.1";
+const connectorServerUrl = normalizeLocalServerUrl(process.env.OSA_CONNECTOR_SERVER_URL || "");
 const leaseMs = Number(process.env.AGENTSWARM_LEASE_MS || 10 * 60 * 1000);
 const proposalVotingMs = Number(process.env.AGENTSWARM_PROPOSAL_VOTING_MS || 72 * 60 * 60 * 1000);
 const storageMode = process.env.DATABASE_URL ? "postgres-snapshot" : "json";
@@ -3452,6 +3453,15 @@ function requestOrigin(req) {
   return `${proto}://${requestHost}`;
 }
 
+function localConnectorOrigin() {
+  const localHost = ["0.0.0.0", "::", ""].includes(host) ? "127.0.0.1" : host;
+  return `http://${urlHost(localHost)}:${port}`;
+}
+
+function managedConnectorOrigin() {
+  return connectorServerUrl || localConnectorOrigin();
+}
+
 function connectorCommandArgs(rawToken, connector, origin) {
   const runner = connectorRunner(connector);
   const args = [
@@ -3524,7 +3534,7 @@ function startManagedConnector(req, rawToken, connector, body = {}) {
     }
   }
 
-  const child = spawn("python3", connectorCommandArgs(rawToken, connector, requestOrigin(req)), {
+  const child = spawn("python3", connectorCommandArgs(rawToken, connector, managedConnectorOrigin()), {
     cwd: rootDir,
     env,
     stdio: ["ignore", "pipe", "pipe"]
@@ -6354,6 +6364,28 @@ function openClawSetupStatus() {
 
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function urlHost(value) {
+  const hostValue = String(value || "127.0.0.1").trim();
+  if (hostValue.includes(":") && !hostValue.startsWith("[")) return `[${hostValue}]`;
+  return hostValue;
+}
+
+function normalizeLocalServerUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (!["http:", "https:"].includes(parsed.protocol)) return "";
+    parsed.username = "";
+    parsed.password = "";
+    parsed.hash = "";
+    parsed.search = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
 }
 
 function normalizeTechnocoreBaseUrl(value) {
