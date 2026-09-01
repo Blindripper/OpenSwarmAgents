@@ -598,6 +598,8 @@ export interface TeamRowProps {
   canAddDesk?: boolean;
   onCopyDesk?: (sessionId: string) => void;
   onPublicProjectDetails?: (session: Session) => void;
+  onDeletePublicProject?: (session: Session) => void;
+  canDeletePublicProject?: (session: Session) => boolean;
   onShareTeam?: () => void;
   onAddDesk: () => void;
   onSessionInterrupt?: (id: string) => void;
@@ -634,7 +636,7 @@ export function TeamRow({
   onAvatarClick,
   onAskManagerDone, onPreview, onDeskStart, onDeskClose,
   deskPanelZ, onDeskPanelActivate,
-  readOnly = false, canAddDesk = true, onCopyDesk, onPublicProjectDetails, onShareTeam, onAddDesk, onSessionInterrupt, onPendingMsgChange, onPendingAssignmentPatch, onDeskAskManager, onManagerAuditHistory, onAgentDragStart,
+  readOnly = false, canAddDesk = true, onCopyDesk, onPublicProjectDetails, onDeletePublicProject, canDeletePublicProject, onShareTeam, onAddDesk, onSessionInterrupt, onPendingMsgChange, onPendingAssignmentPatch, onDeskAskManager, onManagerAuditHistory, onAgentDragStart,
   searchMatchIds,
   toolsets, reasoningValue, reasoningOptions,
   onDeskConfigProfileChange, onDeskConfigModelChange, onDeskConfigToolsChange, onDeskConfigReasoningChange,
@@ -1452,6 +1454,7 @@ export function TeamRow({
                     copyLabel="Copy"
                     onCopy={onCopyDesk ? () => onCopyDesk(session!.id) : undefined}
                     onDetails={readOnly && session!.public_kind === "project" ? () => onPublicProjectDetails?.(session!) : undefined}
+                    onDeletePublicProject={readOnly && session!.public_kind === "project" && onDeletePublicProject && canDeletePublicProject?.(session!) ? () => onDeletePublicProject(session!) : undefined}
                     onAutoExpanded={onJustStartedConsumed}
                     onActivity={() => handleDeskActivityRef.current(i)}
                     onInterrupt={readOnly ? undefined : onSessionInterrupt}

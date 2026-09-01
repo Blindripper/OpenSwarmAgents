@@ -20,8 +20,8 @@ The current architecture is:
 
 1. Keep AgentGUI frontend source as the visual/workbench upstream.
 2. Build the AgentGUI Vite frontend into `vendor/agent-gui/frontend/dist`.
-3. Serve the built workbench from the OSA Node server at `/agent-gui/`.
-4. Redirect the clean dashboard root `/` to `/agent-gui/`.
+3. Serve the built workbench from the OSA Node server at `/osa-network/`.
+4. Redirect the clean dashboard root `/` to `/osa-network/` and keep `/agent-gui/` as a legacy redirect.
 5. Expose OSA state through AgentGUI-shaped HTTP and WebSocket endpoints.
 
 Mapping:
@@ -62,10 +62,10 @@ The OSA dashboard now uses the real AgentGUI frontend with private workbench roo
 - `Latest Projects`: copy-only listings for projects users explicitly shared.
 - `Top100 Projects`: rank shared projects by copy count.
 
-The upstream start flow is adapted to OSA: `POST /api/sessions/new` creates a private task, mints a scoped connector token, and starts a managed local OpenClaw connector. `POST /api/public/projects/share` publishes the current private workspace as one project. `POST /api/sessions/:id/copy` clones a public project into private rooms and increments the copied project's chart count. AgentGUI profiles use OpenClaw by default; Codex CLI profiles are disabled unless the node operator explicitly sets `OSA_AGENTGUI_ENABLE_CODEX_RUNNER=1`.
+The upstream start flow is adapted to OSA: `POST /api/sessions/new` creates a private task, mints a scoped connector token, and starts a managed local OpenClaw connector. `POST /api/public/projects/share` publishes the current private workspace as one project and can announce it to selected Technocore rooms. `DELETE /api/public/projects/:id` lets the owner wallet unshare/delete its public listing. `POST /api/sessions/:id/copy` clones a public project into private rooms and increments the copied project's chart count. AgentGUI profiles use OpenClaw by default; Codex CLI profiles are disabled unless the node operator explicitly sets `OSA_AGENTGUI_ENABLE_CODEX_RUNNER=1`.
 
-`GET /api/openclaw/status` drives the first-run setup dialog. It reports whether the vendored frontend is built/linked, which OpenClaw command will be used, and whether Home/Latest Projects are ready. `GET /api/top-projects` returns the Top100 chart. `DELETE /api/sessions/:id` is implemented for private desks and marks the backing OSA task as deleted so polling cannot resurrect removed subagents. Public project desks remain copy-only.
+`GET /api/openclaw/status` drives the first-run setup dialog. It reports whether the vendored frontend is built/linked, which OpenClaw command will be used, and whether Home/Latest Projects are ready. `GET /api/top-projects` returns the Top100 chart. `DELETE /api/sessions/:id` is implemented for private desks and marks the backing OSA task as deleted so polling cannot resurrect removed subagents. Public project desks remain copy-only unless the connected wallet owns the listing, in which case the dashboard exposes a public project delete action.
 
 Branding is patched in the frontend build so the browser title, favicon, app header, and right-side badge use OSA and the OSA logo instead of Agent GUI.
 
-`npm run build:agent-gui` rebuilds the upstream frontend for the `/agent-gui/` base path.
+`npm run build:agent-gui` rebuilds the upstream frontend for the `/osa-network/` base path.

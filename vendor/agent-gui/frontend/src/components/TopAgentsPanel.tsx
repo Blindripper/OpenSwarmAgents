@@ -13,6 +13,7 @@ interface Props {
   onCopy?: (sessionId: string) => void;
   onDonateRecorded?: () => void;
   onDetails?: (project: TopAgent) => void;
+  onDelete?: (project: TopAgent) => void;
 }
 
 type WalletProvider = {
@@ -46,6 +47,7 @@ export function TopAgentsPanel({
   onCopy,
   onDonateRecorded,
   onDetails,
+  onDelete,
 }: Props) {
   const maxCopies = Math.max(1, ...agents.map((agent) => agent.copy_count));
   const [wallet, setWallet] = useState<WalletSession | null>(() => readWalletSession());
@@ -244,6 +246,10 @@ export function TopAgentsPanel({
           <div style={{ display: "grid", gap: 8 }}>
             {agents.map((agent) => {
               const pct = Math.max(4, Math.round((agent.copy_count / maxCopies) * 100));
+              const canDelete = isProjectChart
+                && Boolean(onDelete)
+                && Boolean(wallet?.address)
+                && String(agent.owner_wallet_address || "").toLowerCase() === String(wallet?.address || "").toLowerCase();
               return (
                 <div
                   key={agent.id}
@@ -266,7 +272,7 @@ export function TopAgentsPanel({
                   <div style={{
                     position: "relative",
                     display: "grid",
-                    gridTemplateColumns: isProjectChart ? "58px minmax(0, 1fr) 156px 68px 70px 74px 82px" : "58px minmax(0, 1fr) 132px 74px 82px",
+                    gridTemplateColumns: isProjectChart ? "58px minmax(0, 1fr) 156px 68px 70px 74px 82px 70px" : "58px minmax(0, 1fr) 132px 74px 82px",
                     alignItems: "center",
                     gap: 12,
                     minHeight: 76,
@@ -404,6 +410,24 @@ export function TopAgentsPanel({
                     >
                       Donate
                     </button>
+                    {isProjectChart && canDelete && (
+                      <button
+                        type="button"
+                        onClick={() => onDelete?.(agent)}
+                        style={{
+                          height: 30,
+                          borderRadius: 6,
+                          border: "1px solid #7f1d1d",
+                          background: "#2a1015",
+                          color: "#fca5a5",
+                          fontSize: 11,
+                          fontWeight: 800,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </div>
                 </div>
               );

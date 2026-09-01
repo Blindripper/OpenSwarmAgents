@@ -14,7 +14,7 @@ import { NetworkChatWindow } from "./components/NetworkChatWindow";
 import { ProjectDetailsModal } from "./components/ProjectDetailsModal";
 import { ManagerAuditHistoryModal } from "./components/ManagerAuditHistoryModal";
 import { ResultCanvas } from "./components/ResultCanvas";
-import { loadSnapshotIndex, loadSnapshotWorkbench, saveCurrentProjectSnapshot, type SnapshotMeta } from "./components/SnapshotMenu";
+import { loadSnapshotIndex, loadSnapshotWorkbench, saveCurrentProjectSnapshot, SNAPSHOTS_KEY, SNAPSHOT_PREFIX, type SnapshotMeta } from "./components/SnapshotMenu";
 import { FilePreview, DEFAULT_CODE_THEME } from "./components/FilePreview";
 import type { CodeThemeId } from "./components/FilePreview";
 import { DEFAULT_BELL, playBell } from "./sounds";
@@ -99,6 +99,20 @@ interface WalletSession {
 }
 interface WalletProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+}
+interface ShareChannelDraft {
+  id: string;
+  label: string;
+  checked: boolean;
+  primary?: boolean;
+}
+interface ShareProjectDialogState {
+  name: string;
+  shareFileRepo: boolean;
+  channels: ShareChannelDraft[];
+  loadingChannels: boolean;
+  submitting: boolean;
+  error: string | null;
 }
 const STORAGE_KEYS = {
   codeTheme: { key: "osa-code-theme", legacy: [legacyStorageKey("code-theme")] },
@@ -197,6 +211,24 @@ function readWalletSession(): WalletSession | null {
 
 function readWalletConnected(): boolean {
   return Boolean(readWalletSession());
+}
+
+function stripPublicProjectSessionId(id: string): string {
+  return id.replace(/^public-project-/, "");
+}
+
+function shareChannelsFromRuntime(status: RuntimeStatus | null): ShareChannelDraft[] {
+  const rooms = Array.from(new Set([
+    status?.technocorePublicRoom || "osa-network",
+    ...(status?.technocoreRooms || []),
+  ].map((room) => String(room || "").trim()).filter(Boolean)));
+  const primary = rooms.includes("osa-network") ? "osa-network" : rooms[0] || "osa-network";
+  return rooms.map((room) => ({
+    id: room,
+    label: room,
+    checked: room === primary,
+    primary: room === primary,
+  }));
 }
 
 function networkEventLabel(event: NetworkEvent): string | null {
@@ -445,6 +477,7 @@ export default function App() {
   const [networkEventsLoading, setNetworkEventsLoading] = useState(false);
   const [networkChatRefreshKey, setNetworkChatRefreshKey] = useState(0);
   const [projectDetails, setProjectDetails] = useState<{ projectId: string; fallback?: TopAgent | null } | null>(null);
+  const [shareDialog, setShareDialog] = useState<ShareProjectDialogState | null>(null);
   const [savedProjectTabs, setSavedProjectTabs] = useState<SnapshotMeta[]>(() => loadSnapshotIndex());
   const [activeSavedProject, setActiveSavedProject] = useState<string | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
@@ -1426,7 +1459,7 @@ export default function App() {
     }
   }
 
-  async function shareProject() {
+  async function openShareProjectDialog() {
     const wallet = readWalletSession();
     if (!wallet) {
       setWalletConnected(false);
@@ -1439,19 +1472,45 @@ export default function App() {
       window.alert("Add at least one private agent before sharing a project.");
       return;
     }
-    const projectName = window.prompt(
-      "Share all private rooms and agents as one public project. Choose a public project name:",
-      "OSA Project",
-    );
-    if (projectName === null) return;
-    const shareFileRepo = window.confirm(
-      "Share this project's File Repo too?\n\nOK shares project metadata plus the files that belong to the room File Repos. Only choose OK if those files are safe to make public.\n\nCancel shares the rooms and agents without the File Repo.",
-    );
+    setShareDialog({
+      name: activeSavedProject || "OSA Project",
+      shareFileRepo: false,
+      channels: shareChannelsFromRuntime(runtimeStatus),
+      loadingChannels: true,
+      submitting: false,
+      error: null,
+    });
+    try {
+      const health = await api.health();
+      setRuntimeStatus(health.runtime ?? null);
+      setShareDialog((prev) => prev ? { ...prev, channels: shareChannelsFromRuntime(health.runtime ?? null), loadingChannels: false } : prev);
+    } catch {
+      setShareDialog((prev) => prev ? { ...prev, loadingChannels: false } : prev);
+    }
+  }
+
+  async function submitShareProject() {
+    if (!shareDialog || shareDialog.submitting) return;
+    const wallet = readWalletSession();
+    if (!wallet) {
+      setShareDialog((prev) => prev ? { ...prev, error: "Connect your wallet before sharing a project." } : prev);
+      setWalletConnected(false);
+      return;
+    }
+    const privateTeams = teams.filter((team) => !PUBLIC_TEAM_IDS.has(team.id));
+    const privateSessions = privateTeams.flatMap((team) => team.desks).filter((desk) => !("isPending" in desk));
+    if (!privateSessions.length) {
+      setShareDialog((prev) => prev ? { ...prev, error: "Add at least one private agent before sharing a project." } : prev);
+      return;
+    }
+    const selectedChannels = shareDialog.channels.filter((channel) => channel.checked).map((channel) => channel.id);
+    setShareDialog((prev) => prev ? { ...prev, submitting: true, error: null } : prev);
     try {
       await api.publicProjects.share({
-        name: projectName.trim() || "OSA Project",
+        name: shareDialog.name.trim() || "OSA Project",
         owner_wallet_address: wallet.address,
-        share_file_repo: shareFileRepo,
+        share_file_repo: shareDialog.shareFileRepo,
+        technocore_channels: selectedChannels,
         rooms: privateTeams.map((team) => ({ id: team.id, name: team.name || serverTeamName(team.id, sessionsRef.current) })),
       });
       const latest = await api.sessions.list(50);
@@ -1461,8 +1520,120 @@ export default function App() {
         includeUnplacedPrivate: !projectScopedRef.current,
       }));
       await refreshTopProjects();
+      setShareDialog(null);
     } catch (e) {
-      window.alert((e as Error).message || "Couldn't share this project.");
+      setShareDialog((prev) => prev ? { ...prev, submitting: false, error: (e as Error).message || "Couldn't share this project." } : prev);
+    }
+  }
+
+  async function refreshProjectListings() {
+    const latest = await api.sessions.list(50);
+    sessionsRef.current = latest;
+    setSessions(latest);
+    setTeams((prev) => mergeServerTeams(prev, latest, {
+      includeUnplacedPrivate: !projectScopedRef.current,
+    }));
+    await refreshTopProjects();
+  }
+
+  function canDeletePublicProject(session: Session): boolean {
+    const wallet = readWalletSession();
+    if (!wallet?.address) return false;
+    return session.public_kind === "project"
+      && String(session.owner_wallet_address || "").toLowerCase() === wallet.address.toLowerCase();
+  }
+
+  function ownPublicProjectSession(): Session | null {
+    const wallet = readWalletSession();
+    if (!wallet?.address) return null;
+    return sessionsRef.current.find((session) => (
+      session.public_kind === "project"
+      && String(session.owner_wallet_address || "").toLowerCase() === wallet.address.toLowerCase()
+    )) || null;
+  }
+
+  async function deletePublicProject(projectId: string, title: string, confirmDelete = true) {
+    const wallet = readWalletSession();
+    if (!wallet) {
+      setWalletConnected(false);
+      setWalletConnectError("Connect the owner wallet before deleting a shared project.");
+      return false;
+    }
+    if (confirmDelete && !window.confirm(`Delete shared project "${title}" from Latest Projects and Top100? Reviews, copy stats, and donation records for this public listing will be removed.`)) {
+      return false;
+    }
+    await api.publicProjects.delete(stripPublicProjectSessionId(projectId), { owner_wallet_address: wallet.address });
+    await refreshProjectListings();
+    setProjectDetails((prev) => (
+      prev && stripPublicProjectSessionId(projectId) === prev.projectId ? null : prev
+    ));
+    return true;
+  }
+
+  async function deletePublicProjectFromSession(session: Session) {
+    try {
+      await deletePublicProject(session.id, session.title || "Public Project");
+    } catch (e) {
+      window.alert((e as Error).message || "Couldn't delete this shared project.");
+    }
+  }
+
+  async function deletePublicProjectFromTop(project: TopAgent) {
+    try {
+      await deletePublicProject(project.target_id || stripPublicProjectSessionId(project.id), project.title || "Public Project");
+    } catch (e) {
+      window.alert((e as Error).message || "Couldn't delete this shared project.");
+    }
+  }
+
+  async function handleDeleteProject() {
+    const privateSessionIds = Array.from(new Set([
+      ...sessionsRef.current.filter(isPrivateSession).map((session) => session.id),
+      ...teams
+        .filter((team) => !PUBLIC_TEAM_IDS.has(team.id))
+        .flatMap((team) => team.desks)
+        .filter((desk) => !("isPending" in desk))
+        .map((desk) => (desk as Session).id),
+    ]));
+    const sharedProject = ownPublicProjectSession();
+    if (privateSessionIds.length === 0 && !sharedProject && !activeSavedProject) {
+      window.alert("There is no active private project to delete.");
+      return;
+    }
+    const runningCount = sessionsRef.current.filter((session) =>
+      privateSessionIds.includes(session.id) && session.is_running === true,
+    ).length;
+    const warning = runningCount > 0
+      ? `\n\nThis will cancel ${runningCount} running agent ${runningCount === 1 ? "task" : "tasks"}.`
+      : "";
+    const sharedWarning = sharedProject
+      ? `\n\nIt will also unshare "${sharedProject.title || "Public Project"}" from Latest Projects and Top100.`
+      : "";
+    if (!window.confirm(`Delete the current project completely?${warning}${sharedWarning}\n\nPrivate desks, rooms, pending prompts, local workbench state, and the active saved project tab will be removed.`)) return;
+
+    try {
+      if (sharedProject) await deletePublicProject(sharedProject.id, sharedProject.title || "Public Project", false);
+      if (privateSessionIds.length > 0) await Promise.allSettled(privateSessionIds.map((id) => api.sessions.delete(id)));
+      removeStoredItems(WORKBENCH_KEY_V2, [WORKBENCH_LEGACY_KEY_V2]);
+      removeStoredItems(WORKBENCH_KEY_V1, [WORKBENCH_LEGACY_KEY_V1]);
+      if (activeSavedProject) {
+        removeStoredItems(SNAPSHOT_PREFIX + activeSavedProject);
+        const nextSnapshots = loadSnapshotIndex().filter((snapshot) => snapshot.name !== activeSavedProject);
+        writeStoredItem(SNAPSHOTS_KEY, JSON.stringify(nextSnapshots));
+        refreshSavedProjectTabs(nextSnapshots);
+      }
+      projectScopedRef.current = true;
+      setActiveSavedProject(null);
+      clearActiveProjectUiState();
+      const latest = await api.sessions.list(50);
+      const publicOnly = latest.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID);
+      sessionsRef.current = latest.filter((session) => !privateSessionIds.includes(session.id));
+      setSessions(sessionsRef.current);
+      setTeams([makeHomeTeam(), makePublicProjectsTeam(publicOnly)]);
+      await refreshTopProjects();
+      setDashboardTab("workbench");
+    } catch (e) {
+      window.alert((e as Error).message || "Couldn't delete the current project.");
     }
   }
 
@@ -1933,6 +2104,24 @@ export default function App() {
         </button>
         <button
           type="button"
+          onClick={() => void handleDeleteProject()}
+          title="Delete the current private project and unshare your public project"
+          style={{
+            height: 30,
+            padding: "0 12px",
+            borderRadius: 6,
+            border: "1px solid #7f1d1d",
+            background: "#2a1015",
+            color: "#fca5a5",
+            fontSize: 12,
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          Delete Project
+        </button>
+        <button
+          type="button"
           onClick={addRoom}
           title="Create a private OpenClaw room with its own desks"
           style={{
@@ -1951,7 +2140,7 @@ export default function App() {
         </button>
         <button
           type="button"
-          onClick={() => void shareProject()}
+          onClick={() => void openShareProjectDialog()}
           title="Share the current private workspace as one public project"
           style={{
             height: 30,
@@ -2045,6 +2234,7 @@ export default function App() {
           onCopy={copyDeskToHome}
           onDonateRecorded={refreshTopProjects}
           onDetails={openProjectDetails}
+          onDelete={deletePublicProjectFromTop}
         />
       ) : dashboardTab === "network" ? (
         <NetworkActivityPanel
@@ -2089,6 +2279,8 @@ export default function App() {
           onAddDesk={addDeskToTeam}
           onCopyDesk={copyDeskToHome}
           onPublicProjectDetails={openProjectDetailsFromSession}
+          onDeletePublicProject={deletePublicProjectFromSession}
+          canDeletePublicProject={canDeletePublicProject}
           onDeleteTeam={deleteRoom}
           onTeamSceneChange={setTeamScene}
           onTeamRename={renameTeam}
@@ -2236,6 +2428,172 @@ export default function App() {
           onSaved={refreshAgents}
           onDeleted={refreshAgents}
         />
+      )}
+      {shareDialog && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Share project"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 4200,
+            display: "grid",
+            placeItems: "center",
+            background: "rgba(4,8,18,0.74)",
+            padding: 18,
+          }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget && !shareDialog.submitting) setShareDialog(null); }}
+        >
+          <form
+            onSubmit={(e) => { e.preventDefault(); void submitShareProject(); }}
+            style={{
+              width: "min(520px, 96vw)",
+              maxHeight: "calc(100vh - 36px)",
+              overflow: "auto",
+              borderRadius: 8,
+              border: "1px solid #273453",
+              background: "#101827",
+              boxShadow: "0 24px 80px rgba(0,0,0,0.48)",
+              padding: 16,
+              boxSizing: "border-box",
+              color: "var(--text)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 16, fontWeight: 900 }}>Share Project</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: "var(--text-dim)" }}>
+                  Publish the current private rooms as one public OSA project.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShareDialog(null)}
+                disabled={shareDialog.submitting}
+                title="Close"
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: 6,
+                  border: "1px solid var(--card-border)",
+                  background: "#121828",
+                  color: "var(--text)",
+                  cursor: shareDialog.submitting ? "default" : "pointer",
+                  fontWeight: 900,
+                }}
+              >
+                x
+              </button>
+            </div>
+
+            <label style={{ display: "grid", gap: 6, marginTop: 14, fontSize: 12, fontWeight: 800 }}>
+              <span>Project name</span>
+              <input
+                value={shareDialog.name}
+                onChange={(e) => setShareDialog((prev) => prev ? { ...prev, name: e.currentTarget.value } : prev)}
+                maxLength={120}
+                autoFocus
+                style={{
+                  height: 36,
+                  borderRadius: 6,
+                  border: "1px solid var(--card-border)",
+                  background: "#0b1020",
+                  color: "var(--text)",
+                  padding: "0 10px",
+                  boxSizing: "border-box",
+                }}
+              />
+            </label>
+
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, fontSize: 12, color: "var(--text)" }}>
+              <input
+                type="checkbox"
+                checked={shareDialog.shareFileRepo}
+                onChange={(e) => setShareDialog((prev) => prev ? { ...prev, shareFileRepo: e.currentTarget.checked } : prev)}
+              />
+              <span>Share File Repo</span>
+            </label>
+
+            <div style={{ marginTop: 16, display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 900 }}>Channels</div>
+              <div style={{ display: "grid", gap: 7 }}>
+                {shareDialog.channels.map((channel) => (
+                  <label
+                    key={channel.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      minHeight: 30,
+                      borderRadius: 6,
+                      border: "1px solid #273453",
+                      background: channel.checked ? "rgba(34,211,238,0.10)" : "#0b1020",
+                      padding: "0 10px",
+                      fontSize: 12,
+                      color: channel.primary ? "#93c5fd" : "var(--text)",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={channel.checked}
+                      onChange={(e) => {
+                        const checked = e.currentTarget.checked;
+                        setShareDialog((prev) => prev ? {
+                          ...prev,
+                          channels: prev.channels.map((item) => item.id === channel.id ? { ...item, checked } : item),
+                        } : prev);
+                      }}
+                    />
+                    <span style={{ fontWeight: 800 }}>{channel.label}</span>
+                  </label>
+                ))}
+              </div>
+              {shareDialog.loadingChannels && (
+                <div style={{ fontSize: 11, color: "var(--text-dim)" }}>Loading channels...</div>
+              )}
+            </div>
+
+            {shareDialog.error && (
+              <div style={{ marginTop: 12, fontSize: 12, color: "#ff8a8a" }}>{shareDialog.error}</div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button
+                type="button"
+                onClick={() => setShareDialog(null)}
+                disabled={shareDialog.submitting}
+                style={{
+                  height: 34,
+                  padding: "0 12px",
+                  borderRadius: 6,
+                  border: "1px solid #2a3558",
+                  background: "#121828",
+                  color: "var(--text-dim)",
+                  cursor: shareDialog.submitting ? "default" : "pointer",
+                  fontWeight: 800,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={shareDialog.submitting || shareDialog.loadingChannels}
+                style={{
+                  height: 34,
+                  padding: "0 14px",
+                  borderRadius: 6,
+                  border: "1px solid #2a8c72",
+                  background: shareDialog.submitting || shareDialog.loadingChannels ? "#18251f" : "#16a37b",
+                  color: "white",
+                  cursor: shareDialog.submitting || shareDialog.loadingChannels ? "default" : "pointer",
+                  fontWeight: 900,
+                }}
+              >
+                {shareDialog.submitting ? "Sharing" : "Share"}
+              </button>
+            </div>
+          </form>
+        </div>
       )}
       <FilePreview
         data={preview}

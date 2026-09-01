@@ -93,8 +93,10 @@ try {
   );
 
   const rootShell = await fetch(`${baseUrl}/`, { redirect: "manual" });
-  assert(rootShell.status === 302 && rootShell.headers.get("location") === "/agent-gui/", "root should redirect to AgentGUI");
-  const shell = await fetch(`${baseUrl}/agent-gui/`);
+  assert(rootShell.status === 302 && rootShell.headers.get("location") === "/osa-network/", "root should redirect to OSA Network");
+  const legacyShell = await fetch(`${baseUrl}/agent-gui/`, { redirect: "manual" });
+  assert(legacyShell.status === 302 && legacyShell.headers.get("location") === "/osa-network/", "legacy AgentGUI path should redirect to OSA Network");
+  const shell = await fetch(`${baseUrl}/osa-network/`);
   const shellText = await shell.text();
   const csp = shell.headers.get("content-security-policy") || "";
   const scriptSrc = csp.split(";").map((part) => part.trim()).find((part) => part.startsWith("script-src")) || "";

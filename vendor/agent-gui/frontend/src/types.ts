@@ -44,6 +44,7 @@ export interface Session {
   review_count?: number;
   rating_avg?: number;
   latest_review?: ProjectReviewSummary | null;
+  owner_wallet_address?: string | null;
   connector_status?: string | null;
   connector_exit_code?: number | null;
   connector_error?: string | null;

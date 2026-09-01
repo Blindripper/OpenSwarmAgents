@@ -43,6 +43,8 @@ interface Props {
   onAddDesk: (teamId: string) => void;
   onCopyDesk?: (deskId: string) => void;
   onPublicProjectDetails?: (session: Session) => void;
+  onDeletePublicProject?: (session: Session) => void;
+  canDeletePublicProject?: (session: Session) => boolean;
   onShareTeam?: (teamId: string) => void;
   onTeamSceneChange?: (teamId: string, sceneId: string) => void;
   onTeamRename?: (teamId: string, name: string) => void;
@@ -111,7 +113,7 @@ export function Office({
   pendingAssignments, activePendingDeskId, deskDropHoverId, askManagerByTeamId, onAskManagerDone,
   onPreview, onDeskStart, onDeskClose,
   deskPanelZ, onDeskPanelActivate,
-  onAddDesk, onCopyDesk, onPublicProjectDetails, onShareTeam, onDeleteTeam, onSessionInterrupt, onAssignAgentToDesk,
+  onAddDesk, onCopyDesk, onPublicProjectDetails, onDeletePublicProject, canDeletePublicProject, onShareTeam, onDeleteTeam, onSessionInterrupt, onAssignAgentToDesk,
   onPendingMsgChange, onPendingAssignmentPatch, onActivePendingDeskChange, onDeskFocus, focusedDeskId, selectedDeskId,
   deskConfigsById, onAvatarClick, onDeskAskManager, onManagerAuditHistory, onAgentDragStart,
   onTeamSceneChange, onTeamRename,
@@ -173,6 +175,8 @@ export function Office({
             canAddDesk={!isPublicRoom}
             onCopyDesk={onCopyDesk}
             onPublicProjectDetails={onPublicProjectDetails}
+            onDeletePublicProject={onDeletePublicProject}
+            canDeletePublicProject={canDeletePublicProject}
             onShareTeam={undefined}
             onAddDesk={() => onAddDesk(team.id)}
             onSessionInterrupt={onSessionInterrupt}

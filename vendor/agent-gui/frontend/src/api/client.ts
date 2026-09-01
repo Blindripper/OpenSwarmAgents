@@ -120,9 +120,17 @@ async function patch<T>(path: string, body: unknown): Promise<T> {
   return r.json();
 }
 
-async function del<T>(path: string): Promise<T> {
-  const r = await fetch(BASE + path, { method: "DELETE" });
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+async function del<T>(path: string, body?: unknown): Promise<T> {
+  const r = await fetch(BASE + path, {
+    method: "DELETE",
+    ...(body === undefined
+      ? {}
+      : {
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+  });
+  if (!r.ok) throw new Error(await errorDetail(r));
   return r.json();
 }
 
@@ -383,8 +391,13 @@ export const api = {
       }>("/donations", body),
   },
   publicProjects: {
-    share: (body: { name?: string; owner_wallet_address?: string; share_file_repo?: boolean; rooms?: { id: string; name?: string }[] }) =>
+    share: (body: { name?: string; owner_wallet_address?: string; share_file_repo?: boolean; technocore_channels?: string[]; rooms?: { id: string; name?: string }[] }) =>
       post<{ ok: boolean; shared_public: boolean; project?: Session }>("/public/projects/share", body),
+    delete: (projectId: string, body: { owner_wallet_address: string }) =>
+      del<{ ok: boolean; deleted: boolean; public_project_id: string; removed: Record<string, number> }>(
+        `/public/projects/${encodeURIComponent(projectId)}`,
+        body,
+      ),
     get: (projectId: string) =>
       get<PublicProjectDetail>(`/public/projects/${encodeURIComponent(projectId)}`),
     explore: (projectId: string) =>

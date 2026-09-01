@@ -124,6 +124,7 @@ interface Props {
   copyLabel?: string;
   onCopy?: () => void | Promise<void>;
   onDetails?: () => void;
+  onDeletePublicProject?: () => void | Promise<void>;
   /** Fired once after autoExpand opens the panel (so the parent can clear justStartedId). */
   onAutoExpanded?: () => void;
   onActivity?: () => void;
@@ -738,7 +739,7 @@ function DeskHistoryView({ history }: { history: DeskHistory | null }) {
   );
 }
 
-export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExpand, openAnchor, workspacePath, taskContent, taskImages, verbose = true, reasoningEffort, apiMode, onPreview, panelZIndex, onPanelActivate, onSelect, onFocus, onOpen, onOpenChange, deskFocused, onClose, readOnly = false, copyLabel = "Copy", onCopy, onDetails, onAutoExpanded, onActivity, onAskManager, onInterrupt, profileLabel, profileColor, profileModel }: Props) {
+export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExpand, openAnchor, workspacePath, taskContent, taskImages, verbose = true, reasoningEffort, apiMode, onPreview, panelZIndex, onPanelActivate, onSelect, onFocus, onOpen, onOpenChange, deskFocused, onClose, readOnly = false, copyLabel = "Copy", onCopy, onDetails, onDeletePublicProject, onAutoExpanded, onActivity, onAskManager, onInterrupt, profileLabel, profileColor, profileModel }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [tab, setTab] = useState<DeskTab>("activity");
   const [consoleView, setConsoleView] = useState<ConsoleView>("debug");
@@ -1995,6 +1996,21 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
                 >
                   {copying ? "Copying..." : copyLabel}
                 </button>
+                {onDeletePublicProject && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); void onDeletePublicProject(); }}
+                    title="Delete your shared public project"
+                    style={{
+                      padding: "3px 14px", borderRadius: 6, fontSize: 11,
+                      background: "#2a1015",
+                      color: "#fca5a5",
+                      border: "1px solid #7f1d1d",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             ) : !isRunning ? (
               <button

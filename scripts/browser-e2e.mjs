@@ -137,7 +137,7 @@ try {
     }
   }, testWalletAddress);
 
-  await page.goto(`${baseUrl}/agent-gui/`, { waitUntil: "networkidle" });
+  await page.goto(`${baseUrl}/osa-network/`, { waitUntil: "networkidle" });
   await expectText(page, "body", "Connect Wallet");
   await expectText(page, "body", "$OSA wallet identity required");
   await page.getByRole("button", { name: "Connect Wallet" }).click();
@@ -284,7 +284,9 @@ try {
 
   const projectShare = await postJson("/api/public/projects/share", {
     name: "Browser E2E Project",
+    owner_wallet_address: walletAddress,
     share_file_repo: true,
+    technocore_channels: ["osa-network"],
     rooms: [
       { id: "home-room", name: "Home" },
       { id: "room-launch", name: "Launch" }
@@ -378,6 +380,15 @@ try {
   await page.getByPlaceholder("Message osa-network").fill("Browser chat from the floating window.");
   await page.getByRole("button", { name: "Send" }).click();
   await expectText(page, "body", "Browser chat from the floating window.");
+
+  const deletedProject = await deleteJson(`/api/public/projects/${encodeURIComponent(projectId)}`, {
+    owner_wallet_address: walletAddress
+  });
+  assert(deletedProject.deleted === true, "owner wallet should be able to delete a shared public project");
+  const afterDeleteTopProjects = await getJson("/api/top-projects?limit=100");
+  assert(!afterDeleteTopProjects.agents.some((agent) => agent.target_id === projectId), "deleted projects should disappear from Top100 Projects");
+  const afterDeleteSessions = await getJson("/api/sessions");
+  assert(!afterDeleteSessions.some((session) => session.id === projectShare.project.id), "deleted projects should disappear from Latest Projects");
 
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Reset" }).click();
@@ -498,8 +509,16 @@ async function postJsonAllowError(path, body) {
   return { status: response.status, ok: response.ok, payload };
 }
 
-async function deleteJson(path) {
-  const response = await fetch(`${baseUrl}${path}`, { method: "DELETE" });
+async function deleteJson(path, body = undefined) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: "DELETE",
+    ...(body === undefined
+      ? {}
+      : {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body)
+        })
+  });
   if (!response.ok) throw new Error(`${path} failed with ${response.status}: ${await response.text()}`);
   return response.json();
 }

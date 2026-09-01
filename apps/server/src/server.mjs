@@ -23,6 +23,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "../../..");
 const publicDir = join(rootDir, "apps/web/public");
 const agentGuiDistDir = join(rootDir, "vendor/agent-gui/frontend/dist");
+const dashboardBasePath = "/osa-network";
+const legacyDashboardBasePath = "/agent-gui";
 const dataDir = process.env.OSA_DATA_DIR || join(rootDir, "data");
 const uploadDir = process.env.OSA_UPLOAD_DIR || join(dataDir, "uploads");
 const identityPath = process.env.OSA_IDENTITY_PATH || join(dataDir, "node-identity.json");
@@ -5379,6 +5381,7 @@ async function shareAgentGuiProject(body = {}) {
     ? normalizeWalletAddress(body.owner_wallet_address || body.ownerWalletAddress)
     : null;
   const shareFileRepo = Boolean(body.share_file_repo || body.shareFileRepo);
+  const technocoreChannels = requestedTechnocoreAnnouncementRooms(body);
   const tasks = agentGuiAllPrivateProjectTasks();
   if (!tasks.length) {
     const error = new Error("Add at least one private agent before sharing a project.");
@@ -5425,13 +5428,68 @@ async function shareAgentGuiProject(body = {}) {
     taskIds: next.taskIds,
     rooms: next.rooms.map((room) => room.id),
     ownerWalletAddress: next.ownerWalletAddress,
-    shareFileRepo: next.shareFileRepo
+    shareFileRepo: next.shareFileRepo,
+    technocoreChannels
   });
   await saveStore();
-  announceTechnocoreProjectShare(next).catch((error) => {
+  announceTechnocoreProjectShare(next, technocoreChannels).catch((error) => {
     console.warn(`Technocore announcement failed: ${error.message}`);
   });
   return { ok: true, shared_public: true, project: agentGuiPublicCollectionSession(next, "project") };
+}
+
+async function deletePublicProject(projectId, body = {}) {
+  const id = String(projectId || "").replace(/^public-project-/, "").slice(0, 140);
+  const ownerWalletAddress = body.owner_wallet_address || body.ownerWalletAddress || body.wallet_address || body.walletAddress
+    ? normalizeWalletAddress(body.owner_wallet_address || body.ownerWalletAddress || body.wallet_address || body.walletAddress)
+    : null;
+  const index = store.publicProjects.findIndex((item) => item.id === id);
+  if (index < 0) {
+    const error = new Error("Public project not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+  const project = store.publicProjects[index];
+  if (!project.ownerWalletAddress || !ownerWalletAddress) {
+    const error = new Error("Deleting a public project requires the owner wallet.");
+    error.statusCode = 403;
+    throw error;
+  }
+  if (String(project.ownerWalletAddress).toLowerCase() !== ownerWalletAddress.toLowerCase()) {
+    const error = new Error("Only the owner wallet can delete this public project.");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const taskIds = new Set(normalizeList(project.taskIds || [], []).map(String));
+  for (const task of store.tasks) {
+    if (!taskIds.has(task.id)) continue;
+    task.sharedPublic = false;
+    task.sharedPublicAt = null;
+    task.updatedAt = now();
+  }
+
+  store.publicProjects.splice(index, 1);
+  const reviewsBefore = store.publicProjectReviews.length;
+  const copiesBefore = store.publicProjectCopies.length;
+  const donationsBefore = store.agentDonations.length;
+  store.publicProjectReviews = store.publicProjectReviews.filter((review) => review.projectId !== id);
+  store.publicProjectCopies = store.publicProjectCopies.filter((copy) => copy.projectId !== id);
+  store.agentDonations = store.agentDonations.filter((donation) => !(donation.targetType === "project" && donation.targetId === id));
+
+  const removed = {
+    tasks_unshared: taskIds.size,
+    reviews: reviewsBefore - store.publicProjectReviews.length,
+    copies: copiesBefore - store.publicProjectCopies.length,
+    donations: donationsBefore - store.agentDonations.length
+  };
+  event("agentgui_project_deleted", "Public Project deleted", {
+    publicProjectId: id,
+    ownerWalletAddress,
+    removed
+  });
+  await saveStore();
+  return { ok: true, deleted: true, public_project_id: id, removed };
 }
 
 async function connectAgentGuiWallet(body = {}) {
@@ -5773,22 +5831,48 @@ function technocoreAnnouncementText(project) {
   const roomCount = Array.isArray(project.rooms) ? project.rooms.length : 0;
   const agentCount = Array.isArray(project.taskIds) ? project.taskIds.length : 0;
   const base = String(process.env.OSA_PUBLIC_URL || federationAdvertiseUrl || "").replace(/\/$/, "");
-  const url = base ? ` ${base}/agent-gui/` : "";
+  const url = base ? ` ${base}${dashboardBasePath}/` : "";
   return `OSA project shared: ${project.name} (${roomCount} ${roomCount === 1 ? "room" : "rooms"}, ${agentCount} ${agentCount === 1 ? "agent" : "agents"}) id=${project.id}${url}`;
 }
 
-async function announceTechnocoreProjectShare(project) {
-  if (!technocoreEnabled || !technocoreAnnounceEnabled || !technocoreAnnounceRoom) return false;
+function requestedTechnocoreAnnouncementRooms(body = {}) {
+  if (!technocoreEnabled || !technocoreAnnounceEnabled) return [];
+  const explicit = body.technocore_channels ?? body.technocoreChannels ?? body.share_channels ?? body.shareChannels;
+  const raw = Array.isArray(explicit)
+    ? explicit
+    : explicit === undefined
+      ? [technocoreAnnounceRoom]
+      : [];
+  return Array.from(new Set(raw.map((room) => normalizeTechnocoreName(room)).filter(Boolean))).slice(0, 12);
+}
+
+async function announceTechnocoreProjectShare(project, rooms = null) {
+  if (!technocoreEnabled || !technocoreAnnounceEnabled) return false;
+  const targets = Array.isArray(rooms)
+    ? rooms.map((room) => normalizeTechnocoreName(room)).filter(Boolean)
+    : [technocoreAnnounceRoom].map((room) => normalizeTechnocoreName(room)).filter(Boolean);
+  const uniqueTargets = Array.from(new Set(targets));
+  if (!uniqueTargets.length) return false;
   const text = technocoreAnnouncementText(project).replace(/\s+/g, " ").trim().slice(0, 500);
   if (!text) return false;
-  await technocoreSay(technocoreAnnounceRoom, text);
+  const announced = [];
+  for (const room of uniqueTargets) {
+    try {
+      await technocoreSay(room, text);
+      announced.push(room);
+    } catch (error) {
+      console.warn(`Technocore announcement to ${room} failed: ${error.message}`);
+    }
+  }
+  if (!announced.length) return false;
   event("technocore_project_announced", "Project announced on Technocore", {
     source: "technocore",
     external: true,
     untrusted: true,
     publicProjectId: project.id,
-    room: technocoreAnnounceRoom,
-    url: `${technocoreBaseUrl}/r/${technocoreAnnounceRoom}`
+    rooms: announced,
+    room: announced[0],
+    url: `${technocoreBaseUrl}/r/${announced[0]}`
   });
   await saveStore();
   return true;
@@ -6719,6 +6803,13 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
   }
 
   const projectDetailMatch = path.match(/^\/api\/public\/projects\/([^/]+)$/);
+  if (method === "DELETE" && projectDetailMatch) {
+    try {
+      return sendJson(res, 200, await deletePublicProject(decodeURIComponent(projectDetailMatch[1]), await readJson(req)));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to delete project" });
+    }
+  }
   if (method === "GET" && projectDetailMatch) {
     const details = publicProjectDetails(decodeURIComponent(projectDetailMatch[1]));
     return details ? sendJson(res, 200, details) : notFound(res);
@@ -8403,9 +8494,9 @@ async function serveStatic(req, res, url) {
 }
 
 async function serveAgentGuiStatic(req, res, url) {
-  const relative = url.pathname === "/agent-gui" || url.pathname === "/agent-gui/"
+  const relative = url.pathname === dashboardBasePath || url.pathname === `${dashboardBasePath}/`
     ? "/index.html"
-    : url.pathname.replace(/^\/agent-gui/, "") || "/index.html";
+    : url.pathname.replace(new RegExp(`^${dashboardBasePath}`), "") || "/index.html";
   const safePath = relative.replaceAll("..", "");
   const filePath = join(agentGuiDistDir, safePath);
   try {
@@ -8429,7 +8520,7 @@ async function serveAgentGuiIndex(res) {
   } catch {
     sendJson(res, 503, {
       error: "agent_gui_not_built",
-      message: "Run npm run build:agent-gui before opening /agent-gui/."
+      message: `Run npm run build:agent-gui before opening ${dashboardBasePath}/.`
     });
   }
 }
@@ -8440,13 +8531,17 @@ const server = createServer(async (req, res) => {
     return handleApi(req, res, url);
   }
   if (url.pathname === "/" && !url.search) {
-    return redirect(res, "/agent-gui/");
+    return redirect(res, `${dashboardBasePath}/`);
   }
-  if (url.pathname === "/agent-gui" || url.pathname.startsWith("/agent-gui/")) {
+  if (url.pathname === legacyDashboardBasePath || url.pathname.startsWith(`${legacyDashboardBasePath}/`)) {
+    const nextPath = `${dashboardBasePath}${url.pathname.slice(legacyDashboardBasePath.length) || "/"}`;
+    return redirect(res, `${nextPath}${url.search}`);
+  }
+  if (url.pathname === dashboardBasePath || url.pathname.startsWith(`${dashboardBasePath}/`)) {
     return serveAgentGuiStatic(req, res, url);
   }
   if (url.pathname === "/full-logo.png") {
-    const assetUrl = new URL("/agent-gui/full-logo.png", `http://${req.headers.host || "127.0.0.1"}`);
+    const assetUrl = new URL(`${dashboardBasePath}/full-logo.png`, `http://${req.headers.host || "127.0.0.1"}`);
     return serveAgentGuiStatic(req, res, assetUrl);
   }
   return serveStatic(req, res, url);

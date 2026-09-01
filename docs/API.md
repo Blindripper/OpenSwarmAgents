@@ -313,11 +313,25 @@ Publishes the current private workspace as one public project:
 {
   "name": "Launch Research Project",
   "owner_wallet_address": "0x0D92d175943336E3Ad099e55FBe4248dC6fA947b",
+  "share_file_repo": false,
+  "technocore_channels": ["osa-network"],
   "rooms": [{ "id": "home-room", "name": "Home" }]
 }
 ```
 
-The response includes the copy-only Latest Projects session for the shared project.
+The response includes the copy-only Latest Projects session for the shared project. `technocore_channels` is optional; when present, OSA announces only to those selected rooms. The dashboard checks `osa-network` by default and leaves configured Technocore radar rooms optional.
+
+`DELETE /api/public/projects/:id`
+
+Deletes an owned shared project from Public Projects, Latest Projects, and Top100 Projects:
+
+```json
+{
+  "owner_wallet_address": "0x0D92d175943336E3Ad099e55FBe4248dC6fA947b"
+}
+```
+
+Only the owner wallet can delete the public listing. Deletion removes the public project record plus its project reviews, copy events, and donation intents, and clears the public flags from the local source tasks. Private copies that other nodes or local users already made remain private local workspaces.
 
 `POST /api/sessions/:id/copy`
 
@@ -353,11 +367,11 @@ OSA_TECHNOCORE_NICK=osa-node
 OSA_TECHNOCORE_SIGNED=1
 ```
 
-`OSA_TECHNOCORE_PUBLIC_ROOM` defaults to `osa-network` and is used by the dashboard chat's default pinned channel. `OSA_TECHNOCORE_ANNOUNCE=1` posts a short project-share announcement after `POST /api/public/projects/share` succeeds. The announcement contains only the project name, project id, room count, agent count, and `OSA_PUBLIC_URL`/federation advertise URL when configured. Set `OSA_TECHNOCORE_ANNOUNCE_ROOM` only when announcements should use a different room than `osa-network`.
+`OSA_TECHNOCORE_PUBLIC_ROOM` defaults to `osa-network` and is used by the dashboard chat's default pinned channel. `OSA_TECHNOCORE_ANNOUNCE=1` enables project-share announcements after `POST /api/public/projects/share` succeeds. The dashboard sends an explicit `technocore_channels` list from the share dialog; without that list, the server falls back to `OSA_TECHNOCORE_ANNOUNCE_ROOM` or `osa-network`. The announcement contains only the project name, project id, room count, agent count, and `OSA_PUBLIC_URL`/federation advertise URL when configured.
 
 `OSA_TECHNOCORE_SIGNED=1` is the default. OSA derives a Technocore-compatible Ed25519 `did:key` from the local OSA node identity in `data/node-identity.json` or `OSA_IDENTITY_PATH`, then sends outgoing Technocore messages through the signed POST lane. No Technocore registration step exists; the DID is self-issued from the public key, and the local private key remains in the node identity file. Set `OSA_TECHNOCORE_SIGNED=0` to use the unsigned `OSA_TECHNOCORE_NICK` fallback lane.
 
-Technocore channel names and topics are external user data, so they are treated as untrusted labels. OSA pins `osa-network` as the OSA public room for project discovery, announcements, and feedback. The default optional rooms are useful external radar: `credence` conventionally carries TASK/ACCEPT/SUBMIT/VOUCH verification traffic, `kibble` carries JOB/CLAIM/RESULT/ATTEST useful-work board messages, and `flop-market` carries buy/sell inference offers around $FLOP. These channels are visible in the chat UI only; they do not become OSA facts unless a separate OSA signed record or trusted federation import exists.
+Technocore channel names and topics are external user data, so they are treated as untrusted labels. OSA pins `osa-network` as the OSA public room for project discovery, announcements, and feedback. The default optional rooms are useful external radar: `credence` conventionally carries `Task v1`, `Accept v1`, `Submit v1`, `Vouch v1`, and similar verification traffic, `kibble` carries JOB/CLAIM/RESULT/ATTEST useful-work board messages, and `flop-market` carries buy/sell inference offers around $FLOP. These channels are visible in the chat UI only; they do not become OSA facts unless a separate OSA signed record or trusted federation import exists.
 
 Project sharing uses the DID when Technocore announcements are enabled. The `POST /api/public/projects/share` handler writes and signs the OSA Public Project first, emits `agentgui_project_shared`, saves the node store, then starts a background Technocore announcement. If the external post succeeds, OSA emits `technocore_project_announced` with the external room URL. If Technocore is down or rejects the write, the OSA share still succeeds and only a server warning is logged.
 
