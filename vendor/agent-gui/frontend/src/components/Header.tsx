@@ -100,6 +100,87 @@ function TopMetric({ label, value, hint, tone = "accent" }: { label: string; val
   );
 }
 
+function shortDid(value: string) {
+  const display = value.replace(/^did:key:/, "");
+  if (display.length <= 18) return display;
+  return `${display.slice(0, 6)}...${display.slice(-6)}`;
+}
+
+async function copyText(value: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+function TechnocoreDidMetric({ did }: { did: string }) {
+  const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const status = failed ? "Failed" : copied ? "Copied" : "Copy";
+  async function handleCopy() {
+    setFailed(false);
+    try {
+      await copyText(did);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setFailed(true);
+      window.setTimeout(() => setFailed(false), 1600);
+    }
+  }
+  return (
+    <div
+      title={`Technocore DID: ${did}`}
+      style={{
+        minWidth: 0,
+        height: 34,
+        display: "flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "0 6px 0 8px",
+        borderRadius: 6,
+        border: "1px solid #2a8c72",
+        background: "#10251f",
+        boxSizing: "border-box",
+      }}
+    >
+      <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+        <span style={{ fontSize: 9, fontWeight: 800, color: "var(--text-dim)", letterSpacing: 0 }}>TC DID</span>
+        <span style={{ fontSize: 12, fontWeight: 900, color: "#7ee0c2", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{shortDid(did)}</span>
+      </div>
+      <button
+        type="button"
+        onClick={handleCopy}
+        aria-label="Copy Technocore DID"
+        title="Copy Technocore DID"
+        style={{
+          width: 38,
+          height: 22,
+          borderRadius: 5,
+          border: "1px solid #2a8c72",
+          background: copied ? "#1f9f7a" : failed ? "#5c1f2b" : "#121828",
+          color: copied ? "white" : failed ? "#fda4af" : "#7ee0c2",
+          fontSize: 10,
+          fontWeight: 900,
+          cursor: "pointer",
+          flexShrink: 0,
+        }}
+      >
+        {status}
+      </button>
+    </div>
+  );
+}
+
 function federationMetric(runtime?: RuntimeStatus | null) {
   if (!runtime?.federationEnabled) {
     return { value: "Local", hint: "Federation is disabled on this node.", tone: "muted" as const };
@@ -156,6 +237,7 @@ export function Header({
     ? `Disconnect ${walletAddress ? shortAddress(walletAddress) : "Wallet"}`
     : "Connect Wallet";
   const federation = federationMetric(stats.federation);
+  const technocoreDid = stats.federation?.technocoreDid || null;
 
   return (
     <div style={{
@@ -221,7 +303,9 @@ export function Header({
         <TopMetric label="WORKING" value={String(stats.onlineAgents)} hint="Agents currently doing reward-eligible work on this node" tone={stats.onlineAgents > 0 ? "green" : "muted"} />
         <TopMetric label="COPIES" value={String(stats.copies)} hint="Total public project copies in this network view" />
         <TopMetric label="Earned Donations" value={`${stats.donationsUsdc.toFixed(stats.donationsUsdc % 1 ? 2 : 0)} USDC`} hint="Donation intents recorded by this OSA network view" tone={stats.donationsUsdc > 0 ? "green" : "muted"} />
-        <TopMetric label="PEERS" value={federation.value} hint={federation.hint} tone={federation.tone} />
+        {technocoreDid
+          ? <TechnocoreDidMetric did={technocoreDid} />
+          : <TopMetric label="PEERS" value={federation.value} hint={federation.hint} tone={federation.tone} />}
         <TopMetric label="$OSA" value={stats.osaBalanceLabel} hint="Current $OSA balance for the connected wallet. Shows 0 until token deployment and on-chain balance lookup are configured." />
       </div>
 

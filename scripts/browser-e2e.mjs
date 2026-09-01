@@ -14,6 +14,7 @@ const dataDir = await mkdtemp(join(tmpdir(), "osa-browser-e2e-"));
 const openClawFixturePath = join(dataDir, "openclaw-fixture.sh");
 const testWalletPrivateKey = Uint8Array.from(Buffer.from("1111111111111111111111111111111111111111111111111111111111111111", "hex"));
 const testWalletAddress = ethereumAddressFromPrivateKey(testWalletPrivateKey);
+const testTechnocoreDid = "did:key:z6MkvG23xuQfyW4dAkZe93XPPNPF7ijSNhFCBxnwtWYAv47F";
 const pageErrors = [];
 let browser = null;
 let server = null;
@@ -101,6 +102,17 @@ try {
   page.on("console", (message) => {
     if (message.type() === "error") pageErrors.push(message.text());
   });
+  await page.route("**/api/health", async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.runtime = {
+      ...(payload.runtime || {}),
+      technocoreEnabled: true,
+      technocoreSignedMessages: true,
+      technocoreDid: testTechnocoreDid
+    };
+    await route.fulfill({ response, json: payload });
+  });
   await page.addInitScript((walletAddress) => {
     window.__OSA_E2E_WALLET_ADDRESS__ = walletAddress;
     window.ethereum = {
@@ -134,6 +146,9 @@ try {
   await expectText(page, "body", "Top100 Projects");
   await expectText(page, "body", "OSA Network Activity");
   await expectText(page, "body", "osa-network");
+  await expectText(page, "body", "TC DID");
+  await expectText(page, "body", "z6MkvG");
+  assert(await page.getByRole("button", { name: "Copy Technocore DID" }).count() === 1, "topbar should expose a copyable Technocore DID when signing is active");
   const chatWindow = page.getByTestId("network-chat-window");
   const initialChatBox = await chatWindow.boundingBox();
   assert(initialChatBox && initialChatBox.width >= 560 && initialChatBox.height >= 600, "network chat should open as a large default window");
