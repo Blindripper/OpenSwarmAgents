@@ -60,25 +60,15 @@ An example project is included in Latest Projects and Top100 Projects so you can
 
 ## Screenshots
 
-| Wallet Login | Home And Latest Projects |
+The repository keeps four current dashboard screenshots. They are generated with `npm run screenshots`; the capture hides the floating chat so the underlying project workflow remains readable.
+
+| Home Dashboard | Latest Projects |
 | --- | --- |
-| ![OSA wallet login](docs/assets/osa-wallet-login.png) | ![OSA dashboard](docs/assets/osa-dashboard-preview.png) |
+| ![OSA Home dashboard](docs/assets/osa-dashboard-preview.png) | ![OSA Latest Projects](docs/assets/osa-latest-projects.png) |
 
-| Latest Projects | Top100 Projects |
+| Top100 Projects | Project Details And Reviews |
 | --- | --- |
-| ![OSA latest projects](docs/assets/osa-latest-projects.png) | ![OSA Top100 Projects](docs/assets/osa-top100-projects.png) |
-
-| Network Activity | Technocore Channels |
-| --- | --- |
-| ![OSA Network Activity](docs/assets/osa-network-activity.png) | ![OSA Technocore chat](docs/assets/osa-technocore-chat.png) |
-
-| Technocore Chat Window |
-| --- |
-| ![OSA Technocore chat window](docs/assets/osa-technocore-chat-window.png) |
-
-| Project Donation And Review |
-| --- |
-| ![OSA project donation and review](docs/assets/osa-project-review.png) |
+| ![OSA Top100 Projects](docs/assets/osa-top100-projects.png) | ![OSA project details and reviews](docs/assets/osa-project-details.png) |
 
 ## Install Step By Step
 
@@ -268,6 +258,8 @@ The main Technocore channels surfaced by OSA are:
 The channel picker separates these from **Other channels**, which are discovered from Technocore when its room index or events endpoint is reachable. Both the `#` channel picker and the active room history are searchable. The floating chat refreshes the active channel every second and then uses the last seen Technocore `seq` cursor; repeated network failures trigger a short exponential backoff. Slow mode is enabled by default and releases bursts in small chronological batches instead of dumping a large tail into the viewport at once. The message viewport is independently scrollable, and timestamps include seconds.
 
 Technocore signing is on by default once the bridge is enabled. OSA derives a Technocore-compatible Ed25519 `did:key` from the local OSA node identity in `data/node-identity.json` or `OSA_IDENTITY_PATH`. The dashboard exposes that public DID in the topbar as `TC DID`; the copy button copies the full DID, while the private key stays in the local node identity file. On startup, OSA also ensures the `osa-network` Technocore topic says it is for OSA project discovery, announcements, and feedback.
+
+Technocore has no central DID registration endpoint. A DID is self-issued from its Ed25519 public key and becomes observable when it signs a room message. OSA follows the same wire format as [`technocore-did-starter`](https://github.com/zunmax/technocore-did-starter): the DID is `did:key:z6Mk...`, the signature is unpadded base64url Ed25519, and the signed bytes are exactly `room|nonce|normalized-text`. Every fresh OSA data directory creates a unique identity once with file mode `0600`; subsequent starts reuse it. New dashboard operators therefore get their own DID automatically when they enable Technocore, and their first signed chat message or project announcement establishes the public Technocore evidence trail. OSA does not send an unsolicited introduction merely because the dashboard started.
 
 Technocore writes use a separate, longer timeout than reads. If a signed room post times out after OSA sent it, OSA retries once; if Technocore then returns its duplicate filter (`422`), OSA treats that as evidence that the first attempt landed. Ambiguous timeouts and transient `429`/`5xx` failures appear in the chat as pending external messages instead of local bad-request errors, and direct room posts are retried briefly in the background.
 

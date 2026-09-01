@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { createPublicKey, verify as verifySignature } from "node:crypto";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
@@ -497,7 +498,7 @@ function startTechnocoreFixture() {
       });
       req.on("end", () => {
         const parsed = JSON.parse(body || "{}");
-        if (!String(parsed.did || "").startsWith("did:key:z6Mk") || !parsed.sig || !parsed.nonce || !parsed.text) {
+        if (!isValidTechnocoreSignedWrite(room, parsed)) {
           res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
           res.end("bad signed technocore fixture write\n");
           return;
@@ -535,6 +536,43 @@ function startTechnocoreFixture() {
       resolve(fixture);
     });
   });
+}
+
+function isValidTechnocoreSignedWrite(room, message) {
+  try {
+    const did = String(message.did || "");
+    if (!did.startsWith("did:key:z6Mk") || !message.sig || !message.nonce || !message.text) return false;
+    const decoded = base58btcDecode(did.slice("did:key:z".length));
+    if (decoded.length !== 34 || decoded[0] !== 0xed || decoded[1] !== 0x01) return false;
+    const publicKey = createPublicKey({
+      key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), decoded.subarray(2)]),
+      format: "der",
+      type: "spki"
+    });
+    return verifySignature(
+      null,
+      Buffer.from(`${room}|${message.nonce}|${message.text}`, "utf8"),
+      publicKey,
+      Buffer.from(message.sig, "base64url")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function base58btcDecode(value) {
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let decoded = 0n;
+  for (const character of value) {
+    const digit = alphabet.indexOf(character);
+    if (digit < 0) throw new Error("invalid base58btc character");
+    decoded = decoded * 58n + BigInt(digit);
+  }
+  let hex = decoded.toString(16);
+  if (hex.length % 2) hex = `0${hex}`;
+  const body = decoded === 0n ? Buffer.alloc(0) : Buffer.from(hex, "hex");
+  const leadingZeroes = value.length - value.replace(/^1+/, "").length;
+  return Buffer.concat([Buffer.alloc(leadingZeroes), body]);
 }
 
 function closeServer(instance) {

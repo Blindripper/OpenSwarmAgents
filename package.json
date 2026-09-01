@@ -10,6 +10,7 @@
     "check": "node --check apps/server/src/server.mjs && node --check apps/web/public/theme-init.js && node --check apps/web/public/app.js && node --check scripts/print-schema-path.mjs && node --check scripts/export-json-to-sql.mjs && node --check scripts/rc-smoke.mjs && node --check scripts/browser-e2e.mjs && node --check scripts/consensus-sim.mjs && node --check scripts/federation-sim.mjs && node --check scripts/postgres-smoke.mjs && node --check scripts/connector-runner-e2e.mjs && node --check scripts/check-tokenomics.mjs && node scripts/check-tokenomics.mjs && bash -n scripts/install-node.sh && python3 -m py_compile apps/connector/connector.py scripts/connector-cli-smoke.py && python3 scripts/connector-cli-smoke.py",
     "check:connector": "node scripts/connector-runner-e2e.mjs",
     "check:browser": "node scripts/browser-e2e.mjs",
+    "screenshots": "node scripts/capture-readme-screenshots.mjs",
     "check:rc": "npm run check && node scripts/rc-smoke.mjs && npm run check:browser && npm run check:connector && node scripts/consensus-sim.mjs && node scripts/federation-sim.mjs",
     "check:postgres": "node scripts/postgres-smoke.mjs",
     "build:agent-gui": "npm --prefix vendor/agent-gui/frontend install && npm --prefix vendor/agent-gui/frontend run build -- --base=/osa-network/",
