@@ -1991,7 +1991,6 @@ export default function App() {
         }}
         onSearch={handleSearch}
         searchStats={searchStats}
-        onReset={handleReset}
         onLoadSnapshot={handleLoadSnapshot}
         onSnapshotsChange={refreshSavedProjectTabs}
         onWalletConnect={() => void connectDashboardWallet()}

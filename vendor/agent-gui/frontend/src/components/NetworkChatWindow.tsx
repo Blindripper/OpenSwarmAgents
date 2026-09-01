@@ -28,7 +28,7 @@ function loadPinnedChannels(): string[] {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(pinnedChannelsKey) || "[]");
     if (Array.isArray(parsed)) {
-      const channels = parsed.filter((item) => typeof item === "string" && item.length > 0).slice(0, 8);
+      const channels = parsed.filter((item) => typeof item === "string" && item.length > 0).slice(0, 16);
       return channels.includes(defaultChannel) ? channels : [defaultChannel, ...channels];
     }
   } catch { /* ignore stored UI state */ }
@@ -36,7 +36,7 @@ function loadPinnedChannels(): string[] {
 }
 
 function uniqueChannels(channels: string[]): string[] {
-  return [...new Set(channels.filter(Boolean))].slice(0, 8);
+  return [...new Set(channels.filter(Boolean))].slice(0, 16);
 }
 
 function messageIdentity(message: NetworkChatMessage): string {
@@ -82,15 +82,24 @@ function defaultChatPos(dockRightOffset: number, size: ChatSize, minimized = fal
 }
 
 function defaultChannelRecord(id: string): NetworkChannel {
-  return { id, name: id, source: id === defaultChannel ? "osa" : "technocore", pinned: id === defaultChannel, public: id === defaultChannel };
+  return { id, name: id, source: id === defaultChannel ? "osa" : "technocore", pinned: id === defaultChannel, public: id === defaultChannel, category: id === defaultChannel ? "main" : "other", description: "" };
+}
+
+function mergeMessages(previous: NetworkChatMessage[], incoming: NetworkChatMessage[]): NetworkChatMessage[] {
+  const byId = new Map<string, NetworkChatMessage>();
+  for (const message of [...previous, ...incoming]) byId.set(message.id, message);
+  return [...byId.values()]
+    .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
+    .slice(-100);
 }
 
 export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffset = 16 }: Props) {
-  const [messages, setMessages] = useState<NetworkChatMessage[]>([]);
+  const [messagesByChannel, setMessagesByChannel] = useState<Record<string, NetworkChatMessage[]>>({});
   const [channels, setChannels] = useState<NetworkChannel[]>([defaultChannelRecord(defaultChannel)]);
   const [pinnedChannels, setPinnedChannels] = useState<string[]>(loadPinnedChannels);
   const [activeChannel, setActiveChannel] = useState(() => loadPinnedChannels()[0] || defaultChannel);
   const [channelListOpen, setChannelListOpen] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(false);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,16 +114,29 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
   const channelById = new Map(channels.map((channel) => [channel.id, channel]));
   const pinnedTabs = pinnedChannels.map((id) => channelById.get(id) || defaultChannelRecord(id));
   const availableChannels = channels.filter((channel) => !pinnedChannels.includes(channel.id));
+  const mainChannels = availableChannels.filter((channel) => channel.category === "main");
+  const otherChannels = availableChannels.filter((channel) => channel.category !== "main");
   const activeName = channelById.get(activeChannel)?.name || activeChannel || defaultChannel;
+  const messages = messagesByChannel[activeChannel] || [];
   const visibleSize = minimized ? minimizedChatSize : size;
 
   async function refreshMessages(channel = activeChannel) {
+    const hadCachedMessages = Boolean(messagesByChannel[channel]?.length);
+    if (!hadCachedMessages) setLoadingMessages(true);
     try {
       const result = await api.network.chat(60, channel);
-      setMessages(result.messages);
+      setMessagesByChannel((previous) => {
+        const current = previous[channel] || [];
+        const next = result.messages.length === 0 && current.length > 0
+          ? current
+          : mergeMessages(current, result.messages);
+        return { ...previous, [channel]: next };
+      });
       setError(null);
     } catch (err) {
       setError((err as Error).message || "Chat refresh failed.");
+    } finally {
+      setLoadingMessages(false);
     }
   }
 
@@ -216,7 +238,10 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
         wallet_address: walletAddress || null,
         channel: activeChannel
       });
-      setMessages((prev) => [...prev.slice(-59), result.message]);
+      setMessagesByChannel((previous) => ({
+        ...previous,
+        [activeChannel]: mergeMessages(previous[activeChannel] || [], [result.message]),
+      }));
       setDraft("");
       void refreshMessages(activeChannel);
     } catch (err) {
@@ -365,32 +390,47 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
               </button>
             </div>
             {channelListOpen && (
-              <div style={{ maxHeight: 112, width: "100%", boxSizing: "border-box", overflow: "auto", padding: "0 8px 8px", display: "grid", gap: 6 }}>
-                {(availableChannels.length ? availableChannels : channels).map((channel) => (
-                  <button
-                    key={channel.id}
-                    type="button"
-                    onClick={() => pinChannel(channel.id)}
-                    title={channel.url || channel.name}
-                    style={{
-                      height: 28,
-                      display: "grid",
-                      gridTemplateColumns: "1fr auto",
-                      alignItems: "center",
-                      gap: 8,
-                      borderRadius: 6,
-                      border: "1px solid #273453",
-                      background: "#0b1020",
-                      color: "var(--text)",
-                      cursor: "pointer",
-                      padding: "0 8px",
-                      fontSize: 11,
-                      fontWeight: 800,
-                    }}
-                  >
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>{channel.name}</span>
-                    <span style={{ color: "#7ee0c2", fontWeight: 900 }}>{pinnedChannels.includes(channel.id) ? "PINNED" : "PIN"}</span>
-                  </button>
+              <div style={{ maxHeight: 260, width: "100%", boxSizing: "border-box", overflow: "auto", padding: "0 8px 8px", display: "grid", gap: 10 }}>
+                {[
+                  ["Main channels", mainChannels],
+                  ["Other channels", otherChannels.length ? otherChannels : channels.filter((channel) => channel.category !== "main")],
+                ].map(([label, group]) => (
+                  <div key={label as string} style={{ display: "grid", gap: 6 }}>
+                    <div style={{ fontSize: 10, fontWeight: 900, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: 0 }}>
+                      {label as string}
+                    </div>
+                    {(group as NetworkChannel[]).map((channel) => (
+                      <button
+                        key={channel.id}
+                        type="button"
+                        onClick={() => pinChannel(channel.id)}
+                        title={channel.description || channel.url || channel.name}
+                        style={{
+                          minHeight: 34,
+                          display: "grid",
+                          gridTemplateColumns: "minmax(0, 1fr) auto",
+                          alignItems: "center",
+                          gap: 8,
+                          borderRadius: 6,
+                          border: "1px solid #273453",
+                          background: "#0b1020",
+                          color: "var(--text)",
+                          cursor: "pointer",
+                          padding: "6px 8px",
+                          fontSize: 11,
+                          fontWeight: 800,
+                        }}
+                      >
+                        <span style={{ minWidth: 0, display: "grid", gap: 2, textAlign: "left" }}>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{channel.name}</span>
+                          {channel.description && (
+                            <span style={{ color: "var(--text-dim)", fontSize: 10, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{channel.description}</span>
+                          )}
+                        </span>
+                        <span style={{ color: "#7ee0c2", fontWeight: 900 }}>{pinnedChannels.includes(channel.id) ? "PINNED" : "PIN"}</span>
+                      </button>
+                    ))}
+                  </div>
                 ))}
               </div>
             )}
@@ -399,7 +439,7 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
           <div style={{ overflowY: "auto", overflowX: "hidden", minWidth: 0, padding: 10, display: "grid", gap: 8, alignContent: "end", boxSizing: "border-box" }}>
             {messages.length === 0 ? (
               <div style={{ color: "var(--text-dim)", fontSize: 12, alignSelf: "center", justifySelf: "center" }}>
-                No messages in {activeName}.
+                {loadingMessages ? `Loading ${activeName}...` : `No cached messages in ${activeName}.`}
               </div>
             ) : messages.map((message) => (
               <div key={message.id} style={{ border: "1px solid #273453", borderRadius: 8, background: "#0b1020", padding: 8 }}>

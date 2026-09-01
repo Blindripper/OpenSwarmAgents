@@ -62,7 +62,6 @@ interface Props {
   onShowManagerChange: (v: boolean) => void;
   onManagerPatrolIntervalChange: (sec: number) => void;
   onManagerIdleGraceChange: (sec: number) => void;
-  onReset: () => void;
   onLoadSnapshot: (name?: string) => void;
   onSnapshotsChange?: (snapshots: SnapshotMeta[]) => void;
   onWalletConnect: () => void;
@@ -181,6 +180,31 @@ function TechnocoreDidMetric({ did }: { did: string }) {
   );
 }
 
+function PeerMetric({ value, hint, tone }: { value: string; hint: string; tone: "accent" | "green" | "muted" }) {
+  const color = tone === "green" ? "#7ee0c2" : tone === "muted" ? "var(--text-dim)" : "var(--accent2)";
+  return (
+    <div
+      title={hint}
+      style={{
+        width: 82,
+        height: 28,
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        padding: "0 8px",
+        borderRadius: 6,
+        border: "1px solid #2a3558",
+        background: "#121828",
+        boxSizing: "border-box",
+        flexShrink: 0,
+      }}
+    >
+      <span style={{ fontSize: 8.5, fontWeight: 900, color: "var(--text-dim)", letterSpacing: 0 }}>PEERS</span>
+      <span style={{ fontSize: 10.5, fontWeight: 900, color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</span>
+    </div>
+  );
+}
+
 function federationMetric(runtime?: RuntimeStatus | null) {
   if (!runtime?.federationEnabled) {
     return { value: "Local", hint: "Federation is disabled on this node.", tone: "muted" as const };
@@ -215,7 +239,7 @@ export function Header({
   onSearch, searchStats,
   onBellSoundChange, onSceneChange, onShowManagerChange,
   onManagerPatrolIntervalChange, onManagerIdleGraceChange,
-  onReset, onLoadSnapshot, onSnapshotsChange, onWalletConnect, onWalletDisconnect, walletAddress, codeTheme, onCodeThemeChange,
+  onLoadSnapshot, onSnapshotsChange, onWalletConnect, onWalletDisconnect, walletAddress, codeTheme, onCodeThemeChange,
   dockerPersist, onDockerPersistChange, verbose, onVerboseChange,
 }: Props) {
   const [logoOk, setLogoOk] = useState(true);
@@ -329,18 +353,7 @@ export function Header({
           onCreateAgent={onCreateAgent}
         />
 
-        <button
-          type="button"
-          onClick={onReset}
-          title="Reset workbench"
-          style={{
-            height: 28, padding: "0 8px",
-            background: "#121828", border: "1px solid #2a3558",
-            borderRadius: 6, color: "var(--text-dim)", fontSize: 10, cursor: "pointer",
-          }}
-        >
-          Reset
-        </button>
+        <PeerMetric value={federation.value} hint={federation.hint} tone={federation.tone} />
 
         <SnapshotMenu
           teams={teams}

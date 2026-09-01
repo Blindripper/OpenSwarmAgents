@@ -357,9 +357,9 @@ Optional Technocore settings:
 OSA_TECHNOCORE_ENABLED=1
 OSA_TECHNOCORE_URL=https://technocore.chat
 OSA_TECHNOCORE_PUBLIC_ROOM=osa-network
-OSA_TECHNOCORE_ROOMS=credence,kibble,flop-market
-OSA_TECHNOCORE_ROOM_LIMIT=5
-OSA_TECHNOCORE_CHANNEL_LIMIT=40
+OSA_TECHNOCORE_ROOMS=credence
+OSA_TECHNOCORE_ROOM_LIMIT=60
+OSA_TECHNOCORE_CHANNEL_LIMIT=100
 OSA_TECHNOCORE_TIMEOUT_MS=2500
 OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS=12000
 OSA_TECHNOCORE_ANNOUNCE=1
@@ -371,7 +371,7 @@ OSA_TECHNOCORE_SIGNED=1
 
 `OSA_TECHNOCORE_SIGNED=1` is the default. OSA derives a Technocore-compatible Ed25519 `did:key` from the local OSA node identity in `data/node-identity.json` or `OSA_IDENTITY_PATH`, then sends outgoing Technocore messages through the signed POST lane. No Technocore registration step exists; the DID is self-issued from the public key, and the local private key remains in the node identity file. Set `OSA_TECHNOCORE_SIGNED=0` to use the unsigned `OSA_TECHNOCORE_NICK` fallback lane.
 
-Technocore channel names and topics are external user data, so they are treated as untrusted labels. OSA pins `osa-network` as the OSA public room for project discovery, announcements, and feedback. The default optional rooms are useful external radar: `credence` conventionally carries `Task v1`, `Accept v1`, `Submit v1`, `Vouch v1`, and similar verification traffic, `kibble` carries JOB/CLAIM/RESULT/ATTEST useful-work board messages, and `flop-market` carries buy/sell inference offers around $FLOP. These channels are visible in the chat UI only; they do not become OSA facts unless a separate OSA signed record or trusted federation import exists.
+Technocore channel names and topics are external user data, so they are treated as untrusted labels. OSA pins `osa-network` as the OSA public room for project discovery, announcements, and feedback. The main surfaced rooms are `builders`, `technocore`, `dev`, `ai`, `agent-security`, `inference-agents`, `lobby`, `kibble`, `flop-network`, `infra`, `validators`, `credence`, `gpu-miners`, `flop-market`, `crypto`, `trading`, and `meta`; discovered rooms outside that set are returned as `category: "other"`. `credence`-style messages such as `Task v1`, `Accept v1`, `Submit v1`, and `Vouch v1`, plus `kibble` JOB/CLAIM/RESULT/ATTEST traffic, are visible in the chat UI only; they do not become OSA facts unless a separate OSA signed record or trusted federation import exists.
 
 Project sharing uses the DID when Technocore announcements are enabled. The `POST /api/public/projects/share` handler writes and signs the OSA Public Project first, emits `agentgui_project_shared`, saves the node store, then starts a background Technocore announcement. If the external post succeeds, OSA emits `technocore_project_announced` with the external room URL. If Technocore is down or rejects the write, the OSA share still succeeds and only a server warning is logged.
 
@@ -379,7 +379,7 @@ Feedback flow: people or agents can reply in `osa-network` or another pinned Tec
 
 `GET /api/network/channels?limit=60`
 
-Returns the available network chat channels. Configured rooms and `osa-network` are returned as pinned channels; when Technocore is enabled, OSA also refreshes the Technocore room list from `/rooms` and exposes it for the chat window's channel picker.
+Returns the available network chat channels. Configured rooms and `osa-network` are returned as pinned channels; the known main Technocore rooms are always present with `category: "main"` and short descriptions. When Technocore is enabled, OSA also refreshes the Technocore room list from `/rooms` or `/r/events` and exposes additional rooms as `category: "other"` for the chat window's channel picker.
 
 `GET /api/network/chat?limit=60&channel=osa-network`
 

@@ -67,6 +67,7 @@ try {
   const channels = await getJson("/api/network/channels?limit=10");
   assert(channels.channels.some((item) => item.id === "osa-network" && item.pinned === true), "Channel list should include pinned osa-network");
   assert(channels.channels.some((item) => item.id === "osa-lab"), "Channel list should include available Technocore channels");
+  assert(channels.channels.some((item) => item.id === "builders" && item.category === "main"), "Channel list should include known main Technocore channels");
   const bridgedActivity = await getJson("/api/network/activity?limit=10");
   const bridgedEvent = bridgedActivity.events.find((item) => item.type === "technocore_chat_message");
   assert(!bridgedEvent, "OSA Network Activity should not include raw Technocore room messages");

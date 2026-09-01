@@ -177,6 +177,8 @@ export interface NetworkChannel {
   source?: "osa" | "technocore" | string;
   pinned?: boolean;
   public?: boolean;
+  category?: "main" | "other" | string;
+  description?: string;
   count?: number | null;
   last_seq?: number | null;
   idle_seconds?: number | null;

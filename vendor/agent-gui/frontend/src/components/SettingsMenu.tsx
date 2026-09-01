@@ -233,7 +233,7 @@ export function SettingsMenu({
           </button>
           <div style={{ fontSize: 9, color: "var(--text-dim)", marginTop: 6, opacity: 0.7 }}>
             {dockerPersist
-              ? "Containers stay warm across desk deletion & restart — remove them with Reset."
+              ? "Containers stay warm across desk deletion and restart."
               : "Containers are removed when a desk is deleted and when the server stops."}
           </div>
 

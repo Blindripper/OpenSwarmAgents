@@ -164,6 +164,11 @@ try {
     resizedChatBox && resizedChatBox.width > initialChatBox.width + 80 && resizedChatBox.height > initialChatBox.height + 20,
     "network chat should be resizable by dragging the corner handle"
   );
+  await page.getByRole("button", { name: "#" }).click();
+  await expectText(page, "body", "Main channels");
+  await expectText(page, "body", "Other channels");
+  await expectText(page, "body", "builders");
+  await page.getByRole("button", { name: "#" }).click();
   await expectText(page, "body", "Canvas");
   await expectText(page, "body", "Start a desk to show project results.");
   await page.locator('button[title="Collapse canvas"]').click();
@@ -390,14 +395,16 @@ try {
   const afterDeleteSessions = await getJson("/api/sessions");
   assert(!afterDeleteSessions.some((session) => session.id === projectShare.project.id), "deleted projects should disappear from Latest Projects");
 
+  assert(await page.getByRole("button", { name: "Reset" }).count() === 0, "Reset should not be exposed in the topbar");
+  await expectText(page, "body", "PEERS");
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Reset" }).click();
-  const afterResetSessions = await waitForJson(
+  await page.getByRole("button", { name: "Delete Project" }).click();
+  const afterDeleteProjectSessions = await waitForJson(
     "/api/sessions",
     (items) => Array.isArray(items) && items.length >= 1 && items.every((session) => session.team_id === "public-projects-room") ? items : null,
-    "reset to wipe private sessions while keeping Latest Projects"
+    "Delete Project to wipe private sessions while keeping Latest Projects"
   );
-  assert(afterResetSessions.length >= 1, "Latest Projects should remain after reset");
+  assert(afterDeleteProjectSessions.length >= 1, "Latest Projects should remain after Delete Project");
 
   assert(pageErrors.length === 0, `browser console/page errors: ${pageErrors.join("\n")}`);
   console.log(`Browser E2E passed on ${baseUrl}`);

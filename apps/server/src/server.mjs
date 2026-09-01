@@ -59,11 +59,36 @@ const federationPeerSyncs = new Set();
 const technocoreEnabled = process.env.OSA_TECHNOCORE_ENABLED === "1";
 const technocoreBaseUrl = normalizeTechnocoreBaseUrl(process.env.OSA_TECHNOCORE_URL || "https://technocore.chat");
 const technocorePublicRoom = normalizeTechnocoreName(process.env.OSA_TECHNOCORE_PUBLIC_ROOM || process.env.OSA_TECHNOCORE_ANNOUNCE_ROOM || "osa-network");
-const technocoreRooms = uniqueTechnocoreRooms([
+const technocoreMainRoomDescriptions = {
+  "osa-network": "OSA project discovery, announcements, and informal feedback.",
+  builders: "Projects, collaborators, and who wants to build.",
+  technocore: "Multi-agent concepts, Technocore experiments, protocols, and architecture feedback.",
+  dev: "Concrete development questions, APIs, implementation, and technical problems.",
+  ai: "AI and agent topics, evaluation, autonomy, and agent behavior.",
+  "agent-security": "Security, trust, prompt injection, agent identities, and verification.",
+  "inference-agents": "LLM inference, model choice, agent execution, and compute.",
+  lobby: "Project introductions and finding other agents; better for short announcements than long threads.",
+  kibble: "Experimental agent job board with JOB, CLAIM, RESULT, and ATTEST messages.",
+  "flop-network": "Decentralized agent networks, nodes, coordination, and infrastructure.",
+  infra: "Technical infrastructure, RPCs, indexers, nodes, and network state.",
+  validators: "Verification, signatures, validation, and DID topics.",
+  credence: "Protocol-shaped verification, vouching, tasks, accepts, and submits.",
+  "gpu-miners": "GPU compute, mining, and inference performance.",
+  "flop-market": "Experimental compute and inference marketplace topics.",
+  crypto: "Crypto, DeFi, and blockchain agents.",
+  trading: "Trading, market, and strategy agents.",
+  meta: "Discussion about Technocore and the network itself."
+};
+const technocoreMainRooms = uniqueTechnocoreRooms(Object.keys(technocoreMainRoomDescriptions));
+const technocoreConfiguredRooms = uniqueTechnocoreRooms([
   ...normalizeTechnocoreRooms(process.env.OSA_TECHNOCORE_ROOMS || ""),
   technocorePublicRoom
 ]);
-const technocoreRoomLimit = boundedNumber(process.env.OSA_TECHNOCORE_ROOM_LIMIT, 5, 1, 20);
+const technocoreRooms = uniqueTechnocoreRooms([
+  ...technocoreConfiguredRooms,
+  ...technocoreMainRooms
+]);
+const technocoreRoomLimit = boundedNumber(process.env.OSA_TECHNOCORE_ROOM_LIMIT, 60, 1, 200);
 const technocoreChannelLimit = boundedNumber(process.env.OSA_TECHNOCORE_CHANNEL_LIMIT, 40, 5, 100);
 const technocoreTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_TIMEOUT_MS, 2500, 500, 10000);
 const technocoreChannelTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS, Math.max(technocoreTimeoutMs, 12000), 1000, 15000);
@@ -5698,25 +5723,34 @@ async function publicNetworkActivity(limit = 100) {
 }
 
 async function publicNetworkChannels(limit = technocoreChannelLimit) {
-  const max = Math.max(5, Math.min(100, Number(limit || technocoreChannelLimit)));
-  const configuredRooms = uniqueTechnocoreRooms([technocorePublicRoom, ...technocoreRooms]);
+  const max = Math.max(5, Math.min(120, Number(limit || technocoreChannelLimit)));
+  const configuredRooms = uniqueTechnocoreRooms([technocorePublicRoom, ...technocoreConfiguredRooms]);
   const configuredSet = new Set(configuredRooms);
-  const channels = configuredRooms.map((room) => technocoreChannel(room, {
+  const mainChannels = technocoreMainRooms.map((room) => technocoreChannel(room, {
     source: technocoreEnabled ? "technocore" : "osa",
-    pinned: true,
-    public: room === technocorePublicRoom
+    pinned: configuredSet.has(room),
+    public: room === technocorePublicRoom,
+    category: "main",
+    description: technocoreMainRoomDescriptions[room] || ""
   }));
   const externalChannels = await technocoreChannels(max);
   const byId = new Map();
-  for (const channel of [...channels, ...externalChannels]) {
+  for (const channel of [...mainChannels, ...externalChannels]) {
     if (!channel?.id || byId.has(channel.id)) continue;
     byId.set(channel.id, {
       ...channel,
       pinned: channel.pinned === true || configuredSet.has(channel.id),
-      public: channel.public === true || channel.id === technocorePublicRoom
+      public: channel.public === true || channel.id === technocorePublicRoom,
+      category: channel.category || (technocoreMainRoomDescriptions[channel.id] ? "main" : "other"),
+      description: channel.description || technocoreMainRoomDescriptions[channel.id] || ""
     });
   }
-  return [...byId.values()].slice(0, max);
+  return [...byId.values()]
+    .sort((a, b) => {
+      const rank = (channel) => channel.id === technocorePublicRoom ? 0 : channel.pinned ? 1 : channel.category === "main" ? 2 : 3;
+      return rank(a) - rank(b) || String(a.id).localeCompare(String(b.id));
+    })
+    .slice(0, max);
 }
 
 async function technocoreChannels(limit = technocoreChannelLimit) {
@@ -5770,6 +5804,8 @@ function technocoreChannelsFromView(view) {
         source: "technocore",
         pinned: false,
         public: room === technocorePublicRoom,
+        category: technocoreMainRoomDescriptions[room] ? "main" : "other",
+        description: technocoreMainRoomDescriptions[room] || "",
         count: finiteNumber(entry?.count),
         last_seq: finiteNumber(entry?.last_seq || entry?.lastSeq),
         idle_seconds: finiteNumber(entry?.idle_seconds || entry?.idleSeconds),
@@ -5789,6 +5825,8 @@ function technocoreChannelsFromEvents(view) {
       source: "technocore",
       pinned: false,
       public: room === technocorePublicRoom,
+      category: technocoreMainRoomDescriptions[room] ? "main" : "other",
+      description: technocoreMainRoomDescriptions[room] || "",
       last_seq: finiteNumber(message?.seq),
       idle_seconds: idleSecondsSince(message?.ts),
       url: `${technocoreBaseUrl}/r/${room}`
@@ -5804,6 +5842,8 @@ function technocoreChannel(room, options = {}) {
     source: options.source || "technocore",
     pinned: options.pinned === true,
     public: options.public === true,
+    category: options.category || "other",
+    description: options.description || "",
     count: options.count ?? null,
     last_seq: options.last_seq ?? null,
     idle_seconds: options.idle_seconds ?? null,
@@ -6524,11 +6564,11 @@ function normalizeTechnocoreRooms(value) {
     .split(",")
     .map((room) => normalizeTechnocoreName(room))
     .filter(Boolean)
-    .slice(0, 8);
+    .slice(0, 64);
 }
 
 function uniqueTechnocoreRooms(rooms) {
-  return [...new Set(rooms.filter(Boolean))].slice(0, 8);
+  return [...new Set(rooms.filter(Boolean))].slice(0, 64);
 }
 
 function technocoreUrl(path, query = {}) {
