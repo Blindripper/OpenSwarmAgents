@@ -92,6 +92,8 @@ const technocoreRooms = uniqueTechnocoreRooms([
 const technocoreRoomLimit = boundedNumber(process.env.OSA_TECHNOCORE_ROOM_LIMIT, 60, 1, 200);
 const technocoreChannelLimit = boundedNumber(process.env.OSA_TECHNOCORE_CHANNEL_LIMIT, 40, 5, 100);
 const technocoreTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_TIMEOUT_MS, 2500, 500, 10000);
+const technocoreWriteTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_WRITE_TIMEOUT_MS, Math.max(technocoreTimeoutMs, 8000), 1000, 20000);
+const technocoreWriteAttempts = Math.round(boundedNumber(process.env.OSA_TECHNOCORE_WRITE_ATTEMPTS, 2, 1, 4));
 const technocoreChannelTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS, Math.max(technocoreTimeoutMs, 12000), 1000, 15000);
 const technocoreAnnounceEnabled = process.env.OSA_TECHNOCORE_ANNOUNCE === "1";
 const technocoreAnnounceRoom = normalizeTechnocoreName(process.env.OSA_TECHNOCORE_ANNOUNCE_ROOM || technocorePublicRoom);
@@ -3704,6 +3706,8 @@ function publicRuntime() {
     technocoreRooms,
     technocoreChannelLimit,
     technocoreChannelTimeoutMs,
+    technocoreWriteTimeoutMs,
+    technocoreWriteAttempts,
     technocoreAnnounceEnabled: technocoreEnabled && technocoreAnnounceEnabled && Boolean(technocoreAnnounceRoom),
     technocoreAnnounceRoom: technocoreEnabled && technocoreAnnounceRoom ? technocoreAnnounceRoom : null,
     technocoreSignedMessages: technocoreEnabled && technocoreSignedMessages && Boolean(technocoreDid),
@@ -6038,7 +6042,14 @@ async function createNetworkChatMessage(body = {}) {
       error.statusCode = 400;
       throw error;
     }
-    const technocoreWrite = await technocoreSay(room, text);
+    let technocoreWrite;
+    try {
+      technocoreWrite = await technocoreSay(room, text);
+    } catch (error) {
+      if (!isTechnocoreTransientWriteError(error)) throw error;
+      technocoreWrite = pendingTechnocoreWrite(error);
+      retryTechnocoreSayInBackground(room, text);
+    }
     return {
       ok: true,
       technocore_mirrored: true,
@@ -6053,7 +6064,9 @@ async function createNetworkChatMessage(body = {}) {
         untrusted: true,
         room,
         from: technocoreWrite.from || technocoreNick,
-        signed: technocoreWrite.signed === true
+        signed: technocoreWrite.signed === true,
+        delivery_status: technocoreWrite.ambiguous ? "pending" : technocoreWrite.duplicate ? "duplicate" : "sent",
+        warning: technocoreWrite.warning || null
       }
     };
   }
@@ -6114,48 +6127,152 @@ async function mirrorNetworkChatToTechnocore(message) {
 async function technocoreSay(room, text) {
   if (technocoreSignedMessages && technocoreDid) {
     try {
-      await technocoreSaySigned(room, text);
-      return { signed: true, from: technocoreDid };
+      return await technocoreWriteWithRetry(() => technocoreSaySigned(room, text), {
+        signed: true,
+        from: technocoreDid
+      });
     } catch (error) {
+      if (isTechnocoreTransientWriteError(error) || isTechnocoreDuplicateWriteError(error)) throw error;
       console.warn(`Technocore signed write failed, falling back to unsigned nick: ${error.message}`);
     }
   }
+  return await technocoreWriteWithRetry(() => technocoreSayUnsigned(room, text), {
+    signed: false,
+    from: technocoreNick
+  });
+}
+
+async function technocoreSayUnsigned(room, text) {
   const path = `/r/${room}/say/${technocoreNick}/${encodeURIComponent(text)}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), technocoreTimeoutMs);
-  try {
-    const response = await fetch(technocoreUrl(path), {
-      signal: controller.signal,
-      headers: { accept: "text/plain" }
-    });
-    if (!response.ok) throw new Error(`Technocore returned ${response.status}`);
-    return { signed: false, from: technocoreNick };
-  } finally {
-    clearTimeout(timeout);
-  }
+  const response = await fetchTechnocoreWrite(path, { headers: { accept: "text/plain" } });
+  if (!response.ok) throw technocoreWriteHttpError(response.status);
+  return { signed: false, from: technocoreNick };
 }
 
 async function technocoreSaySigned(room, text) {
   const nonce = nextTechnocoreNonce(room);
   const payload = `${room}|${nonce}|${text}`;
   const sig = signPayload(null, Buffer.from(payload, "utf8"), nodeIdentity.privateKeyPem).toString("base64url");
+  const response = await fetchTechnocoreWrite(`/r/${room}`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ did: technocoreDid, sig, nonce, text })
+  });
+  if (!response.ok) throw technocoreWriteHttpError(response.status);
+  return { signed: true, from: technocoreDid };
+}
+
+async function fetchTechnocoreWrite(path, options = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), technocoreTimeoutMs);
+  const timeout = setTimeout(() => controller.abort(), technocoreWriteTimeoutMs);
   try {
-    const response = await fetch(technocoreUrl(`/r/${room}`), {
-      method: "POST",
+    return await fetch(technocoreUrl(path), {
+      ...options,
       signal: controller.signal,
-      headers: {
-        accept: "application/json",
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({ did: technocoreDid, sig, nonce, text })
+      headers: options.headers || { accept: "text/plain" }
     });
-    if (!response.ok) throw new Error(`Technocore returned ${response.status}`);
-    return true;
+  } catch (error) {
+    if (isTechnocoreAmbiguousWriteError(error)) throw error;
+    throw technocoreWriteNetworkError(error);
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function technocoreWriteWithRetry(writeOnce, identity) {
+  let sawAmbiguousWrite = false;
+  let lastError = null;
+  for (let attempt = 1; attempt <= technocoreWriteAttempts; attempt += 1) {
+    try {
+      return await writeOnce();
+    } catch (error) {
+      lastError = error;
+      if (isTechnocoreDuplicateWriteError(error) && sawAmbiguousWrite) {
+        return {
+          ...identity,
+          duplicate: true,
+          warning: "Technocore accepted an earlier write attempt; the retry hit the duplicate filter."
+        };
+      }
+      if (isTechnocoreAmbiguousWriteError(error)) sawAmbiguousWrite = true;
+      if (isTechnocoreTransientWriteError(error) && attempt < technocoreWriteAttempts) {
+        await delay(250 * attempt);
+        continue;
+      }
+      break;
+    }
+  }
+  if (sawAmbiguousWrite) {
+    return {
+      ...identity,
+      ambiguous: true,
+      warning: "Technocore write timed out after it was sent; it may already be visible in the room."
+    };
+  }
+  throw lastError || new Error("Technocore write failed");
+}
+
+function technocoreWriteHttpError(status) {
+  const error = new Error(`Technocore returned ${status}`);
+  error.statusCode = status;
+  error.technocoreStatus = status;
+  return error;
+}
+
+function technocoreWriteNetworkError(cause) {
+  const error = new Error(cause?.message ? `Technocore write failed: ${cause.message}` : "Technocore write failed");
+  error.statusCode = 503;
+  error.technocoreStatus = 503;
+  error.cause = cause;
+  return error;
+}
+
+function pendingTechnocoreWrite(error) {
+  const from = technocoreSignedMessages && technocoreDid ? technocoreDid : technocoreNick;
+  return {
+    signed: Boolean(technocoreSignedMessages && technocoreDid),
+    from,
+    ambiguous: true,
+    warning: `${error?.message || "Technocore is unavailable"}; retrying in background.`
+  };
+}
+
+function retryTechnocoreSayInBackground(room, text) {
+  const delays = [2000, 5000, 10000];
+  (async () => {
+    let lastError = null;
+    for (const waitMs of delays) {
+      await delay(waitMs);
+      try {
+        await technocoreSay(room, text);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!isTechnocoreTransientWriteError(error)) break;
+      }
+    }
+    console.warn(`Technocore background retry failed for ${room}: ${lastError?.message || "unknown error"}`);
+  })();
+}
+
+function isTechnocoreAmbiguousWriteError(error) {
+  return error?.name === "AbortError" || /aborted/i.test(String(error?.message || ""));
+}
+
+function isTechnocoreDuplicateWriteError(error) {
+  return Number(error?.technocoreStatus || error?.statusCode) === 422;
+}
+
+function isTechnocoreTransientWriteError(error) {
+  const status = Number(error?.technocoreStatus || error?.statusCode);
+  return isTechnocoreAmbiguousWriteError(error) || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function nextTechnocoreNonce(room) {

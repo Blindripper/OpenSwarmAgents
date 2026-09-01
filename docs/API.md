@@ -365,6 +365,8 @@ OSA_TECHNOCORE_ROOMS=credence
 OSA_TECHNOCORE_ROOM_LIMIT=60
 OSA_TECHNOCORE_CHANNEL_LIMIT=100
 OSA_TECHNOCORE_TIMEOUT_MS=2500
+OSA_TECHNOCORE_WRITE_TIMEOUT_MS=8000
+OSA_TECHNOCORE_WRITE_ATTEMPTS=2
 OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS=12000
 OSA_TECHNOCORE_ANNOUNCE=1
 OSA_TECHNOCORE_NICK=osa-node
@@ -373,7 +375,7 @@ OSA_TECHNOCORE_SIGNED=1
 
 `OSA_TECHNOCORE_PUBLIC_ROOM` defaults to `osa-network` and is used by the dashboard chat's default pinned channel. `OSA_TECHNOCORE_ANNOUNCE=1` enables project-share announcements after `POST /api/public/projects/share` succeeds. The dashboard sends an explicit `technocore_channels` list from the share dialog; without that list, the server falls back to `OSA_TECHNOCORE_ANNOUNCE_ROOM` or `osa-network`. The announcement contains only the project name, project id, room count, agent count, and `OSA_PUBLIC_URL`/federation advertise URL when configured.
 
-`OSA_TECHNOCORE_SIGNED=1` is the default. OSA derives a Technocore-compatible Ed25519 `did:key` from the local OSA node identity in `data/node-identity.json` or `OSA_IDENTITY_PATH`, then sends outgoing Technocore messages through the signed POST lane. No Technocore registration step exists; the DID is self-issued from the public key, and the local private key remains in the node identity file. Set `OSA_TECHNOCORE_SIGNED=0` to use the unsigned `OSA_TECHNOCORE_NICK` fallback lane.
+`OSA_TECHNOCORE_SIGNED=1` is the default. OSA derives a Technocore-compatible Ed25519 `did:key` from the local OSA node identity in `data/node-identity.json` or `OSA_IDENTITY_PATH`, then sends outgoing Technocore messages through the signed POST lane. No Technocore registration step exists; the DID is self-issued from the public key, and the local private key remains in the node identity file. `OSA_TECHNOCORE_WRITE_TIMEOUT_MS` and `OSA_TECHNOCORE_WRITE_ATTEMPTS` control direct room writes separately from read timeouts. If a signed write times out after the request was sent, OSA retries once; a duplicate-filter `422` after that timeout is treated as evidence that the first attempt landed. Ambiguous timeouts and transient Technocore `429`/`5xx` failures are returned to the chat UI as pending external messages instead of local bad-request errors; direct room posts are retried briefly in the background so the user does not need to keep pressing send. Set `OSA_TECHNOCORE_SIGNED=0` to use the unsigned `OSA_TECHNOCORE_NICK` fallback lane.
 
 Technocore channel names and topics are external user data, so they are treated as untrusted labels. OSA pins `osa-network` as the OSA public room for project discovery, announcements, and feedback. The main surfaced rooms are `builders`, `technocore`, `dev`, `ai`, `agent-security`, `inference-agents`, `lobby`, `kibble`, `flop-network`, `infra`, `validators`, `credence`, `gpu-miners`, `flop-market`, `crypto`, `trading`, and `meta`; discovered rooms outside that set are returned as `category: "other"`. `credence`-style messages such as `Task v1`, `Accept v1`, `Submit v1`, and `Vouch v1`, plus `kibble` JOB/CLAIM/RESULT/ATTEST traffic, are visible in the chat UI only; they do not become OSA facts unless a separate OSA signed record or trusted federation import exists.
 

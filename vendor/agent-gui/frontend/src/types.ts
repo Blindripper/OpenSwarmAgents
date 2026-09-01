@@ -169,6 +169,8 @@ export interface NetworkChatMessage {
   from?: string;
   seq?: number;
   signed?: boolean;
+  delivery_status?: "sent" | "pending" | "duplicate" | string;
+  warning?: string | null;
 }
 
 export interface NetworkChannel {

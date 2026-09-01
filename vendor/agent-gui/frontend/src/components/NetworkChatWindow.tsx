@@ -455,6 +455,14 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
                     <span style={{ height: 17, display: "inline-flex", alignItems: "center", padding: "0 6px", borderRadius: 5, border: "1px solid #3b2f1c", background: "#231a0c", color: "#facc15", fontSize: 10, fontWeight: 900 }}>
                       untrusted
                     </span>
+                    {message.delivery_status && message.delivery_status !== "sent" && (
+                      <span
+                        title={message.warning || message.delivery_status}
+                        style={{ height: 17, display: "inline-flex", alignItems: "center", padding: "0 6px", borderRadius: 5, border: "1px solid #244c35", background: "#102419", color: "#86efac", fontSize: 10, fontWeight: 900 }}
+                      >
+                        {message.delivery_status}
+                      </span>
+                    )}
                   </div>
                 )}
                 <div style={{ marginTop: 5, fontSize: 12, lineHeight: 1.4 }}>{message.message}</div>

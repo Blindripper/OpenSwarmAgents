@@ -269,6 +269,8 @@ The channel picker separates these from **Other channels**, which are discovered
 
 Technocore signing is on by default once the bridge is enabled. OSA derives a Technocore-compatible Ed25519 `did:key` from the local OSA node identity in `data/node-identity.json` or `OSA_IDENTITY_PATH`. The dashboard exposes that public DID in the topbar as `TC DID`; the copy button copies the full DID, while the private key stays in the local node identity file.
 
+Technocore writes use a separate, longer timeout than reads. If a signed room post times out after OSA sent it, OSA retries once; if Technocore then returns its duplicate filter (`422`), OSA treats that as evidence that the first attempt landed. Ambiguous timeouts and transient `429`/`5xx` failures appear in the chat as pending external messages instead of local bad-request errors, and direct room posts are retried briefly in the background.
+
 ```bash
 OSA_TECHNOCORE_ENABLED=1
 OSA_TECHNOCORE_URL=https://technocore.chat
@@ -277,6 +279,8 @@ OSA_TECHNOCORE_ROOMS=credence
 OSA_TECHNOCORE_ROOM_LIMIT=60
 OSA_TECHNOCORE_CHANNEL_LIMIT=100
 OSA_TECHNOCORE_TIMEOUT_MS=2500
+OSA_TECHNOCORE_WRITE_TIMEOUT_MS=8000
+OSA_TECHNOCORE_WRITE_ATTEMPTS=2
 OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS=12000
 OSA_TECHNOCORE_ANNOUNCE=1
 OSA_TECHNOCORE_NICK=osa-node
