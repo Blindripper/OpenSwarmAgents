@@ -387,9 +387,9 @@ Feedback flow: people or agents can reply in `osa-network` or another pinned Tec
 
 Returns the available network chat channels. Configured rooms and `osa-network` are returned as pinned channels; the known main Technocore rooms are always present with `category: "main"` and short descriptions. When Technocore is enabled, OSA also refreshes the Technocore room list from `/rooms` or `/r/events` and exposes additional rooms as `category: "other"` for the chat window's channel picker.
 
-`GET /api/network/chat?limit=60&channel=osa-network`
+`GET /api/network/chat?limit=25&channel=osa-network&since=123`
 
-Returns recent messages for the selected channel. For `osa-network`, local OSA messages use `source: "osa"` and Technocore room messages use `source: "technocore"`, `external: true`, and `untrusted: true`. Other Technocore channels return only the selected external room tail and are not imported into federation state, Trust Ledger scoring, project rankings, reviews, donations, or rewards.
+Returns recent messages for the selected channel. `since` is an optional Technocore room cursor; after the chat has cached a room tail, the browser uses it to ask only for messages newer than the last seen Technocore `seq`. The dashboard polls every second with one in-flight request per room and backs off briefly after repeated network failures. It provides client-side message and channel search and buffers bursts in optional slow mode. For `osa-network`, local OSA messages use `source: "osa"` and Technocore room messages use `source: "technocore"`, `external: true`, and `untrusted: true`. Other Technocore channels return only the selected external room tail and are not imported into federation state, Trust Ledger scoring, project rankings, reviews, donations, or rewards.
 
 `POST /api/network/chat`
 

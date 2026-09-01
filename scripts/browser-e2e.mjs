@@ -97,6 +97,13 @@ try {
   assert(config.rooms.map((room) => room.name).join(",") === "Home,Latest Projects", "dashboard should expose only Home and Latest Projects from start");
   assert(!config.agents.some((agent) => agent.id === "profit-scout"), "custom profile should be deletable");
 
+  for (let index = 1; index <= 12; index += 1) {
+    await postJson("/api/network/chat", {
+      wallet_address: testWalletAddress,
+      message: `Search marker ${String(index).padStart(2, "0")}: browser chat viewport fixture with enough text to verify scrolling.`
+    });
+  }
+
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
   page.setDefaultTimeout(8000);
@@ -167,10 +174,25 @@ try {
     resizedChatBox && resizedChatBox.width > initialChatBox.width + 80 && resizedChatBox.height > initialChatBox.height + 20,
     "network chat should be resizable by dragging the corner handle"
   );
+  const chatMessages = page.getByTestId("network-chat-messages");
+  await expectText(page, '[data-testid="network-chat-messages"]', "Search marker 12");
+  assert(await page.getByRole("checkbox", { name: "Slow mode" }).isChecked(), "network chat slow mode should be enabled by default");
+  assert(
+    await chatMessages.evaluate((element) => getComputedStyle(element).overflowY === "scroll" && element.scrollHeight > element.clientHeight),
+    "network chat messages should have a stable, scrollable viewport"
+  );
+  assert(/\d{1,2}:\d{2}:\d{2}/.test(await chatMessages.innerText()), "network chat timestamps should include seconds");
+  await page.getByRole("textbox", { name: "Search messages" }).fill("Search marker 07");
+  await expectText(page, '[data-testid="network-chat-messages"]', "Search marker 07");
+  assert(!(await chatMessages.innerText()).includes("Search marker 08"), "message search should filter the cached channel messages");
+  await page.getByRole("textbox", { name: "Search messages" }).fill("");
   await page.getByRole("button", { name: "#" }).click();
   await expectText(page, "body", "Main channels");
   await expectText(page, "body", "Other channels");
   await expectText(page, "body", "builders");
+  await page.getByRole("textbox", { name: "Search channels" }).fill("validators");
+  await expectText(page, "body", "validators");
+  assert(await page.getByRole("button", { name: /builders/i }).count() === 0, "channel search should filter the # channel picker");
   await page.getByRole("button", { name: "#" }).click();
   await expectText(page, "body", "Canvas");
   await expectText(page, "body", "Start a desk to show project results.");

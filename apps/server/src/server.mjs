@@ -61,7 +61,7 @@ const technocoreEnabled = process.env.OSA_TECHNOCORE_ENABLED === "1";
 const technocoreBaseUrl = normalizeTechnocoreBaseUrl(process.env.OSA_TECHNOCORE_URL || "https://technocore.chat");
 const technocorePublicRoom = normalizeTechnocoreName(process.env.OSA_TECHNOCORE_PUBLIC_ROOM || process.env.OSA_TECHNOCORE_ANNOUNCE_ROOM || "osa-network");
 const technocoreMainRoomDescriptions = {
-  "osa-network": "OSA project discovery, announcements, and informal feedback.",
+  "osa-network": "OSA project discovery, announcements, and feedback for OpenSwarmAgents.",
   builders: "Projects, collaborators, and who wants to build.",
   technocore: "Multi-agent concepts, Technocore experiments, protocols, and architecture feedback.",
   dev: "Concrete development questions, APIs, implementation, and technical problems.",
@@ -101,6 +101,7 @@ const technocoreNick = normalizeTechnocoreName(process.env.OSA_TECHNOCORE_NICK |
 const technocoreSignedMessages = process.env.OSA_TECHNOCORE_SIGNED !== "0";
 const technocoreChannelsCache = { key: "", expiresAt: 0, channels: [], error: null };
 const technocoreNonceByRoom = new Map();
+const technocoreRoomReadBackoff = new Map();
 const managedConnectorProcesses = new Map();
 const managedConnectorLogLimit = 12 * 1024;
 const agentGuiCodexRunnerEnabled = process.env.OSA_AGENTGUI_ENABLE_CODEX_RUNNER === "1";
@@ -5812,6 +5813,26 @@ async function technocoreChannels(limit = technocoreChannelLimit) {
   }
 }
 
+async function ensureTechnocorePublicRoomTopic() {
+  if (!technocoreEnabled || !technocorePublicRoom) return false;
+  const topic = technocoreMainRoomDescriptions[technocorePublicRoom];
+  if (!topic) return false;
+  try {
+    const existing = await fetchTechnocoreText(`/kv/topic/${technocorePublicRoom}`, technocoreTimeoutMs);
+    const existingTopic = existing.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) || "";
+    if (existingTopic === topic) return false;
+  } catch {
+    /* Missing or stale topic: set it below. */
+  }
+  try {
+    await fetchTechnocoreText(`/kv/topic/${technocorePublicRoom}/set/${encodeURIComponent(topic)}`, technocoreWriteTimeoutMs);
+    return true;
+  } catch (error) {
+    console.warn(`Technocore public room topic ensure failed: ${error.message}`);
+    return false;
+  }
+}
+
 async function fetchTechnocoreRoomChannels(limit) {
   try {
     const view = await fetchTechnocoreJson("/rooms", {
@@ -5953,8 +5974,10 @@ async function announceTechnocoreProjectShare(project, rooms = null) {
   return true;
 }
 
-async function publicNetworkChatMessages(limit = 60, channel = technocorePublicRoom) {
+async function publicNetworkChatMessages(limit = 60, channel = technocorePublicRoom, since = 0) {
   const max = Math.max(1, Math.min(100, Number(limit || 60)));
+  const parsedSince = Number(since || 0);
+  const cursor = Number.isFinite(parsedSince) ? Math.max(0, parsedSince) : 0;
   const room = normalizeTechnocoreName(channel) || technocorePublicRoom;
   const includeLocal = !room || room === technocorePublicRoom;
   const localMessages = includeLocal
@@ -5974,7 +5997,7 @@ async function publicNetworkChatMessages(limit = 60, channel = technocorePublicR
         room: technocorePublicRoom
       }))
     : [];
-  const externalMessages = await technocorePublicChatMessages(max, room);
+  const externalMessages = await technocorePublicChatMessages(max, room, cursor);
   const dedupedExternalMessages = externalMessages.filter((message) => !isMirroredLocalNetworkChat(message, localMessages));
   return [...localMessages, ...dedupedExternalMessages]
     .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))
@@ -5988,14 +6011,21 @@ function isMirroredLocalNetworkChat(externalMessage, localMessages) {
   return localMessages.some((localMessage) => localMessage.message === externalMessage.message);
 }
 
-async function technocorePublicChatMessages(limit = 60, channel = technocorePublicRoom) {
+async function technocorePublicChatMessages(limit = 60, channel = technocorePublicRoom, since = 0) {
   const room = normalizeTechnocoreName(channel) || technocorePublicRoom;
   if (!technocoreEnabled || !room) return [];
+  const backoff = technocoreRoomReadBackoff.get(room);
+  if (backoff && Date.now() < backoff.until) return [];
+  const parsedSince = Number(since || 0);
+  const cursor = Number.isFinite(parsedSince) ? Math.max(0, parsedSince) : 0;
   try {
-    const view = await fetchTechnocoreJson(`/r/${room}`, {
+    const query = {
       format: "json",
       limit: Math.min(limit, technocoreRoomLimit)
-    });
+    };
+    if (cursor > 0) query.since = cursor;
+    const view = await fetchTechnocoreJson(`/r/${room}`, query);
+    technocoreRoomReadBackoff.delete(room);
     const messages = Array.isArray(view?.messages) ? view.messages : [];
     return messages
       .filter((message) => message && Number.isFinite(Number(message.seq)))
@@ -6018,6 +6048,11 @@ async function technocorePublicChatMessages(limit = 60, channel = technocorePubl
         };
       });
   } catch {
+    const failures = Math.min(5, Number(backoff?.failures || 0) + 1);
+    technocoreRoomReadBackoff.set(room, {
+      failures,
+      until: Date.now() + Math.min(15000, 1000 * (2 ** (failures - 1)))
+    });
     return [];
   }
 }
@@ -6742,6 +6777,21 @@ async function fetchTechnocoreJson(path, query = {}, timeoutMs = technocoreTimeo
   }
 }
 
+async function fetchTechnocoreText(path, timeoutMs = technocoreTimeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(technocoreUrl(path), {
+      signal: controller.signal,
+      headers: { accept: "text/plain" }
+    });
+    if (!response.ok) throw new Error(`Technocore returned ${response.status}`);
+    return await response.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function openClawCommandOutput(result) {
   return String(`${result.stdout || ""}${result.stderr || ""}`).trim().slice(-8000);
 }
@@ -6810,7 +6860,11 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
 
   if (method === "GET" && path === "/api/network/chat") {
     return sendJson(res, 200, {
-      messages: await publicNetworkChatMessages(url.searchParams.get("limit") || 60, url.searchParams.get("channel") || technocorePublicRoom)
+      messages: await publicNetworkChatMessages(
+        url.searchParams.get("limit") || 60,
+        url.searchParams.get("channel") || technocorePublicRoom,
+        url.searchParams.get("since") || 0
+      )
     });
   }
 
@@ -8748,6 +8802,9 @@ server.on("upgrade", (req, socket) => {
 server.listen(port, host, () => {
   console.log(`OpenSwarmAgents node listening on http://${host}:${port}`);
   startFederationPeerSync();
+  ensureTechnocorePublicRoomTopic().catch((error) => {
+    console.warn(`Technocore public room topic ensure failed: ${error.message}`);
+  });
 });
 
 function serveAgentGuiWebSocket(req, socket, url) {
