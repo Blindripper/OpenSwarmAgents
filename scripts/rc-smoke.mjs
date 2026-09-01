@@ -2,11 +2,16 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { keccak_256 } from "@noble/hashes/sha3.js";
+import { utf8ToBytes } from "@noble/hashes/utils.js";
 
 const rootDir = join(import.meta.dirname, "..");
 const port = Number(process.env.OSA_RC_SMOKE_PORT || 19080 + Math.floor(Math.random() * 800));
 const baseUrl = `http://127.0.0.1:${port}`;
 const dataDir = await mkdtemp(join(tmpdir(), "osa-rc-smoke-"));
+const testWalletPrivateKey = Uint8Array.from(Buffer.from("1111111111111111111111111111111111111111111111111111111111111111", "hex"));
+const testWalletAddress = ethereumAddressFromPrivateKey(testWalletPrivateKey);
 let server = null;
 
 try {
@@ -37,6 +42,7 @@ try {
   assert(health.runtime.authMode === "local", "auth mode should default to local");
   assert(health.runtime.localLoginEnabled === true, "local login should be enabled in smoke");
   assert(health.runtime.localPasswordRequired === true, "local password should be required in smoke");
+  assert(health.runtime.walletNonceLoginEnabled === true, "wallet login should require signed nonce challenges");
   assert(health.runtime.node?.nodeId, "node identity should be public");
 
   const rootShell = await fetch(`${baseUrl}/`, { redirect: "manual" });
@@ -93,6 +99,39 @@ try {
     email: "rc@example.com",
     name: "RC",
     password: "short"
+  });
+
+  await expectStatus("/api/wallet/login", 400, {
+    address: testWalletAddress,
+    chain_id: "0x1"
+  });
+  const walletChallenge = await postJson("/api/wallet/challenge", {
+    address: testWalletAddress,
+    chain_id: "0x1"
+  });
+  assert(walletChallenge.challenge?.message?.includes("OpenSwarmAgents wallet login"), "wallet challenge should return the exact signable message");
+  await expectStatus("/api/wallet/login", 403, {
+    address: testWalletAddress,
+    chain_id: "0x1",
+    challenge_id: walletChallenge.challenge.id,
+    message: walletChallenge.challenge.message,
+    signature: signPersonalMessage("wrong message")
+  });
+  const walletLogin = await postJson("/api/wallet/login", {
+    address: testWalletAddress,
+    chain_id: "0x1",
+    challenge_id: walletChallenge.challenge.id,
+    message: walletChallenge.challenge.message,
+    signature: signPersonalMessage(walletChallenge.challenge.message)
+  });
+  assert(walletLogin.sessionToken, "verified wallet login should return a local OSA session token");
+  assert(walletLogin.wallet?.verified === true, "verified wallet login should mark the wallet session verified");
+  await expectStatus("/api/wallet/login", 400, {
+    address: testWalletAddress,
+    chain_id: "0x1",
+    challenge_id: walletChallenge.challenge.id,
+    message: walletChallenge.challenge.message,
+    signature: signPersonalMessage(walletChallenge.challenge.message)
   });
 
   const firstLogin = await postJson("/api/auth/login", {
@@ -421,6 +460,29 @@ async function getJson(path, headers = {}) {
   const response = await fetch(`${baseUrl}${path}`, { headers });
   assert(response.ok, `${path} should return HTTP 2xx, got ${response.status}`);
   return response.json();
+}
+
+function bytesToHex(bytes) {
+  return Buffer.from(bytes).toString("hex");
+}
+
+function ethereumPersonalMessageHash(message) {
+  const messageBytes = utf8ToBytes(String(message || ""));
+  const prefixBytes = utf8ToBytes(`\x19Ethereum Signed Message:\n${messageBytes.length}`);
+  return keccak_256(new Uint8Array([...prefixBytes, ...messageBytes]));
+}
+
+function ethereumAddressFromPrivateKey(privateKey) {
+  const publicKey = secp256k1.getPublicKey(privateKey, false);
+  return `0x${bytesToHex(keccak_256(publicKey.slice(1)).slice(-20))}`.toLowerCase();
+}
+
+function signPersonalMessage(message) {
+  const signature = secp256k1.sign(ethereumPersonalMessageHash(message), testWalletPrivateKey, { format: "recovered", prehash: false });
+  const ethereumSignature = new Uint8Array(65);
+  ethereumSignature.set(signature.slice(1), 0);
+  ethereumSignature[64] = signature[0] + 27;
+  return `0x${bytesToHex(ethereumSignature)}`;
 }
 
 async function postJson(path, body, headers = {}) {

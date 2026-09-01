@@ -263,7 +263,19 @@ async function startNode(label, port, peerPorts) {
 
 async function stopNode(node) {
   node.server.kill("SIGTERM");
+  await waitForExit(node.server, 3000);
   await rm(node.dataDir, { recursive: true, force: true });
+}
+
+function waitForExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 }
 
 async function configureTrustedNodes(...nodesToTrust) {

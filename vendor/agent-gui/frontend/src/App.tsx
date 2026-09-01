@@ -95,6 +95,7 @@ interface WalletSession {
   chain_id?: string | null;
   connected_at?: string;
   last_seen_at?: string;
+  verified?: boolean;
 }
 interface WalletProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -188,7 +189,7 @@ function readWalletSession(): WalletSession | null {
     const raw = localStorage.getItem(WALLET_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as WalletSession;
-    return /^0x[a-fA-F0-9]{40}$/.test(parsed.address || "") ? parsed : null;
+    return parsed.verified === true && /^0x[a-fA-F0-9]{40}$/.test(parsed.address || "") ? parsed : null;
   } catch {
     return null;
   }
@@ -1682,6 +1683,7 @@ export default function App() {
 
   const allDesks = teams.flatMap((t) => t.desks);
   const realDesks = allDesks.filter((d) => !("isPending" in d)) as Session[];
+  const projectCanvasTeams = teams.filter((team) => !PUBLIC_TEAM_IDS.has(team.id));
   const activeCount = realDesks.filter((s) => s.is_running === true).length;
   const deskCount = realDesks.length;
   const networkStats = {
@@ -1709,7 +1711,19 @@ export default function App() {
         const rawChainId = await provider.request({ method: "eth_chainId" });
         chainId = typeof rawChainId === "string" ? rawChainId : null;
       } catch { /* chain id is helpful but not required */ }
-      const result = await api.wallet.login({ address, chain_id: chainId });
+      const challenge = await api.wallet.challenge({ address, chain_id: chainId });
+      const signature = await provider.request({
+        method: "personal_sign",
+        params: [challenge.challenge.message, address],
+      });
+      if (typeof signature !== "string") throw new Error("Wallet did not return a login signature.");
+      const result = await api.wallet.login({
+        address,
+        chain_id: chainId,
+        challenge_id: challenge.challenge.id,
+        message: challenge.challenge.message,
+        signature,
+      });
       localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(result.wallet));
       setWalletAddress(result.wallet.address);
       setWalletConnected(true);
@@ -2107,8 +2121,9 @@ export default function App() {
         </div>
         <ResultCanvas
           open={resultCanvasOpen}
-          session={selectedCanvasSession}
-          taskContent={selectedDeskId ? taskContents[selectedDeskId] : ""}
+          teams={projectCanvasTeams}
+          focusedDeskId={selectedCanvasSession?.id ?? null}
+          taskContents={taskContents}
           onOpenChange={(open) => {
             setResultCanvasOpen(open);
             writeStoredItem(RESULT_CANVAS_OPEN_KEY, String(open));

@@ -3,12 +3,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { keccak_256 } from "@noble/hashes/sha3.js";
+import { utf8ToBytes } from "@noble/hashes/utils.js";
 
 const rootDir = join(import.meta.dirname, "..");
 const port = Number(process.env.OSA_BROWSER_E2E_PORT || 19880 + Math.floor(Math.random() * 700));
 const baseUrl = `http://127.0.0.1:${port}`;
 const dataDir = await mkdtemp(join(tmpdir(), "osa-browser-e2e-"));
 const openClawFixturePath = join(dataDir, "openclaw-fixture.sh");
+const testWalletPrivateKey = Uint8Array.from(Buffer.from("1111111111111111111111111111111111111111111111111111111111111111", "hex"));
+const testWalletAddress = ethereumAddressFromPrivateKey(testWalletPrivateKey);
 const pageErrors = [];
 let browser = null;
 let server = null;
@@ -48,7 +53,7 @@ try {
   assert(Array.isArray(sessions) && sessions.length === 1 && sessions[0]?.team_id === "public-projects-room", "fresh dashboard should expose only the public example project");
   let top = await getJson("/api/top-projects?limit=100");
   assert(Array.isArray(top.agents) && top.agents.some((agent) => agent.target_id === "osa-example-reward-engine"), "fresh Top100 should include the example project");
-  const balance = await getJson("/api/wallet/balance?address=0x0000000000000000000000000000000000000abc");
+  const balance = await getJson(`/api/wallet/balance?address=${testWalletAddress}`);
   assert(balance.formatted === "0 OSA" && balance.source === "not_deployed", "wallet balance should honestly report undeployed $OSA state");
   let config = await getJson("/api/gui-config");
   const agentIds = config.agents.map((agent) => agent.id);
@@ -91,29 +96,34 @@ try {
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
   page.setDefaultTimeout(8000);
+  await page.exposeFunction("osaE2eSignPersonalMessage", (message) => signPersonalMessage(String(message)));
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("console", (message) => {
     if (message.type() === "error") pageErrors.push(message.text());
   });
-  await page.addInitScript(() => {
+  await page.addInitScript((walletAddress) => {
+    window.__OSA_E2E_WALLET_ADDRESS__ = walletAddress;
     window.ethereum = {
-      request: async ({ method }) => {
-        if (method === "eth_requestAccounts") return ["0x0000000000000000000000000000000000000abc"];
+      request: async ({ method, params }) => {
+        if (method === "eth_requestAccounts") return [window.__OSA_E2E_WALLET_ADDRESS__];
         if (method === "eth_chainId") return "0x1";
+        if (method === "personal_sign") return window.osaE2eSignPersonalMessage(params?.[0] || "");
         return null;
       }
     };
     localStorage.setItem("osa-openclaw-onboarding-dismissed", "1");
-    localStorage.setItem("osa-workbench-v2", JSON.stringify({
-      version: 2,
-      teams: [
-        { id: "home-room", color: "blue", name: "Home", items: [] },
-        { id: "public-room", color: "purple", name: "Public", items: [] },
-        { id: "public-rooms-room", color: "orange", name: "Public Rooms", items: [] },
-        { id: "public-projects-room", color: "orange", name: "Latest Projects", items: [] }
-      ]
-    }));
-  });
+    if (!localStorage.getItem("osa-workbench-v2")) {
+      localStorage.setItem("osa-workbench-v2", JSON.stringify({
+        version: 2,
+        teams: [
+          { id: "home-room", color: "blue", name: "Home", items: [] },
+          { id: "public-room", color: "purple", name: "Public", items: [] },
+          { id: "public-rooms-room", color: "orange", name: "Public Rooms", items: [] },
+          { id: "public-projects-room", color: "orange", name: "Latest Projects", items: [] }
+        ]
+      }));
+    }
+  }, testWalletAddress);
 
   await page.goto(`${baseUrl}/agent-gui/`, { waitUntil: "networkidle" });
   await expectText(page, "body", "Connect Wallet");
@@ -125,7 +135,7 @@ try {
   await expectText(page, "body", "Network Activity");
   await expectText(page, "body", "Network Chat");
   await expectText(page, "body", "Canvas");
-  await expectText(page, "body", "Select a desk to show agent results.");
+  await expectText(page, "body", "Start a desk to show project results.");
   await page.locator('button[title="Collapse canvas"]').click();
   await page.locator('button[title="Open result canvas"]').click();
   await page.locator('button[title="Settings"]').click();
@@ -194,12 +204,46 @@ try {
     (items) => items.find((session) => session.id === coderFallback.session_id && session.task_solved === true),
     "Coder session to complete through OpenClaw"
   );
+  await page.evaluate(({ createdId, roomId, coderId }) => {
+    localStorage.setItem("osa-workbench-v2", JSON.stringify({
+      version: 2,
+      teams: [
+        {
+          id: "home-room",
+          color: "blue",
+          name: "Home",
+          items: [
+            { type: "session", id: createdId },
+            { type: "session", id: coderId }
+          ]
+        },
+        {
+          id: "room-launch",
+          color: "green",
+          name: "Launch",
+          items: [{ type: "session", id: roomId }]
+        },
+        { id: "public-projects-room", color: "orange", name: "Latest Projects", items: [] }
+      ]
+    }));
+  }, {
+    createdId: created.session_id,
+    roomId: roomCreated.session_id,
+    coderId: coderFallback.session_id
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Enter Home" }).click().catch(() => {});
+  await expectText(page, "body", "Home");
+  await expectText(page, "body", "Launch");
+  await expectText(page, "body", "Build a small market-research agent");
+  await expectText(page, "body", "Create a compact launch plan");
+  await expectText(page, "body", "Test the default Coder desk");
 
   const legacyShare = await postJsonAllowError(`/api/sessions/${encodeURIComponent(created.session_id)}/share`, { shared: true });
   assert(legacyShare.status === 410, "individual agent sharing should be retired");
 
-  const walletAddress = "0x0000000000000000000000000000000000000abc";
-  const wallet = await postJson("/api/wallet/login", { address: walletAddress, chain_id: "0x1" });
+  const walletAddress = testWalletAddress;
+  const wallet = await signedWalletLogin(walletAddress, "0x1");
   assert(wallet.wallet?.address === walletAddress, "wallet login should store the connected pubkey");
   const legacyRoomShare = await postJsonAllowError("/api/public/rooms/share", {
     team_id: "room-launch",
@@ -322,6 +366,40 @@ try {
   await rm(dataDir, { recursive: true, force: true });
 }
 
+function bytesToHex(bytes) {
+  return Buffer.from(bytes).toString("hex");
+}
+
+function ethereumPersonalMessageHash(message) {
+  const messageBytes = utf8ToBytes(String(message || ""));
+  const prefixBytes = utf8ToBytes(`\x19Ethereum Signed Message:\n${messageBytes.length}`);
+  return keccak_256(new Uint8Array([...prefixBytes, ...messageBytes]));
+}
+
+function ethereumAddressFromPrivateKey(privateKey) {
+  const publicKey = secp256k1.getPublicKey(privateKey, false);
+  return `0x${bytesToHex(keccak_256(publicKey.slice(1)).slice(-20))}`.toLowerCase();
+}
+
+function signPersonalMessage(message) {
+  const signature = secp256k1.sign(ethereumPersonalMessageHash(message), testWalletPrivateKey, { format: "recovered", prehash: false });
+  const ethereumSignature = new Uint8Array(65);
+  ethereumSignature.set(signature.slice(1), 0);
+  ethereumSignature[64] = signature[0] + 27;
+  return `0x${bytesToHex(ethereumSignature)}`;
+}
+
+async function signedWalletLogin(address, chainId = "0x1") {
+  const challenge = await postJson("/api/wallet/challenge", { address, chain_id: chainId });
+  return postJson("/api/wallet/login", {
+    address,
+    chain_id: chainId,
+    challenge_id: challenge.challenge.id,
+    message: challenge.challenge.message,
+    signature: signPersonalMessage(challenge.challenge.message)
+  });
+}
+
 async function waitForHealth(logs) {
   for (let attempt = 0; attempt < 80; attempt += 1) {
     if (server.exitCode !== null) {
@@ -397,7 +475,17 @@ async function deleteJson(path) {
 }
 
 async function expectText(page, selector, text) {
-  await page.locator(selector).filter({ hasText: text }).waitFor({ state: "visible" });
+  try {
+    await page.locator(selector).filter({ hasText: text }).waitFor({ state: "visible" });
+  } catch (error) {
+    let body = "";
+    try {
+      body = (await page.locator("body").innerText()).slice(0, 3000);
+    } catch {
+      body = "<body unavailable>";
+    }
+    throw new Error(`Expected visible text ${JSON.stringify(text)}. Body was:\n${body}\n\n${error.message}`);
+  }
 }
 
 function assert(condition, message) {

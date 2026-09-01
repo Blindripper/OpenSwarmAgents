@@ -14,6 +14,9 @@ import {
   timingSafeEqual,
   verify as verifyPayload
 } from "node:crypto";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { keccak_256 } from "@noble/hashes/sha3.js";
+import { utf8ToBytes } from "@noble/hashes/utils.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "../../..");
@@ -151,6 +154,7 @@ async function loadStore() {
       sessions: [],
       agentProfiles: [],
       walletSessions: [],
+      walletLoginChallenges: [],
       agentDonations: [],
       publicProjectReviews: [],
       publicProjectCopies: [],
@@ -190,6 +194,7 @@ function normalizeStore(input) {
     sessions: input.sessions || [],
     agentProfiles: normalizeAgentProfiles(input.agentProfiles || []),
     walletSessions: normalizeWalletSessions(input.walletSessions || []),
+    walletLoginChallenges: normalizeWalletLoginChallenges(input.walletLoginChallenges || []),
     agentDonations: normalizeAgentDonations(input.agentDonations || []),
     publicProjectReviews: normalizePublicProjectReviews(input.publicProjectReviews || []),
     publicProjectCopies: normalizePublicProjectCopies(input.publicProjectCopies || []),
@@ -516,6 +521,7 @@ function normalizeWalletSessions(sessions) {
           address: normalizeWalletAddress(session.address),
           chainId: session.chainId ? String(session.chainId).slice(0, 40) : null,
           signature: session.signature ? String(session.signature).slice(0, 500) : null,
+          verified: session.verified === true || Boolean(session.signature),
           createdAt: session.createdAt || now(),
           lastSeenAt: session.lastSeenAt || session.createdAt || now()
         };
@@ -524,6 +530,153 @@ function normalizeWalletSessions(sessions) {
       }
     })
     .filter(Boolean);
+}
+
+function normalizeWalletLoginChallenges(challenges) {
+  const timestamp = Date.now();
+  return challenges
+    .filter((challenge) => challenge?.id && challenge?.nonce && challenge?.message && !challenge.usedAt)
+    .map((challenge) => {
+      try {
+        const expiresAt = challenge.expiresAt || challenge.createdAt;
+        if (!expiresAt || Date.parse(expiresAt) <= timestamp) return null;
+        return {
+          id: String(challenge.id).slice(0, 100),
+          address: normalizeWalletAddress(challenge.address),
+          chainId: challenge.chainId ? String(challenge.chainId).slice(0, 40) : null,
+          nonce: String(challenge.nonce).slice(0, 80),
+          domain: String(challenge.domain || "").slice(0, 200),
+          uri: String(challenge.uri || "").slice(0, 500),
+          message: String(challenge.message).slice(0, 5000),
+          createdAt: challenge.createdAt || now(),
+          expiresAt,
+          usedAt: null
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function cleanWalletLoginChallenges() {
+  const timestamp = Date.now();
+  store.walletLoginChallenges = (store.walletLoginChallenges || []).filter((challenge) => !challenge.usedAt && Date.parse(challenge.expiresAt) > timestamp);
+}
+
+function bytesToHex(bytes) {
+  return Buffer.from(bytes).toString("hex");
+}
+
+function hexToBytes(hex, expectedBytes = null) {
+  const value = String(hex || "").trim().replace(/^0x/i, "");
+  if (!/^[a-fA-F0-9]+$/.test(value) || value.length % 2) {
+    const error = new Error("Invalid hex value.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const bytes = Uint8Array.from(Buffer.from(value, "hex"));
+  if (expectedBytes !== null && bytes.length !== expectedBytes) {
+    const error = new Error(`Expected ${expectedBytes} signature bytes.`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return bytes;
+}
+
+function ethereumPersonalMessageHash(message) {
+  const messageBytes = utf8ToBytes(String(message || ""));
+  const prefixBytes = utf8ToBytes(`\x19Ethereum Signed Message:\n${messageBytes.length}`);
+  return keccak_256(new Uint8Array([...prefixBytes, ...messageBytes]));
+}
+
+function ethereumAddressFromPublicKey(publicKey) {
+  const bytes = publicKey.toBytes ? publicKey.toBytes(false) : publicKey;
+  const uncompressed = Uint8Array.from(bytes);
+  if (uncompressed.length !== 65 || uncompressed[0] !== 4) {
+    const error = new Error("Recovered wallet public key is invalid.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return `0x${bytesToHex(keccak_256(uncompressed.slice(1)).slice(-20))}`.toLowerCase();
+}
+
+function recoverEthereumPersonalSignAddress(message, signature) {
+  const bytes = hexToBytes(signature, 65);
+  const rawRecovery = bytes[64];
+  const recovery = rawRecovery >= 27 ? rawRecovery - 27 : rawRecovery;
+  if (![0, 1].includes(recovery)) {
+    const error = new Error("Wallet signature recovery id is invalid.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const digest = ethereumPersonalMessageHash(message);
+  const recovered = secp256k1.Signature
+    .fromBytes(bytes.slice(0, 64))
+    .addRecoveryBit(recovery)
+    .recoverPublicKey(digest);
+  return ethereumAddressFromPublicKey(recovered);
+}
+
+function buildWalletLoginMessage({ address, chainId, nonce, issuedAt, expiresAt, domain, uri }) {
+  return [
+    "OpenSwarmAgents wallet login",
+    "",
+    `Domain: ${domain}`,
+    `URI: ${uri}`,
+    `Address: ${address}`,
+    `Chain ID: ${chainId || "unknown"}`,
+    `Nonce: ${nonce}`,
+    `Issued At: ${issuedAt}`,
+    `Expiration Time: ${expiresAt}`,
+    `Node ID: ${nodeIdentity.nodeId}`,
+    "",
+    "Sign this message to authenticate this browser session. This does not send a transaction or grant spending permissions."
+  ].join("\n");
+}
+
+async function createAgentGuiWalletChallenge(req, body = {}) {
+  const address = normalizeWalletAddress(body.address);
+  const chainId = body.chain_id || body.chainId ? String(body.chain_id || body.chainId).slice(0, 40) : null;
+  const issuedAt = now();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  const origin = originFromReq(req);
+  const domain = (() => {
+    try {
+      return new URL(origin).host;
+    } catch {
+      return String(req.headers.host || `${host}:${port}`);
+    }
+  })();
+  const nonce = randomBytes(16).toString("hex");
+  const challenge = {
+    id: `wallet-challenge-${randomUUID()}`,
+    address,
+    chainId,
+    nonce,
+    domain,
+    uri: origin,
+    createdAt: issuedAt,
+    expiresAt,
+    usedAt: null
+  };
+  challenge.message = buildWalletLoginMessage({ address, chainId, nonce, issuedAt, expiresAt, domain, uri: origin });
+  cleanWalletLoginChallenges();
+  store.walletLoginChallenges.unshift(challenge);
+  store.walletLoginChallenges = store.walletLoginChallenges.slice(0, 100);
+  await saveStore();
+  return {
+    ok: true,
+    challenge: {
+      id: challenge.id,
+      address: challenge.address,
+      chain_id: challenge.chainId,
+      message: challenge.message,
+      nonce: challenge.nonce,
+      issued_at: challenge.createdAt,
+      expires_at: challenge.expiresAt
+    }
+  };
 }
 
 function normalizeDonationAmount(amount) {
@@ -1162,6 +1315,7 @@ async function loadPostgresStore() {
     sessions: [],
     agentProfiles: [],
     walletSessions: [],
+    walletLoginChallenges: [],
     agentDonations: [],
     publicProjectReviews: [],
     publicProjectCopies: [],
@@ -1511,6 +1665,8 @@ function publicUser(user) {
     id: user.id,
     email: user.email,
     name: user.name,
+    walletAddress: user.walletAddress || null,
+    authProvider: user.authProvider || "local",
     createdAt: user.createdAt,
     lastSeen: user.lastSeen
   };
@@ -1532,6 +1688,16 @@ function upsertUser(email, name) {
     user.name = name || user.name;
     user.lastSeen = now();
   }
+  return user;
+}
+
+function upsertWalletUser(address) {
+  const normalized = normalizeWalletAddress(address);
+  const email = `wallet-${normalized.slice(2)}@wallet.osa.local`;
+  const name = `Wallet ${normalized.slice(0, 6)}...${normalized.slice(-4)}`;
+  const user = upsertUser(email, name);
+  user.walletAddress = normalized;
+  user.authProvider = "wallet";
   return user;
 }
 
@@ -3430,6 +3596,7 @@ function publicRuntime() {
     localLoginEnabled: isLocalLoginEnabled(),
     devLoginEnabled: isDevLoginEnabled(),
     localPasswordRequired: localPasswordRequired(),
+    walletNonceLoginEnabled: true,
     demoEndpointsEnabled: areDemoEndpointsEnabled(),
     publicTrustLedgerEnabled,
     rateLimitsEnabled: rateLimitMultiplier > 0,
@@ -5227,12 +5394,39 @@ async function shareAgentGuiProject(body = {}) {
 async function connectAgentGuiWallet(body = {}) {
   const address = normalizeWalletAddress(body.address);
   const chainId = body.chain_id || body.chainId ? String(body.chain_id || body.chainId).slice(0, 40) : null;
+  const challengeId = String(body.challenge_id || body.challengeId || "").slice(0, 100);
+  const message = String(body.message || "");
   const signature = body.signature ? String(body.signature).slice(0, 500) : null;
+  if (!challengeId || !message || !signature) {
+    const error = new Error("Wallet login requires a fresh signed nonce challenge.");
+    error.statusCode = 400;
+    throw error;
+  }
+  cleanWalletLoginChallenges();
+  const challenge = store.walletLoginChallenges.find((item) => item.id === challengeId);
+  if (!challenge || challenge.usedAt || Date.parse(challenge.expiresAt) <= Date.now()) {
+    const error = new Error("Wallet login challenge is expired or unknown.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (challenge.address !== address || (chainId || null) !== (challenge.chainId || null) || challenge.message !== message) {
+    const error = new Error("Wallet login challenge does not match the submitted wallet.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const recoveredAddress = recoverEthereumPersonalSignAddress(message, signature);
+  if (recoveredAddress !== address) {
+    const error = new Error("Wallet signature does not match the selected address.");
+    error.statusCode = 403;
+    throw error;
+  }
   const seenAt = now();
+  challenge.usedAt = seenAt;
   let wallet = store.walletSessions.find((item) => item.address === address);
   if (wallet) {
     wallet.chainId = chainId || wallet.chainId || null;
     wallet.signature = signature || wallet.signature || null;
+    wallet.verified = true;
     wallet.lastSeenAt = seenAt;
   } else {
     wallet = {
@@ -5240,6 +5434,7 @@ async function connectAgentGuiWallet(body = {}) {
       address,
       chainId,
       signature,
+      verified: true,
       createdAt: seenAt,
       lastSeenAt: seenAt
     };
@@ -5247,16 +5442,22 @@ async function connectAgentGuiWallet(body = {}) {
   }
   event("agentgui_wallet_connected", "Wallet connected to OSA dashboard", {
     walletAddress: address,
-    chainId
+    chainId,
+    verified: true
   });
+  const user = upsertWalletUser(address);
+  const session = createSession(user);
   await saveStore();
   return {
     ok: true,
+    user: publicUser(user),
+    sessionToken: session.token,
     wallet: {
       address: wallet.address,
       chain_id: wallet.chainId,
       connected_at: wallet.createdAt,
-      last_seen_at: wallet.lastSeenAt
+      last_seen_at: wallet.lastSeenAt,
+      verified: true
     }
   };
 }
@@ -5313,6 +5514,7 @@ async function createAgentGuiDonation(body = {}) {
       address: walletAddress,
       chainId,
       signature: null,
+      verified: false,
       createdAt,
       lastSeenAt: createdAt
     });
@@ -6079,9 +6281,24 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     }
   }
 
-  if (method === "POST" && path === "/api/wallet/login") {
+  if (method === "POST" && path === "/api/wallet/challenge") {
+    if (!enforceRateLimit(req, res, "wallet-challenge", rateIdentity(req), { limit: 20, windowMs: 10 * 60 * 1000 })) {
+      return;
+    }
     try {
-      return sendJson(res, 200, await connectAgentGuiWallet(await readJson(req)));
+      return sendJson(res, 201, await createAgentGuiWalletChallenge(req, await readJson(req)));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to create wallet login challenge" });
+    }
+  }
+
+  if (method === "POST" && path === "/api/wallet/login") {
+    if (!enforceRateLimit(req, res, "wallet-login", rateIdentity(req), { limit: 20, windowMs: 10 * 60 * 1000 })) {
+      return;
+    }
+    try {
+      const result = await connectAgentGuiWallet(await readJson(req));
+      return sendJson(res, 200, result, { "set-cookie": sessionCookie(result.sessionToken) });
     } catch (error) {
       return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to connect wallet" });
     }
@@ -6516,6 +6733,7 @@ async function handleApi(req, res, url) {
         sessions: [],
         agentProfiles: [],
         walletSessions: [],
+        walletLoginChallenges: [],
         agentDonations: [],
         publicProjectReviews: [],
         publicProjectCopies: [],

@@ -23,6 +23,17 @@ export interface WalletSession {
   chain_id?: string | null;
   connected_at?: string;
   last_seen_at?: string;
+  verified?: boolean;
+}
+
+export interface WalletChallenge {
+  id: string;
+  address: string;
+  chain_id?: string | null;
+  message: string;
+  nonce: string;
+  issued_at: string;
+  expires_at: string;
 }
 
 export interface WalletBalance {
@@ -53,6 +64,7 @@ export interface RuntimeStatus {
   federationSignatureVerificationEnabled?: boolean;
   federationTrustedNodeCount?: number;
   federationTrustConfigError?: string | null;
+  walletNonceLoginEnabled?: boolean;
 }
 
 async function errorDetail(r: Response): Promise<string> {
@@ -343,8 +355,10 @@ export const api = {
       post<{ ok: boolean; message: NetworkChatMessage }>("/network/chat", body),
   },
   wallet: {
-    login: (body: { address: string; chain_id?: string | null; signature?: string | null }) =>
-      post<{ ok: boolean; wallet: WalletSession }>("/wallet/login", body),
+    challenge: (body: { address: string; chain_id?: string | null }) =>
+      post<{ ok: boolean; challenge: WalletChallenge }>("/wallet/challenge", body),
+    login: (body: { address: string; chain_id?: string | null; challenge_id: string; message: string; signature: string }) =>
+      post<{ ok: boolean; wallet: WalletSession; sessionToken?: string }>("/wallet/login", body),
     balance: (address: string) =>
       get<WalletBalance>(`/wallet/balance?address=${encodeURIComponent(address)}`),
   },

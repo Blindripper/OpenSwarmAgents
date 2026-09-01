@@ -263,9 +263,7 @@ OSA uses the connected EVM public key for:
 - decentralized reputation and anti-spam signals
 - showing the current `$OSA` balance in the dashboard topbar
 
-The current dashboard login asks the wallet for an account address and chain id. It does not request a private key and does not send a transaction.
-
-Production deployments should add signed nonce login before treating wallet identity as strong authentication.
+The current dashboard login asks the wallet for an account address and chain id, then verifies a short-lived server nonce with `personal_sign`. It does not request a private key and does not send a transaction. Successful wallet login creates a normal HttpOnly OSA browser session, so server-side APIs can treat the wallet pubkey as authenticated local identity.
 
 ## Donations
 
@@ -410,6 +408,7 @@ Security matters because OSA now touches wallets, donations, rewards, and public
 Current safety posture:
 
 - dashboard wallet login is required
+- wallet login uses a short-lived signed nonce and blocks challenge replay
 - donation flow is intent-only until on-chain settlement is added
 - `$OSA` contract is draft-only
 - reward distribution is designed around capped Merkle claims
@@ -418,7 +417,6 @@ Current safety posture:
 
 Before production money moves, add:
 
-- signed nonce wallet login
 - USDC transfer execution and verification
 - chain and contract allowlists
 - reward scoring audit trail

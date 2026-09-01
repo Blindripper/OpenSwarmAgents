@@ -14,7 +14,7 @@ Returns runtime health metadata for container and reverse-proxy checks. It does 
 
 Federation-related runtime fields include `federationEnabled`, `federationPeerCount`, `federationSignatureVerificationEnabled`, `federationTrustedNodeCount`, and the public local `node` identity. The browser uses the same metadata to show the local node id/public key, a copy-ready peer record for sharing, and a paste-to-config helper for trusted peer allowlists.
 
-`localLoginEnabled` reports whether the local node login form is available. `devLoginEnabled` is kept as a legacy alias for older clients. In production local mode local login can be enabled while `localPasswordRequired: true` is the release-critical lock.
+`localLoginEnabled` reports whether the local node login form is available. `devLoginEnabled` is kept as a legacy alias for older clients. `walletNonceLoginEnabled` reports that browser wallet login requires a short-lived signed nonce before creating a local OSA session. In production local mode local login can be enabled while `localPasswordRequired: true` is the release-critical lock.
 
 ```json
 {
@@ -26,6 +26,7 @@ Federation-related runtime fields include `federationEnabled`, `federationPeerCo
     "localLoginEnabled": true,
     "devLoginEnabled": true,
     "localPasswordRequired": true,
+    "walletNonceLoginEnabled": true,
     "demoEndpointsEnabled": false,
     "rateLimitsEnabled": true,
     "maxArtifactUploadBytes": 10485760,
@@ -58,6 +59,37 @@ Event types:
 - `heartbeat` - keepalive with current server time
 
 The stream synchronizes dashboards connected to the same OSA node. Cross-node federation imports peer activity into the local node, then the same stream refreshes all local dashboards.
+
+## Wallet Login
+
+`POST /api/wallet/challenge`
+
+Creates a short-lived EVM wallet login challenge. Body:
+
+```json
+{
+  "address": "0x...",
+  "chain_id": "0x1"
+}
+```
+
+The response contains a `challenge.message` string. The browser must sign exactly that string with `personal_sign`.
+
+`POST /api/wallet/login`
+
+Verifies a wallet signature, consumes the challenge nonce, records the verified wallet session, and returns a normal OSA session token while also setting the HttpOnly `osa_session` cookie. Body:
+
+```json
+{
+  "address": "0x...",
+  "chain_id": "0x1",
+  "challenge_id": "wallet-challenge-...",
+  "message": "OpenSwarmAgents wallet login\n...",
+  "signature": "0x..."
+}
+```
+
+Login rejects missing challenges, expired challenges, replayed challenges, changed messages, and signatures that recover to a different EVM address.
 
 ## Federation
 

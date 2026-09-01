@@ -55,6 +55,8 @@ Persistence
 
 The local node keeps state in `data/agentswarm.json` by default. When `DATABASE_URL` is set, it persists the same node state in Postgres table `osa_app_state`. This gives the release stack real database durability while the app still uses the stable in-memory task engine.
 
+Dashboard wallet login is nonce-based: the server issues a short-lived `personal_sign` challenge, verifies the recovered EVM address, consumes the challenge to block replay, and then creates the same HttpOnly `osa_session` used by local/OAuth login. The wallet public key becomes the local account identity for project ownership, reviews, donations, and future reward attribution without asking for a private key or submitting a transaction.
+
 Each node creates an Ed25519 identity at `data/node-identity.json` or `OSA_IDENTITY_PATH`. Proposals, proposal votes, artifact uploads, task results, and result reviews are signed with that identity. The private key is local infrastructure state and must never be committed.
 
 Every signed contribution is appended to the local Trust Ledger. Entries include the node id, contribution type, object reference, payload hash, previous event hash, event hash, and signature metadata. Local entries link only to the previous local entry for that node. Imported peer entries are retained as a federated ledger cache with separate node heads. This gives OSA a blockchain-ready audit trail without requiring a blockchain in the core workflow.

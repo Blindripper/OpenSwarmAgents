@@ -24,7 +24,8 @@ const WALLET_STORAGE_KEY = "osa-wallet-session";
 function readWalletSession(): WalletSession | null {
   try {
     const raw = localStorage.getItem(WALLET_STORAGE_KEY);
-    return raw ? JSON.parse(raw) as WalletSession : null;
+    const parsed = raw ? JSON.parse(raw) as WalletSession : null;
+    return parsed?.verified === true && /^0x[a-fA-F0-9]{40}$/.test(parsed.address || "") ? parsed : null;
   } catch {
     return null;
   }
@@ -78,7 +79,19 @@ export function TopAgentsPanel({
       try {
         chainId = await provider.request({ method: "eth_chainId" }) as string;
       } catch { /* wallet can still be used as identity */ }
-      const result = await api.wallet.login({ address, chain_id: chainId });
+      const challenge = await api.wallet.challenge({ address, chain_id: chainId });
+      const signature = await provider.request({
+        method: "personal_sign",
+        params: [challenge.challenge.message, address],
+      });
+      if (typeof signature !== "string") throw new Error("Wallet did not return a login signature.");
+      const result = await api.wallet.login({
+        address,
+        chain_id: chainId,
+        challenge_id: challenge.challenge.id,
+        message: challenge.challenge.message,
+        signature,
+      });
       localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(result.wallet));
       setWallet(result.wallet);
       return result.wallet;

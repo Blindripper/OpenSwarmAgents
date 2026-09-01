@@ -1,79 +1,111 @@
 import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { api } from "../api/client";
-import type { ActivityEvent, AuditResult, FileNode, FilePreviewData, Session } from "../types";
+import type { ActivityEvent, AuditResult, FileNode, FilePreviewData, Session, Team } from "../types";
 import { MarkdownView } from "./FilePreview";
 
 type CanvasTab = "result" | "audit" | "task" | "files";
 
 interface Props {
   open: boolean;
-  session: Session | null;
-  taskContent?: string;
+  teams: Team[];
+  focusedDeskId?: string | null;
+  taskContents?: Record<string, string>;
   onOpenChange: (open: boolean) => void;
   onPreview: (data: FilePreviewData) => void;
 }
 
-export function ResultCanvas({ open, session, taskContent = "", onOpenChange, onPreview }: Props) {
+interface DeskCanvasData {
+  activity: ActivityEvent[];
+  audit: AuditResult | null;
+  taskFile: string;
+  files: FileNode[];
+  consoleText: string;
+}
+
+const EMPTY_DESK_DATA: DeskCanvasData = {
+  activity: [],
+  audit: null,
+  taskFile: "",
+  files: [],
+  consoleText: "",
+};
+
+export function ResultCanvas({
+  open,
+  teams,
+  focusedDeskId = null,
+  taskContents = {},
+  onOpenChange,
+  onPreview,
+}: Props) {
   const [tab, setTab] = useState<CanvasTab>("result");
-  const [activity, setActivity] = useState<ActivityEvent[]>([]);
-  const [audit, setAudit] = useState<AuditResult | null>(null);
-  const [taskFile, setTaskFile] = useState("");
-  const [files, setFiles] = useState<FileNode[]>([]);
-  const [consoleText, setConsoleText] = useState("");
+  const [deskData, setDeskData] = useState<Record<string, DeskCanvasData>>({});
   const [loading, setLoading] = useState(false);
 
+  const projectTeams = useMemo(() => {
+    return teams
+      .map((team) => ({
+        ...team,
+        desks: team.desks.filter((desk) => !("isPending" in desk)) as Session[],
+      }))
+      .filter((team) => team.desks.length > 0);
+  }, [teams]);
+
+  const projectSessions = useMemo(
+    () => projectTeams.flatMap((team) => team.desks),
+    [projectTeams],
+  );
+
+  const sessionKey = useMemo(
+    () => projectSessions.map((session) => session.id).sort().join("|"),
+    [projectSessions],
+  );
+
   async function load() {
-    if (!session) return;
+    if (projectSessions.length === 0) {
+      setDeskData({});
+      return;
+    }
     setLoading(true);
     try {
-      const [activityData, auditData, taskData, fileData, consoleData] = await Promise.all([
-        api.sessions.activity(session.id, 80).catch(() => []),
-        api.sessions.auditCached(session.id).catch(() => null),
-        api.sessions.taskFile.get(session.id).catch(() => ({ content: "" })),
-        api.sessions.files(session.id).catch(() => []),
-        api.sessions.consoleHistory(session.id, 4000).catch(() => ({ text: "" })),
-      ]);
-      setActivity(activityData);
-      setAudit(auditData);
-      setTaskFile(taskData.content || "");
-      setFiles(fileData);
-      setConsoleText(consoleData.text || "");
+      const entries = await Promise.all(projectSessions.map(async (session) => {
+        const [activityData, auditData, taskData, fileData, consoleData] = await Promise.all([
+          api.sessions.activity(session.id, 80).catch(() => []),
+          api.sessions.auditCached(session.id).catch(() => null),
+          api.sessions.taskFile.get(session.id).catch(() => ({ content: "" })),
+          api.sessions.files(session.id).catch(() => []),
+          api.sessions.consoleHistory(session.id, 4000).catch(() => ({ text: "" })),
+        ]);
+        return [
+          session.id,
+          {
+            activity: activityData,
+            audit: auditData,
+            taskFile: taskData.content || "",
+            files: fileData,
+            consoleText: consoleData.text || "",
+          },
+        ] as const;
+      }));
+      setDeskData(Object.fromEntries(entries));
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    setActivity([]);
-    setAudit(null);
-    setTaskFile("");
-    setFiles([]);
-    setConsoleText("");
-    if (session) void load();
+    setDeskData({});
+    if (open) void load();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.id]);
+  }, [open, sessionKey]);
 
   useEffect(() => {
-    if (!session?.is_running) return;
+    if (!open || !projectSessions.some((session) => session.is_running)) return;
     const timer = setInterval(() => { void load(); }, 5000);
     return () => clearInterval(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.id, session?.is_running]);
-
-  const latestResult = useMemo(() => {
-    const fromConsole = extractConsoleResult(consoleText);
-    if (fromConsole) return fromConsole;
-    const outputEvent = activity
-      .slice()
-      .reverse()
-      .find((event) =>
-        event.tool_name === "submit_result" ||
-        event.title.toLowerCase().includes("submitted output") ||
-        (event.event_type === "message" && event.detail.trim())
-      );
-    return outputEvent?.detail?.trim() || "";
-  }, [activity, consoleText]);
+  }, [open, sessionKey, projectSessions]);
 
   if (!open) {
     return (
@@ -94,11 +126,13 @@ export function ResultCanvas({ open, session, taskContent = "", onOpenChange, on
         <div style={{ minWidth: 0 }}>
           <div style={titleStyle}>Canvas</div>
           <div style={subtitleStyle}>
-            {session ? session.title : "No desk selected"}
+            {projectSessions.length
+              ? `${projectSessions.length} desk${projectSessions.length === 1 ? "" : "s"} across ${projectTeams.length} room${projectTeams.length === 1 ? "" : "s"}`
+              : "No project desks yet"}
           </div>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
-          <button type="button" onClick={() => void load()} disabled={!session || loading} style={iconBtnStyle} title="Refresh canvas">
+          <button type="button" onClick={() => void load()} disabled={projectSessions.length === 0 || loading} style={iconBtnStyle} title="Refresh canvas">
             ↻
           </button>
           <button type="button" onClick={() => onOpenChange(false)} style={iconBtnStyle} title="Collapse canvas">
@@ -131,19 +165,85 @@ export function ResultCanvas({ open, session, taskContent = "", onOpenChange, on
       </div>
 
       <div style={bodyStyle}>
-        {!session ? (
-          <div style={emptyStyle}>Select a desk to show agent results.</div>
-        ) : tab === "result" ? (
-          <ResultView session={session} result={latestResult} loading={loading} />
-        ) : tab === "audit" ? (
-          <AuditView audit={audit} />
-        ) : tab === "task" ? (
-          <MarkdownBox content={taskFile || taskContent || "No task loaded."} />
+        {projectSessions.length === 0 ? (
+          <div style={emptyStyle}>Start a desk to show project results.</div>
         ) : (
-          <FilesView nodes={files} onPreview={onPreview} />
+          <div style={{ display: "grid", gap: 12 }}>
+            {projectTeams.map((team) => (
+              <section key={team.id} style={teamSectionStyle}>
+                <div style={teamHeaderStyle}>
+                  <span>{team.name || "Room"}</span>
+                  <span>{team.desks.length} desk{team.desks.length === 1 ? "" : "s"}</span>
+                </div>
+                <div style={{ display: "grid", gap: 10 }}>
+                  {team.desks.map((session) => {
+                    const data = deskData[session.id] ?? EMPTY_DESK_DATA;
+                    const result = latestDeskResult(data);
+                    const focused = focusedDeskId === session.id;
+                    return (
+                      <DeskCanvasSection
+                        key={session.id}
+                        session={session}
+                        data={data}
+                        result={result}
+                        tab={tab}
+                        focused={focused}
+                        loading={loading}
+                        taskContent={taskContents[session.id] || ""}
+                        onPreview={onPreview}
+                      />
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
+          </div>
         )}
       </div>
     </aside>
+  );
+}
+
+function DeskCanvasSection({
+  session,
+  data,
+  result,
+  tab,
+  focused,
+  loading,
+  taskContent,
+  onPreview,
+}: {
+  session: Session;
+  data: DeskCanvasData;
+  result: string;
+  tab: CanvasTab;
+  focused: boolean;
+  loading: boolean;
+  taskContent: string;
+  onPreview: (data: FilePreviewData) => void;
+}) {
+  return (
+    <article style={deskSectionStyle(focused)}>
+      <div style={deskHeaderStyle}>
+        <div style={{ minWidth: 0 }}>
+          <div style={deskTitleStyle}>{session.title || "Untitled desk"}</div>
+          <div style={deskMetaStyle}>
+            {session.agent || "agent"} · {session.is_running ? "running" : session.task_solved ? "solved" : "idle"}
+          </div>
+        </div>
+        {focused && <span style={focusPillStyle}>focused</span>}
+      </div>
+      {tab === "result" ? (
+        <ResultView session={session} result={result} loading={loading} />
+      ) : tab === "audit" ? (
+        <AuditView audit={data.audit} />
+      ) : tab === "task" ? (
+        <MarkdownBox content={data.taskFile || taskContent || "No task loaded."} />
+      ) : (
+        <FilesView nodes={data.files} onPreview={onPreview} />
+      )}
+    </article>
   );
 }
 
@@ -156,6 +256,20 @@ function ResultView({ session, result, loading }: { session: Session; result: st
     );
   }
   return <MarkdownBox content={result} />;
+}
+
+function latestDeskResult(data: DeskCanvasData) {
+  const fromConsole = extractConsoleResult(data.consoleText);
+  if (fromConsole) return fromConsole;
+  const outputEvent = data.activity
+    .slice()
+    .reverse()
+    .find((event) =>
+      event.tool_name === "submit_result" ||
+      event.title.toLowerCase().includes("submitted output") ||
+      (event.event_type === "message" && event.detail.trim())
+    );
+  return outputEvent?.detail?.trim() || "";
 }
 
 function AuditView({ audit }: { audit: AuditResult | null }) {
@@ -326,6 +440,75 @@ const bodyStyle: React.CSSProperties = {
   minHeight: 0,
   overflow: "auto",
   padding: 12,
+};
+
+const teamSectionStyle: React.CSSProperties = {
+  display: "grid",
+  gap: 8,
+};
+
+const teamHeaderStyle: React.CSSProperties = {
+  position: "sticky",
+  top: -12,
+  zIndex: 1,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 10,
+  padding: "7px 8px",
+  border: "1px solid #263858",
+  borderRadius: 6,
+  background: "#0f1626",
+  color: "#bfdbfe",
+  fontSize: 11,
+  fontWeight: 900,
+};
+
+function deskSectionStyle(focused: boolean): React.CSSProperties {
+  return {
+    display: "grid",
+    gap: 8,
+    border: `1px solid ${focused ? "#60a5fa" : "#24304f"}`,
+    borderRadius: 8,
+    background: focused ? "#101d33" : "#0d1320",
+    padding: 10,
+    boxShadow: focused ? "0 0 0 1px rgba(96, 165, 250, 0.25)" : "none",
+  };
+}
+
+const deskHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
+  gap: 8,
+};
+
+const deskTitleStyle: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 900,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const deskMetaStyle: React.CSSProperties = {
+  marginTop: 3,
+  fontSize: 10,
+  color: "var(--text-dim)",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const focusPillStyle: React.CSSProperties = {
+  flexShrink: 0,
+  border: "1px solid rgba(96, 165, 250, 0.45)",
+  borderRadius: 999,
+  padding: "2px 6px",
+  color: "#93c5fd",
+  fontSize: 9,
+  fontWeight: 900,
+  textTransform: "uppercase",
 };
 
 const emptyStyle: React.CSSProperties = {
