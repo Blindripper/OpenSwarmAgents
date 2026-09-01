@@ -58,9 +58,12 @@ try {
   assert(balance.formatted === "0 OSA" && balance.source === "not_deployed", "wallet balance should honestly report undeployed $OSA state");
   let config = await getJson("/api/gui-config");
   const agentIds = config.agents.map((agent) => agent.id);
-  for (const id of ["coder", "bugfixer", "info-guy", "coinexpert", "graphicsexpert", "moneymaker", "security-expert", "explorer"]) {
+  for (const id of ["technocore-specialist", "coder", "bugfixer", "info-guy", "coinexpert", "graphicsexpert", "moneymaker", "security-expert", "explorer"]) {
     assert(agentIds.includes(id), `Agent Profiles should include ${id}`);
   }
+  assert(config.default_agent_id === "technocore-specialist", "Technocore Specialist should be the default AgentGUI profile");
+  const defaultPersona = await getJson("/api/agents/technocore-specialist/persona");
+  assert(defaultPersona.soul.includes("technocore.chat"), "default Technocore Specialist should include Technocore protocol context");
   assert(config.agents.find((agent) => agent.id === "coder")?.model === "OpenClaw local agent", "Coder should default to OpenClaw in AgentGUI");
   assert(config.agents.find((agent) => agent.id === "bugfixer")?.model === "OpenClaw local agent", "Bugfixer should default to OpenClaw in AgentGUI");
   assert(config.prototypes.length === 0, "legacy built-in Agent Profile prototypes should be removed");
@@ -227,6 +230,8 @@ try {
     team_name: "Launch"
   });
   assert(roomCreated.session?.team_id === "room-launch", "private room sessions should keep their team id");
+  assert(roomCreated.session?.agent === "technocore-specialist", "sessions without an explicit agent should use Technocore Specialist");
+  assert(roomCreated.session?.agent_model === "OpenClaw local agent", "Technocore Specialist should run through OpenClaw in AgentGUI");
   const coderFallback = await postJson("/api/sessions/new", {
     content: "Test the default Coder desk through OpenClaw.",
     team_id: "home-room",

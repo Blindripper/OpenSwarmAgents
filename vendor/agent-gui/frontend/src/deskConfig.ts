@@ -4,6 +4,7 @@ import type { AgentProfile, DeskItem, PendingAssignment, Session, ToolPresetId }
 
 export const DEFAULT_PROFILE_COLOR = "#6a7a9a";
 export const DEFAULT_PROFILE_LABEL = "Default";
+export const DEFAULT_TASK_AGENT_ID = "technocore-specialist";
 
 export interface DeskProfileVisual {
   isDefault: boolean;
@@ -105,11 +106,12 @@ export function defaultDeskBarConfig(
   global: GlobalOpenClawConfig,
   toolPresets: { chat: string[]; lean: string[]; full: string[] },
   toolDefault: string,
+  defaultAgentId = "",
 ): DeskBarConfig {
   const preset: ToolPresetId =
     toolDefault === "chat" || toolDefault === "full" ? toolDefault : "lean";
   return {
-    agentId: "",
+    agentId: defaultAgentId,
     model: global.model,
     toolPreset: preset,
     toolsEnabled: toolPresets[preset] ?? toolPresets.lean,
@@ -134,8 +136,9 @@ export function resolveDeskBarConfig(
   global: GlobalOpenClawConfig,
   toolPresets: { chat: string[]; lean: string[]; full: string[] },
   toolDefault: string,
+  defaultAgentId = "",
 ): DeskBarConfig {
-  return deskBarConfigs[deskId] ?? defaultDeskBarConfig(global, toolPresets, toolDefault);
+  return deskBarConfigs[deskId] ?? defaultDeskBarConfig(global, toolPresets, toolDefault, defaultAgentId);
 }
 
 export function buildDeskConfigView(
@@ -147,13 +150,14 @@ export function buildDeskConfigView(
   global: GlobalOpenClawConfig,
   toolPresets: { chat: string[]; lean: string[]; full: string[] },
   toolDefault: string,
+  defaultAgentId = "",
 ): DeskConfigView | null {
   const desk = findDeskItem(teams, deskId);
   if (!desk) return null;
 
   const bar = deskId
-    ? resolveDeskBarConfig(deskId, deskBarConfigs, global, toolPresets, toolDefault)
-    : defaultDeskBarConfig(global, toolPresets, toolDefault);
+    ? resolveDeskBarConfig(deskId, deskBarConfigs, global, toolPresets, toolDefault, defaultAgentId)
+    : defaultDeskBarConfig(global, toolPresets, toolDefault, defaultAgentId);
 
   if ("isPending" in desk) {
     const bench = pendingAssignments[desk.id];
@@ -230,8 +234,9 @@ export function pendingStartParams(
   toolPresets: { chat: string[]; lean: string[]; full: string[] },
   toolDefault: string,
   toolDefaultLeanSkip: boolean,
+  defaultAgentId = "",
 ): { agent?: string; model?: string; tools?: string[] } {
-  const bar = resolveDeskBarConfig(deskId, deskBarConfigs, global, toolPresets, toolDefault);
+  const bar = resolveDeskBarConfig(deskId, deskBarConfigs, global, toolPresets, toolDefault, defaultAgentId);
   const bench = pendingAssignments[deskId];
   const agentId = bench?.agentId ?? bar.agentId;
   // For a profile desk, send a model only when explicitly overridden — the

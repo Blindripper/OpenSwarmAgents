@@ -19,7 +19,7 @@ import { FilePreview, DEFAULT_CODE_THEME } from "./components/FilePreview";
 import type { CodeThemeId } from "./components/FilePreview";
 import { DEFAULT_BELL, playBell } from "./sounds";
 import { DEFAULT_SCENE } from "./components/SceneBackground";
-import { buildDeskConfigView, defaultDeskBarConfig, deskIsRunning, findDeskItem, pendingStartParams, resolveDeskBarConfig, type DeskBarConfig, type GlobalOpenClawConfig } from "./deskConfig";
+import { buildDeskConfigView, defaultDeskBarConfig, deskIsRunning, findDeskItem, pendingStartParams, resolveDeskBarConfig, DEFAULT_TASK_AGENT_ID, type DeskBarConfig, type GlobalOpenClawConfig } from "./deskConfig";
 import { DESK_PANEL_Z_BASE, nextPanelZ } from "./floatingPanelStack";
 import type { DeskItem, FilePreviewData, Session, Team, TeamColor, ToolsetMeta, AgentProfile, AgentPrototype, PendingAssignment, ToolPresetId, AgentCapabilities, TopAgent } from "./types";
 import type { OpenClawStatus } from "./api/client";
@@ -540,6 +540,7 @@ export default function App() {
   const avatars = useAvatarPrefs();
   const [agents, setAgents] = useState<AgentProfile[]>([]);
   const [prototypes, setPrototypes] = useState<AgentPrototype[]>([]);
+  const [defaultAgentId, setDefaultAgentId] = useState<string>(DEFAULT_TASK_AGENT_ID);
   const [agentModal, setAgentModal] = useState<
     { mode: "create" | "edit"; agent?: AgentProfile | null } | null
   >(null);
@@ -695,6 +696,7 @@ export default function App() {
       const r = await api.guiConfig();
       setAgents(r.agents ?? []);
       setPrototypes(r.prototypes ?? []);
+      setDefaultAgentId(r.default_agent_id ?? DEFAULT_TASK_AGENT_ID);
       setDeskDefaultModel(r.desk_default_model ?? "");
       setGlobalConfig({
         base_url: r.global?.base_url ?? r.manager?.base_url ?? "",
@@ -768,6 +770,7 @@ export default function App() {
     api.guiConfig().then((r) => {
       setAgents(r.agents ?? []);
       setPrototypes(r.prototypes ?? []);
+      setDefaultAgentId(r.default_agent_id ?? DEFAULT_TASK_AGENT_ID);
       setDeskDefaultModel(r.desk_default_model ?? "");
       setGlobalConfig({
         base_url: r.global?.base_url ?? r.manager?.base_url ?? "",
@@ -858,13 +861,13 @@ export default function App() {
       for (const desk of team.desks) {
         const view = buildDeskConfigView(
           desk.id, teams, agents, pendingAssignments, deskBarConfigs,
-          globalConfig, toolPresets, toolDefault,
+          globalConfig, toolPresets, toolDefault, defaultAgentId,
         );
         if (view) map[desk.id] = view;
       }
     }
     return map;
-  }, [teams, agents, pendingAssignments, deskBarConfigs, globalConfig, toolPresets, toolDefault]);
+  }, [teams, agents, pendingAssignments, deskBarConfigs, globalConfig, toolPresets, toolDefault, defaultAgentId]);
 
   const deskConfig = selectedDeskId ? (deskConfigsById[selectedDeskId] ?? null) : null;
   const deskConfigLocked = !selectedDeskId || deskIsRunning(findDeskItem(teams, selectedDeskId));
@@ -911,7 +914,7 @@ export default function App() {
 
   function upsertDeskBarConfig(deskId: string, patch: Partial<DeskBarConfig>) {
     setDeskBarConfigs((prev) => {
-      const cur = resolveDeskBarConfig(deskId, prev, globalConfig, toolPresets, toolDefault);
+      const cur = resolveDeskBarConfig(deskId, prev, globalConfig, toolPresets, toolDefault, defaultAgentId);
       return { ...prev, [deskId]: { ...cur, ...patch } };
     });
   }
@@ -938,7 +941,7 @@ export default function App() {
           delete next[deskId];
           return next;
         });
-        upsertDeskBarConfig(deskId, defaultDeskBarConfig(globalConfig, toolPresets, toolDefault));
+        upsertDeskBarConfig(deskId, defaultDeskBarConfig(globalConfig, toolPresets, toolDefault, defaultAgentId));
         return;
       }
       const defaults = await fetchProfileDefaults(
@@ -969,7 +972,7 @@ export default function App() {
     try {
       if (!agentId) {
         const updated = await api.sessions.patchDeskConfig(deskId, { agent: "" });
-        upsertDeskBarConfig(deskId, defaultDeskBarConfig(globalConfig, toolPresets, toolDefault));
+        upsertDeskBarConfig(deskId, defaultDeskBarConfig(globalConfig, toolPresets, toolDefault, defaultAgentId));
         setSessions((prev) => prev.map((s) => (s.id === deskId ? { ...s, ...updated } : s)));
         setTeams((prev) => prev.map((t) => ({
           ...t,
@@ -1115,7 +1118,7 @@ export default function App() {
   ) {
     const attachments = images?.map((img) => ({ name: img.name, data: img.url }));
     const start = pendingStartParams(
-      deskId, pendingAssignments, deskBarConfigs, globalConfig, toolPresets, toolDefault, true,
+      deskId, pendingAssignments, deskBarConfigs, globalConfig, toolPresets, toolDefault, true, defaultAgentId,
     );
 
     const teamId = teams.find((t) => t.desks.some((d) => d.id === deskId))?.id;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDeskConfigView, pendingStartParams, resolveDeskProfileVisual, DEFAULT_PROFILE_LABEL } from "./deskConfig";
+import { buildDeskConfigView, pendingStartParams, resolveDeskProfileVisual, DEFAULT_PROFILE_LABEL, DEFAULT_TASK_AGENT_ID } from "./deskConfig";
 import type { AgentProfile, Session, Team } from "./types";
 
 const global = { base_url: "http://127.0.0.1:11434/v1", model: "qwen3.5:9b" };
@@ -13,6 +13,12 @@ const cloudAgent: AgentProfile = {
   id: "cloud", name: "Google", tagline: "", color: "#a78bfa",
   available: true, model: "gemini-3.1-flash-lite",
   base_url: "https://generativelanguage.googleapis.com/v1beta", profile_path: "",
+};
+
+const technocoreAgent: AgentProfile = {
+  id: DEFAULT_TASK_AGENT_ID, name: "Technocore Specialist", tagline: "", color: "#06b6d4",
+  available: true, model: "OpenClaw local agent",
+  base_url: "", profile_path: "",
 };
 
 describe("pendingStartParams", () => {
@@ -133,6 +139,22 @@ describe("pendingStartParams", () => {
     );
     expect(out.tools).toEqual([]);
   });
+
+  it("starts unassigned pending desks with the configured default agent", () => {
+    const out = pendingStartParams(
+      "desk-1",
+      {},
+      {},
+      global,
+      presets,
+      "lean",
+      true,
+      DEFAULT_TASK_AGENT_ID,
+    );
+    expect(out.agent).toBe(DEFAULT_TASK_AGENT_ID);
+    expect(out.tools).toEqual(presets.lean);
+    expect(out.model).toBeUndefined();
+  });
 });
 
 describe("buildDeskConfigView model precedence", () => {
@@ -172,6 +194,16 @@ describe("buildDeskConfigView model precedence", () => {
       {}, global, presets, "lean",
     );
     expect(view?.model).toBe("gemini-3.1-pro");
+  });
+
+  it("uses the configured default agent for pending desks without overrides", () => {
+    const teams = tools("t1", [{ id: "d4", isPending: true }]);
+    const view = buildDeskConfigView(
+      "d4", teams, [technocoreAgent], {}, {}, global, presets, "lean", DEFAULT_TASK_AGENT_ID,
+    );
+    expect(view?.agentId).toBe(DEFAULT_TASK_AGENT_ID);
+    expect(view?.agentProfile?.name).toBe("Technocore Specialist");
+    expect(view?.isGlobal).toBe(false);
   });
 });
 

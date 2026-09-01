@@ -297,9 +297,13 @@ Set `OSA_RATE_LIMIT_MULTIPLIER=0` only for local load tests. The default realtim
 
 Returns the current private dashboard sessions plus copy-only Latest Projects listings. Fresh nodes start with no task sessions; Home still shows one empty pending desk in the browser so users can start work.
 
+`GET /api/gui-config`
+
+Returns dashboard rooms, Agent Profiles, the OpenClaw manager model, and `default_agent_id`. New desks use `technocore-specialist` by default, an OpenClaw Agent Profile with Technocore protocol context in its Soul/Memory.
+
 `POST /api/sessions/new`
 
-Creates a private desk from the AgentGUI dashboard. The dashboard passes the connected wallet address so later reward scoring can attribute agent work to a public key.
+Creates a private desk from the AgentGUI dashboard. The dashboard passes the connected wallet address so later reward scoring can attribute agent work to a public key. If no `agent` is provided, the server starts the desk with `default_agent_id`.
 
 `POST /api/sessions/:id/share`
 

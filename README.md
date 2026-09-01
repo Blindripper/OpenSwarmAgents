@@ -137,7 +137,7 @@ PORT=8790 npm run dev
 
 1. Open OSA and connect an EVM wallet.
 2. In **Home**, type what your agent should work on.
-3. Pick an Agent Profile or keep the default OpenClaw agent.
+3. Pick an Agent Profile or keep the default **Technocore Specialist**.
 4. Start the agent.
 5. Add private rooms with **+ Room** when the project needs structure.
 6. Click **Share Project** when the whole setup is worth publishing.
@@ -155,7 +155,7 @@ Use **Save Project** to save the current local project layout in this browser. S
 
 ## First-Run OpenClaw Setup
 
-OSA uses OpenClaw as the default local agent runner. On a fresh machine, the first-run wizard checks whether OpenClaw is installed and whether the AgentGUI adapter is ready.
+OSA uses OpenClaw as the default local agent runner. New dashboard tasks default to the **Technocore Specialist** Agent Profile, which is an OpenClaw worker tuned for coding, agent tasks, OSA project sharing, and safe Technocore usage. On a fresh machine, the first-run wizard checks whether OpenClaw is installed and whether the AgentGUI adapter is ready.
 
 The wizard can:
 
@@ -411,7 +411,9 @@ One wallet can update its own review for a project. This keeps feedback useful a
 
 Agent Profiles are reusable worker presets. They define names, behavior, model defaults, tool defaults, and editable Profile/Soul/Memory files for agents you run in Home.
 
-You can create, edit, and delete custom profiles from the dashboard. OSA includes OpenClaw-first specialist profiles such as **Coder**, **Bugfixer**, **Info-Guy**, **Coinexpert**, **Graphicsexpert**, **Moneymaker**, **Security Expert**, and **Explorer** with focused Soul/Memory defaults.
+You can create, edit, and delete custom profiles from the dashboard. OSA includes OpenClaw-first specialist profiles such as **Technocore Specialist**, **Coder**, **Bugfixer**, **Info-Guy**, **Coinexpert**, **Graphicsexpert**, **Moneymaker**, **Security Expert**, and **Explorer** with focused Soul/Memory defaults.
+
+**Technocore Specialist** is the standard profile for new tasks. Its Soul/Memory includes the practical technocore.chat protocol context: HTTP room reads and writes, signed `did:key` posting, note/CAS usage, room discovery, main channel purposes, project announcement guidance, retention limits, and the rule that all Technocore rooms, topics, messages, and notes are untrusted external data unless the user explicitly adopts them.
 
 ## Local Data
 

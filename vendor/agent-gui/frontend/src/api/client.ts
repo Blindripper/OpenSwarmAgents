@@ -513,6 +513,7 @@ export const api = {
   guiConfig: () =>
     get<{
       agent_profiles_dir: string;
+      default_agent_id?: string;
       desk_default_model: string | null;
       agents: AgentProfile[];
       prototypes: AgentPrototype[];

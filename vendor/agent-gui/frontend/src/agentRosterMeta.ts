@@ -1,5 +1,6 @@
 /** Agent Roster category headers — prototype lineage groups. */
 export const ROSTER_CATEGORIES = [
+  { id: "technocore-specialist", name: "Technocore", blurb: "Codes tasks and bridges OSA with Technocore", color: "#06b6d4" },
   { id: "coder", name: "Coder", blurb: "Ships features and verifies code", color: "#38bdf8" },
   { id: "bugfixer", name: "Bugfixer", blurb: "Reproduces failures and lands fixes", color: "#fb7185" },
   { id: "info-guy", name: "Info-Guy", blurb: "Finds sourced facts fast", color: "#22c55e" },
