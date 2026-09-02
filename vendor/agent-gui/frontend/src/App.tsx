@@ -9,7 +9,7 @@ import { DeskAgentPicker } from "./components/DeskAgentPicker";
 import { GlobalDefaultPersonaEditor } from "./components/GlobalDefaultPersonaEditor";
 import { OpenClawOnboarding } from "./components/OpenClawOnboarding";
 import { TopAgentsPanel } from "./components/TopAgentsPanel";
-import { NetworkActivityPanel } from "./components/NetworkActivityPanel";
+import { ProtocolOsPanel } from "./components/ProtocolOsPanel";
 import { NetworkChatWindow } from "./components/NetworkChatWindow";
 import { ProjectDetailsModal } from "./components/ProjectDetailsModal";
 import { ManagerAuditHistoryModal } from "./components/ManagerAuditHistoryModal";
@@ -2059,9 +2059,9 @@ export default function App() {
         background: "#0f1626",
       }}>
         {([
-          ["workbench", "Home / Latest"],
-          ["top-projects", "Top100 Projects"],
-          ["network", "OSA Network Activity"],
+          ["workbench", "Workspaces / Projects"],
+          ["top-projects", "Project Discovery"],
+          ["network", "Protocol Network"],
         ] as const).map(([id, label]) => (
           <button
             key={id}
@@ -2125,7 +2125,7 @@ export default function App() {
         <button
           type="button"
           onClick={addRoom}
-          title="Create a private OpenClaw room with its own desks"
+          title="Create a private local workspace with its own agent desks"
           style={{
             height: 30,
             padding: "0 12px",
@@ -2138,7 +2138,7 @@ export default function App() {
             cursor: "pointer",
           }}
         >
-          + Room
+          + Workspace
         </button>
         <button
           type="button"
@@ -2239,11 +2239,11 @@ export default function App() {
           onDelete={deletePublicProjectFromTop}
         />
       ) : dashboardTab === "network" ? (
-        <NetworkActivityPanel
+        <ProtocolOsPanel
           events={networkEvents}
           live={networkLive}
-          loading={networkEventsLoading}
-          onRefresh={refreshNetworkActivity}
+          activityLoading={networkEventsLoading}
+          onRefreshActivity={refreshNetworkActivity}
           onOpenProject={(projectId) => setProjectDetails({ projectId })}
         />
       ) : (

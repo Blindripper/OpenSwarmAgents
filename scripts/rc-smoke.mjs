@@ -7,6 +7,7 @@ import { createHash, createPublicKey, verify as verifySignature } from "node:cry
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
+import { encodeFrame as encodeTclkFrame, makeOffer as makeTclkOffer } from "@flop-labs/tclk";
 
 const rootDir = join(import.meta.dirname, "..");
 const port = Number(process.env.OSA_RC_SMOKE_PORT || 19080 + Math.floor(Math.random() * 800));
@@ -85,6 +86,31 @@ try {
   assert(channels.channels.some((item) => item.id === "osa-network" && item.topic === "Fixture OSA room topic" && item.count === 2), "Channel list should preserve Technocore room topics and indexed window counts");
   assert(channels.channels.some((item) => item.id === "osa-lab"), "Channel list should include available Technocore channels");
   assert(channels.channels.some((item) => item.id === "builders" && item.category === "main"), "Channel list should include known main Technocore channels");
+  const tclkNow = Date.now();
+  const tclkOffer = makeTclkOffer({
+    from: health.runtime.technocoreDid,
+    role: "payer",
+    amount: "100",
+    asset: "PAPER",
+    lock: "hash",
+    rails: ["paper"],
+    expiresMs: tclkNow + 5 * 60_000,
+    claimByMs: tclkNow + 30 * 60_000,
+    refundAfterMs: tclkNow + 60 * 60_000
+  });
+  await postJson("/api/network/chat", {
+    channel: "tclk-offers",
+    message: encodeTclkFrame(tclkOffer)
+  });
+  await postJson("/api/network/chat", {
+    channel: "tclk-offers",
+    message: encodeTclkFrame(tclkOffer)
+  });
+  const protocolOverview = await getJson("/api/protocol/overview");
+  assert(protocolOverview.mode === "observer" && protocolOverview.writes_enabled === false, "Protocol OS should start in read-only observer mode");
+  assert(protocolOverview.tclk?.value_settlement_enabled === false && protocolOverview.tclk?.offer_room === "tclk-offers", "TCLK observer must not imply value settlement");
+  assert(protocolOverview.tclk?.offers?.some((offer) => offer.id === tclkOffer.id && offer.verified === true && offer.asset === "PAPER"), "Protocol OS should project verified official tclk/1 offers");
+  assert(protocolOverview.tclk?.offers?.filter((offer) => offer.id === tclkOffer.id).length === 1, "Protocol OS should collapse replayed offer frames by canonical offer id");
   const bridgedActivity = await getJson("/api/network/activity?limit=10");
   const bridgedEvent = bridgedActivity.events.find((item) => item.type === "technocore_chat_message");
   assert(!bridgedEvent, "OSA Network Activity should not include raw Technocore room messages");
@@ -516,12 +542,13 @@ function startTechnocoreFixture() {
         rooms: [
           { room: "osa-network", window: 2, last_seq: 42, idle_seconds: 4, topic: "Fixture OSA room topic" },
           { room: "osa-lab", count: 1, last_seq: 41, idle_seconds: 8 },
+          { room: "tclk-offers", count: 0, last_seq: 0, idle_seconds: 0 },
           { room: "credence", count: 3, last_seq: 45, idle_seconds: 12 }
         ]
       }));
       return;
     }
-    if ((url.pathname === "/r/osa-lab" || url.pathname === "/r/osa-network") && req.method === "GET") {
+    if (["/r/osa-lab", "/r/osa-network", "/r/tclk-offers"].includes(url.pathname) && req.method === "GET") {
       const room = url.pathname.split("/").at(-1);
       technocoreReads.push({
         room,
@@ -557,7 +584,7 @@ function startTechnocoreFixture() {
       }));
       return;
     }
-    if ((url.pathname === "/r/osa-lab" || url.pathname === "/r/osa-network") && req.method === "POST") {
+    if (["/r/osa-lab", "/r/osa-network", "/r/tclk-offers"].includes(url.pathname) && req.method === "POST") {
       const room = url.pathname.split("/").at(-1);
       let body = "";
       req.setEncoding("utf8");

@@ -190,6 +190,55 @@ export interface NetworkChannel {
   url?: string | null;
 }
 
+export interface ProtocolLayerStatus {
+  id: "technocore" | "did" | "work" | "tclk" | "rail" | string;
+  label: string;
+  role: string;
+  status: "connected" | "ready" | "observer" | "paper-only" | "planned" | "disabled" | "unavailable" | string;
+}
+
+export interface TclkOfferProjection {
+  id: string;
+  status: "proposed" | "accepted" | "locked" | "claimed" | "refunded" | "cancelled" | string;
+  expired: boolean;
+  from: string;
+  role: "payer" | "payee";
+  amount: string;
+  asset: string;
+  lock: "hash" | "point";
+  rails: string[];
+  job?: { proto: string; id: string; context?: string } | null;
+  expires_at: string;
+  claim_by: string;
+  refund_after: string;
+  observed_at: string;
+  sequence?: number | null;
+  verified: boolean;
+  contract_id?: string | null;
+  deal_room?: string | null;
+  accepted_at?: string | null;
+}
+
+export interface ProtocolOverview {
+  mode: "observer" | string;
+  writes_enabled: boolean;
+  generated_at: string;
+  identity: { node_did?: string | null; signed_messages: boolean };
+  transport: { enabled: boolean; url?: string | null; public_room?: string | null };
+  layers: ProtocolLayerStatus[];
+  tclk: {
+    version: string;
+    offer_room: string;
+    mode: string;
+    value_settlement_enabled: boolean;
+    warning: string;
+    observed_message_count: number;
+    valid_frame_count: number;
+    invalid_frame_count: number;
+    offers: TclkOfferProjection[];
+  };
+}
+
 export interface ToolsetMeta {
   name: string;
   label: string;

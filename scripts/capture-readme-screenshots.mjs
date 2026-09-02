@@ -131,7 +131,7 @@ try {
   await page.screenshot({ path: join(assetsDir, "osa-technocore-chat.png") });
   await page.addStyleTag({ content: '[data-testid="network-chat-window"] { display: none !important; }' });
 
-  await page.getByRole("button", { name: "Top100 Projects" }).click();
+  await page.getByRole("button", { name: "Project Discovery" }).click();
   await page.getByText("Example: FLOP Project Pledges", { exact: false }).first().waitFor();
   await page.screenshot({ path: join(assetsDir, "osa-top100-projects.png") });
 

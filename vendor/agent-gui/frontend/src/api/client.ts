@@ -1,4 +1,4 @@
-import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, PublicProjectDetail, PublicProjectReview, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
+import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolOverview, PublicProjectDetail, PublicProjectReview, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
 
 const BASE = "/api";
 const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
@@ -375,6 +375,9 @@ export const api = {
       ),
     sendChat: (body: { message: string; wallet_address?: string | null; channel?: string }) =>
       post<{ ok: boolean; technocore_mirrored?: boolean; message: NetworkChatMessage }>("/network/chat", body),
+  },
+  protocol: {
+    overview: (signal?: AbortSignal) => get<ProtocolOverview>("/protocol/overview", signal),
   },
   wallet: {
     challenge: (body: { address: string; chain_id?: string | null }) =>

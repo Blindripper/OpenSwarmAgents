@@ -21,6 +21,7 @@
     "export:sql": "node scripts/export-json-to-sql.mjs"
   },
   "dependencies": {
+    "@flop-labs/tclk": "0.1.0",
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.4.0",
     "pg": "^8.13.1"
