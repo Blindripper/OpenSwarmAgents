@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NetworkChatMessage } from "../types";
-import { flushQueuedMessages, stageIncomingMessages } from "./NetworkChatWindow";
+import { flushQueuedMessages, requestWithTimeout, stageIncomingMessages } from "./NetworkChatWindow";
 
 function message(index: number): NetworkChatMessage {
   return {
@@ -36,6 +36,19 @@ describe("Technocore slow mode", () => {
     expect(staged.queued.map((item) => item.seq)).toEqual([5, 6, 7, 8]);
   });
 
+  it("bounds a continuously growing high-traffic queue to the newest messages", () => {
+    const incoming = Array.from({ length: 80 }, (_, index) => message(index + 2));
+    const staged = stageIncomingMessages([message(1)], [], incoming, true, true);
+    expect(staged.visible.map((item) => item.seq)).toEqual([1, 2, 3, 4]);
+    expect(staged.queued).toHaveLength(30);
+    expect(staged.queued[0]?.seq).toBe(52);
+    expect(staged.queued[staged.queued.length - 1]?.seq).toBe(81);
+
+    const next = stageIncomingMessages(staged.visible, staged.queued, [message(82), message(83)], true, true);
+    expect(next.queued).toHaveLength(30);
+    expect(next.queued[next.queued.length - 1]?.seq).toBe(83);
+  });
+
   it("keeps stable references when a poll contains no new messages", () => {
     const current = [message(1), message(2)];
     const queued = [message(3)];
@@ -54,5 +67,18 @@ describe("Technocore slow mode", () => {
     const flushed = flushQueuedMessages([message(1)], [message(2), message(3), message(4), message(5)]);
     expect(flushed.visible.map((item) => item.seq)).toEqual([1, 2, 3, 4]);
     expect(flushed.queued.map((item) => item.seq)).toEqual([5]);
+  });
+
+  it("aborts and releases a chat request that never settles", async () => {
+    const controller = new AbortController();
+    let aborted = false;
+    const pending = requestWithTimeout("Chat refresh", 10, controller, (signal) => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => {
+        aborted = true;
+        reject(new Error("aborted"));
+      }, { once: true });
+    }));
+    await expect(pending).rejects.toThrow();
+    expect(aborted).toBe(true);
   });
 });

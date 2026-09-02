@@ -112,7 +112,7 @@ try {
     localStorage.setItem("osa-openclaw-onboarding-dismissed", "1");
   }, walletAddress);
 
-  await page.goto(`${baseUrl}/osa-network/`, { waitUntil: "networkidle" });
+  await page.goto(`${baseUrl}/osa-network/`, { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "Connect Wallet" }).click();
   await page.getByText("Home", { exact: true }).first().waitFor();
   const hideChatStyle = await page.addStyleTag({

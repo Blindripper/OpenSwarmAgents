@@ -6056,7 +6056,10 @@ async function technocorePublicChatMessages(limit = 60, channel = technocorePubl
       format: "json",
       limit: Math.min(limit, technocoreRoomLimit)
     };
-    if (cursor > 0) query.since = cursor;
+    if (cursor > 0) {
+      query.since = cursor;
+      query.wait = 1;
+    }
     const view = await fetchTechnocoreJson(`/r/${room}`, query);
     technocoreRoomReadBackoff.delete(room);
     const messages = Array.isArray(view?.messages) ? view.messages : [];

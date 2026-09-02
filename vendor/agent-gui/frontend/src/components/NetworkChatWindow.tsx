@@ -15,11 +15,14 @@ const minimizedChatSize = { width: 240, height: 38 };
 const minChatSize = { width: 340, height: 360 };
 const preferredChatSize = { width: 600, height: 680 };
 const chatMessageLimit = 25;
-const chatRefreshMs = 1000;
-const channelRefreshMs = 10000;
+const chatRefreshMs = 250;
+const channelRefreshMs = 15000;
+const chatRequestTimeoutMs = 6500;
+const channelRequestTimeoutMs = 8000;
 const slowBurstThreshold = 6;
 const slowBatchSize = 3;
-const slowFlushMs = 1200;
+const slowFlushMs = 500;
+const maxSlowQueue = 30;
 
 interface ChatSize {
   width: number;
@@ -114,6 +117,30 @@ function mergeMessages(previous: NetworkChatMessage[], incoming: NetworkChatMess
   return mergeAllMessages(previous, incoming).slice(-100);
 }
 
+function boundedSlowQueue(messages: NetworkChatMessage[]): NetworkChatMessage[] {
+  return mergeAllMessages([], messages).slice(-maxSlowQueue);
+}
+
+export async function requestWithTimeout<T>(
+  label: string,
+  timeoutMs: number,
+  controller: AbortController,
+  request: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  let timeout = 0;
+  const timeoutPromise = new Promise<T>((_resolve, reject) => {
+    timeout = window.setTimeout(() => {
+      controller.abort();
+      reject(new Error(`${label} timed out.`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([request(controller.signal), timeoutPromise]);
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 export function stageIncomingMessages(
   current: NetworkChatMessage[],
   queued: NetworkChatMessage[],
@@ -130,14 +157,14 @@ export function stageIncomingMessages(
     return { visible: mergeMessages(current, [...queued, ...incoming]), queued: [] };
   }
   if (queued.length) {
-    return { visible: current, queued: freshMessages.length ? mergeAllMessages(queued, freshMessages) : queued };
+    return { visible: current, queued: freshMessages.length ? boundedSlowQueue([...queued, ...freshMessages]) : queued };
   }
   if (freshMessages.length <= slowBurstThreshold) {
     return { visible: mergeMessages(current, freshMessages), queued };
   }
   return {
     visible: mergeMessages(current, freshMessages.slice(0, slowBatchSize)),
-    queued: mergeAllMessages([], freshMessages.slice(slowBatchSize)),
+    queued: boundedSlowQueue(freshMessages.slice(slowBatchSize)),
   };
 }
 
@@ -159,6 +186,9 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
   const lastFetchedSeqByChannelRef = useRef<Record<string, number>>({});
   const initializedChannelsRef = useRef(new Set<string>());
   const refreshingChannelsRef = useRef(new Set<string>());
+  const chatAbortControllersRef = useRef(new Map<string, AbortController>());
+  const refreshingChannelListRef = useRef(false);
+  const channelAbortControllerRef = useRef<AbortController | null>(null);
   const refreshFailuresByChannelRef = useRef<Record<string, number>>({});
   const refreshBackoffUntilByChannelRef = useRef<Record<string, number>>({});
   const [channels, setChannels] = useState<NetworkChannel[]>([defaultChannelRecord(defaultChannel)]);
@@ -234,6 +264,8 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
     if (Date.now() < (refreshBackoffUntilByChannelRef.current[channel] || 0)) return;
     if (refreshingChannelsRef.current.has(channel)) return;
     refreshingChannelsRef.current.add(channel);
+    const controller = new AbortController();
+    chatAbortControllersRef.current.set(channel, controller);
     const cachedMessages = messagesByChannelRef.current[channel] || [];
     const initialized = initializedChannelsRef.current.has(channel);
     const lastVisibleTechnocoreSeq = Math.max(
@@ -245,7 +277,12 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
     const lastTechnocoreSeq = Math.max(lastVisibleTechnocoreSeq, lastFetchedSeqByChannelRef.current[channel] || 0);
     if (!initialized) setLoadingMessages(true);
     try {
-      const result = await api.network.chat(chatMessageLimit, channel, lastTechnocoreSeq || undefined);
+      const result = await requestWithTimeout(
+        `Chat refresh for ${channel}`,
+        chatRequestTimeoutMs,
+        controller,
+        (signal) => api.network.chat(chatMessageLimit, channel, lastTechnocoreSeq || undefined, signal),
+      );
       initializedChannelsRef.current.add(channel);
       const fetchedSeq = Math.max(
         lastTechnocoreSeq,
@@ -270,13 +307,25 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
       setError((err as Error).message || "Chat refresh failed.");
     } finally {
       setLoadingMessages(false);
-      refreshingChannelsRef.current.delete(channel);
+      if (chatAbortControllersRef.current.get(channel) === controller) {
+        chatAbortControllersRef.current.delete(channel);
+        refreshingChannelsRef.current.delete(channel);
+      }
     }
   }
 
   async function refreshChannels() {
+    if (refreshingChannelListRef.current) return;
+    refreshingChannelListRef.current = true;
+    const controller = new AbortController();
+    channelAbortControllerRef.current = controller;
     try {
-      const result = await api.network.channels(60);
+      const result = await requestWithTimeout(
+        "Channel refresh",
+        channelRequestTimeoutMs,
+        controller,
+        (signal) => api.network.channels(60, signal),
+      );
       const nextChannels = result.channels.length ? result.channels : [defaultChannelRecord(defaultChannel)];
       setChannels(nextChannels);
       setPinnedChannels((previous) => uniqueChannels([
@@ -286,6 +335,11 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
       ]));
     } catch {
       setChannels((previous) => previous.length ? previous : [defaultChannelRecord(defaultChannel)]);
+    } finally {
+      if (channelAbortControllerRef.current === controller) {
+        channelAbortControllerRef.current = null;
+        refreshingChannelListRef.current = false;
+      }
     }
   }
 
@@ -304,15 +358,32 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
   }, [slowMode]);
 
   useEffect(() => {
-    void refreshChannels();
-    const timer = window.setInterval(() => void refreshChannels(), channelRefreshMs);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer = 0;
+    const tick = async () => {
+      await refreshChannels();
+      if (!cancelled) timer = window.setTimeout(() => void tick(), channelRefreshMs);
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      channelAbortControllerRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
-    void refreshMessages(activeChannel);
-    const timer = window.setInterval(() => void refreshMessages(activeChannel), chatRefreshMs);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer = 0;
+    const tick = async () => {
+      await refreshMessages(activeChannel);
+      if (!cancelled) timer = window.setTimeout(() => void tick(), chatRefreshMs);
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [activeChannel, slowMode]);
 
   useEffect(() => {
@@ -328,8 +399,14 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
   }, [activeChannel, slowMode]);
 
   useEffect(() => {
-    void refreshMessages(activeChannel);
-  }, [refreshKey, activeChannel]);
+    if (refreshKey > 0) void refreshMessages(activeChannel);
+  }, [refreshKey]);
+
+  useEffect(() => () => {
+    for (const controller of chatAbortControllersRef.current.values()) controller.abort();
+    chatAbortControllersRef.current.clear();
+    refreshingChannelsRef.current.clear();
+  }, []);
 
   useEffect(() => {
     if (pinnedChannels.includes(activeChannel)) return;
@@ -640,7 +717,7 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
                 }}
               />
               <label
-                title="Slow mode releases large message bursts in small chronological batches."
+                title="Slow mode releases bursts in small batches and keeps only the newest buffered messages when traffic is faster than the display."
                 style={{ height: 28, flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "0 8px", border: slowMode ? "1px solid #2a8c72" : "1px solid #2a3558", borderRadius: 6, background: slowMode ? "#10251f" : "#121828", color: slowMode ? "#7ee0c2" : "var(--text-dim)", fontSize: 10, fontWeight: 900, cursor: "pointer" }}
               >
                 <input

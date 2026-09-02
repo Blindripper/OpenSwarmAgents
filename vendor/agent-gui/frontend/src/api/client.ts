@@ -85,8 +85,8 @@ async function errorDetail(r: Response): Promise<string> {
   return `${r.status} ${r.statusText}`;
 }
 
-async function get<T>(path: string): Promise<T> {
-  const r = await fetch(BASE + path);
+async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const r = await fetch(BASE + path, signal ? { signal } : undefined);
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   return r.json();
 }
@@ -366,11 +366,12 @@ export const api = {
   network: {
     activity: (limit = 100) =>
       get<{ events: NetworkEvent[] }>(`/network/activity?limit=${limit}`),
-    channels: (limit = 60) =>
-      get<{ channels: NetworkChannel[]; generated_at: string }>(`/network/channels?limit=${limit}`),
-    chat: (limit = 60, channel?: string, since?: number) =>
+    channels: (limit = 60, signal?: AbortSignal) =>
+      get<{ channels: NetworkChannel[]; generated_at: string }>(`/network/channels?limit=${limit}`, signal),
+    chat: (limit = 60, channel?: string, since?: number, signal?: AbortSignal) =>
       get<{ messages: NetworkChatMessage[] }>(
         `/network/chat?limit=${limit}${channel ? `&channel=${encodeURIComponent(channel)}` : ""}${since ? `&since=${encodeURIComponent(String(since))}` : ""}`,
+        signal,
       ),
     sendChat: (body: { message: string; wallet_address?: string | null; channel?: string }) =>
       post<{ ok: boolean; technocore_mirrored?: boolean; message: NetworkChatMessage }>("/network/chat", body),

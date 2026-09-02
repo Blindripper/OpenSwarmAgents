@@ -112,6 +112,15 @@ try {
   page.on("console", (message) => {
     if (message.type() === "error") pageErrors.push(message.text());
   });
+  let chatGetRequestCount = 0;
+  await page.route("**/api/network/chat?**", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    chatGetRequestCount += 1;
+    if (chatGetRequestCount === 3) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{" });
+    }
+    return route.continue();
+  });
   await page.route("**/api/health", async (route) => {
     const response = await route.fetch();
     const payload = await response.json();
@@ -147,7 +156,7 @@ try {
     }
   }, testWalletAddress);
 
-  await page.goto(`${baseUrl}/osa-network/`, { waitUntil: "networkidle" });
+  await page.goto(`${baseUrl}/osa-network/`, { waitUntil: "domcontentloaded" });
   await expectText(page, "body", "Connect Wallet");
   await expectText(page, "body", "Wallet identity required");
   await expectText(page, "body", "$FLOP is not live yet");
@@ -177,6 +186,8 @@ try {
   );
   const chatMessages = page.getByTestId("network-chat-messages");
   await expectText(page, '[data-testid="network-chat-messages"]', "Search marker 12");
+  for (let attempt = 0; attempt < 24 && chatGetRequestCount < 4; attempt += 1) await delay(250);
+  assert(chatGetRequestCount >= 4, "network chat polling should recover after a transient third refresh failure");
   assert(await page.getByRole("checkbox", { name: "Slow mode" }).isChecked(), "network chat slow mode should be enabled by default");
   assert(
     await chatMessages.evaluate((element) => getComputedStyle(element).overflowY === "scroll" && element.scrollHeight > element.clientHeight),
@@ -295,7 +306,7 @@ try {
     roomId: roomCreated.session_id,
     coderId: coderFallback.session_id
   });
-  await page.reload({ waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "Enter Home" }).click().catch(() => {});
   await expectText(page, "body", "Home");
   await expectText(page, "body", "Launch");
@@ -379,7 +390,7 @@ try {
   assert(donatedSharedProject?.review_count === 1, "Top100 Projects should expose review counts");
   assert(donatedSharedProject?.rating_avg === 5, "Top100 Projects should expose average ratings");
 
-  await page.reload({ waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "Enter Home" }).click().catch(() => {});
   await expectText(page, "body", "Network Live");
   await expectText(page, "body", "Latest Projects");
