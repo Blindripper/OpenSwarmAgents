@@ -8237,6 +8237,73 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     const policy = signingPolicyForAgent(agentId, action);
     return sendJson(res, 200, { agent_id: agentId || "default", action, policy, generated_at: now() });
   }
+
+  if (method === "GET" && path === "/api/work-bindings") {
+    const jobs = normalizeJobClaims(store.jobClaims || []);
+    const results = normalizeJobResults(store.jobResults || []);
+    const deals = normalizeProtocolPaperDeals(store.protocolPaperDeals || []);
+    const bindings = jobs.map((job) => {
+      const result = results.find((r) => r.job_id === job.job_id);
+      const deal = deals.find((d) => d.offer?.id?.includes(job.job_id.slice(0, 20)));
+      return {
+        job_id: job.job_id,
+        claim_id: job.id,
+        status: job.status,
+        room: job.room,
+        has_result: Boolean(result),
+        result_verified: result?.verified || false,
+        result_summary: result?.summary || null,
+        deal_id: deal?.id || null,
+        deal_status: deal?.status || null,
+        linked: Boolean(deal) && Boolean(result),
+        updated_at: job.updated_at
+      };
+    });
+    return sendJson(res, 200, { bindings, generated_at: now() });
+  }
+
+  if (method === "POST" && path === "/api/work-bindings/link") {
+    const body = await readJson(req);
+    const jobId = String(body.job_id || "").slice(0, 140);
+    const resultId = String(body.result_id || "").slice(0, 100);
+    const dealId = String(body.deal_id || "").slice(0, 100);
+    event("work_deal_bound", "Explicitly bound job result to a paper deal", { jobId, resultId, dealId });
+    await saveStore();
+    return sendJson(res, 200, { ok: true, job_id: jobId, deal_id: dealId, bound_at: now() });
+  }
+  if (method === "GET" && path === "/api/trust") {
+    const jobs = normalizeJobClaims(store.jobClaims || []);
+    const results = normalizeJobResults(store.jobResults || []);
+    const deals = normalizeProtocolPaperDeals(store.protocolPaperDeals || []);
+    const uniqueCounterparties = new Set();
+    for (const d of deals) {
+      if (d.counterpartyDid) uniqueCounterparties.add(d.counterpartyDid);
+    }
+    const completedResults = results.filter((r) => r.verified);
+    const completedDeals = deals.filter((d) => d.status === "claimed" || d.status === "refunded");
+    const refundedDeals = deals.filter((d) => d.status === "refunded");
+    return sendJson(res, 200, {
+      summary: {
+        total_jobs: jobs.length,
+        total_results: results.length,
+        verified_results: completedResults.length,
+        unique_counterparties: uniqueCounterparties.size,
+        total_deals: deals.length,
+        completed_deals: completedDeals.length,
+        refunded_deals: refundedDeals.length,
+        completion_rate: deals.length > 0 ? ((completedDeals.length / deals.length) * 100).toFixed(1) + "%" : "0%"
+      },
+      top_builders: (function() {
+        const agentCounts = {};
+        for (const r of results) {
+          agentCounts[r.agent_id] = (agentCounts[r.agent_id] || 0) + 1;
+        }
+        return Object.entries(agentCounts).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([agent_id, count]) => ({ agent_id, verified_results: count }));
+      })(),
+      generated_at: now()
+    });
+  }
+
   // Phase 5: Kibble / A2A job bridge
   if (method === "GET" && path === "/api/jobs") {
     const limit = Number(url.searchParams.get("limit") || 50);

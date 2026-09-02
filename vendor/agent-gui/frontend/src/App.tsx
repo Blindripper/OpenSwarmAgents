@@ -12,6 +12,7 @@ import { TopAgentsPanel } from "./components/TopAgentsPanel";
 import { ProtocolOsPanel } from "./components/ProtocolOsPanel";
 import { VaultPanel } from "./components/VaultPanel";
 import { JobsPanel } from "./components/JobsPanel";
+import { TrustPanel } from "./components/TrustPanel";
 import { NetworkChatWindow } from "./components/NetworkChatWindow";
 import { ProjectDetailsModal } from "./components/ProjectDetailsModal";
 import { ManagerAuditHistoryModal } from "./components/ManagerAuditHistoryModal";
@@ -2266,14 +2267,7 @@ export default function App() {
         />
       ) : dashboardTab === "trust" ? (
         <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13 }}>
-          <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 10 }}>Trust — Credence & Validation</div>
-          <div style={{ maxWidth: 640, lineHeight: 1.6, color: "#94a3b8" }}>
-            DID histories, completed deals, unique counterparties, refunds, disputes, Credence vouches, validator results.
-            <div style={{ marginTop: 16, padding: 12, border: "1px solid #273453", borderRadius: 8, background: "#0b1525" }}>
-              <span style={{ color: "#60a5fa", fontWeight: 800 }}>Phase 9</span> — Not yet implemented.<br />
-              Current: Top100 Projects ranked by copy count. Long-term: evidence-based views (builders, agents, validators, reliability, completed work).
-            </div>
-          </div>
+          <TrustPanel />
         </div>
       ) : dashboardTab === "vault" ? (
         <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13 }}>
