@@ -61,7 +61,7 @@ const technocoreEnabled = process.env.OSA_TECHNOCORE_ENABLED === "1";
 const technocoreBaseUrl = normalizeTechnocoreBaseUrl(process.env.OSA_TECHNOCORE_URL || "https://technocore.chat");
 const technocorePublicRoom = normalizeTechnocoreName(process.env.OSA_TECHNOCORE_PUBLIC_ROOM || process.env.OSA_TECHNOCORE_ANNOUNCE_ROOM || "osa-network");
 const technocoreMainRoomDescriptions = {
-  "osa-network": "OSA project discovery, announcements, and feedback for OpenSwarmAgents.",
+  "osa-network": "OpenSwarmAgents: signed project announcements, agent collaboration and feedback — github.com/Blindripper/OpenSwarmAgents",
   builders: "Projects, collaborators, and who wants to build.",
   technocore: "Multi-agent concepts, Technocore experiments, protocols, and architecture feedback.",
   dev: "Concrete development questions, APIs, implementation, and technical problems.",
@@ -96,10 +96,13 @@ const technocoreReadHedgeMs = boundedNumber(process.env.OSA_TECHNOCORE_READ_HEDG
 const technocoreWriteTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_WRITE_TIMEOUT_MS, Math.max(technocoreTimeoutMs, 8000), 1000, 20000);
 const technocoreWriteAttempts = Math.round(boundedNumber(process.env.OSA_TECHNOCORE_WRITE_ATTEMPTS, 2, 1, 4));
 const technocoreChannelTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS, Math.max(technocoreTimeoutMs, 12000), 1000, 15000);
+const technocoreMetadataTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_METADATA_TIMEOUT_MS, 60000, 5000, 120000);
 const technocoreAnnounceEnabled = process.env.OSA_TECHNOCORE_ANNOUNCE === "1";
 const technocoreAnnounceRoom = normalizeTechnocoreName(process.env.OSA_TECHNOCORE_ANNOUNCE_ROOM || technocorePublicRoom);
 const technocoreNick = normalizeTechnocoreName(process.env.OSA_TECHNOCORE_NICK || "osa-node") || "osa-node";
 const technocoreSignedMessages = process.env.OSA_TECHNOCORE_SIGNED !== "0";
+const technocoreProfileEnabled = process.env.OSA_TECHNOCORE_PROFILE !== "0";
+const technocoreProjectRepositoryUrl = "https://github.com/Blindripper/OpenSwarmAgents";
 const technocoreChannelsCache = { key: "", expiresAt: 0, channels: [], error: null };
 const technocoreNonceByRoom = new Map();
 const technocoreRoomReadBackoff = new Map();
@@ -3751,10 +3754,13 @@ function publicRuntime() {
     technocoreReadHedgeMs,
     technocoreWriteTimeoutMs,
     technocoreWriteAttempts,
+    technocoreMetadataTimeoutMs,
     technocoreAnnounceEnabled: technocoreEnabled && technocoreAnnounceEnabled && Boolean(technocoreAnnounceRoom),
     technocoreAnnounceRoom: technocoreEnabled && technocoreAnnounceRoom ? technocoreAnnounceRoom : null,
     technocoreSignedMessages: technocoreEnabled && technocoreSignedMessages && Boolean(technocoreDid),
     technocoreDid: technocoreEnabled && technocoreDid ? technocoreDid : null,
+    technocoreProfileEnabled: technocoreEnabled && technocoreProfileEnabled && technocoreSignedMessages && Boolean(technocoreDid),
+    technocoreDidProfilePath: technocoreEnabled && technocoreProfileEnabled ? technocoreDidProfileLocation()?.path || null : null,
     node: publicNodeIdentity(),
     oauthConfigured: Object.fromEntries(
       Object.keys(oauthProviderConfig).map((provider) => [provider, Boolean(providerCredentials(provider))])
@@ -5872,11 +5878,83 @@ async function ensureTechnocorePublicRoomTopic() {
     /* Missing or stale topic: set it below. */
   }
   try {
-    await fetchTechnocoreText(`/kv/topic/${technocorePublicRoom}/set/${encodeURIComponent(topic)}`, technocoreWriteTimeoutMs);
+    await writeTechnocoreNote("topic", technocorePublicRoom, topic);
     return true;
   } catch (error) {
     console.warn(`Technocore public room topic ensure failed: ${error.message}`);
     return false;
+  }
+}
+
+function technocoreDidProfileLocation() {
+  if (!technocoreDid) return null;
+  const fingerprint = createHash("sha256").update(technocoreDid).digest("hex").slice(0, 16);
+  return {
+    fingerprint,
+    path: `/kv/did-${fingerprint.slice(0, 2)}/${fingerprint.slice(2)}`
+  };
+}
+
+function technocoreDidProfileText() {
+  if (!technocoreDid || !technocorePublicRoom) return "";
+  const profile = [
+    technocoreDid,
+    "name:OpenSwarmAgents",
+    "role:Technocore-Specialist",
+    `room:${technocorePublicRoom}`,
+    `repo:${technocoreProjectRepositoryUrl}`
+  ];
+  try {
+    const proof = JSON.parse(readFileSync(join(rootDir, "contribution-proof.json"), "utf8"));
+    if (proof?.did === technocoreDid) {
+      profile.push(`proof:${technocoreProjectRepositoryUrl}/blob/main/contribution-proof.json`);
+    }
+  } catch {
+    /* A generic installation can publish its DID profile without OSA's contribution proof. */
+  }
+  const publicUrl = String(process.env.OSA_PUBLIC_URL || federationAdvertiseUrl || "").replace(/\s+/g, "").replace(/\/$/, "");
+  if (publicUrl) profile.push(`dashboard:${publicUrl}`);
+  return profile.join(" ").slice(0, 8192);
+}
+
+async function ensureTechnocoreDidProfile() {
+  if (!technocoreEnabled || !technocoreProfileEnabled || !technocoreSignedMessages || !technocoreDid) return false;
+  const location = technocoreDidProfileLocation();
+  const profile = technocoreDidProfileText();
+  if (!location || !profile) return false;
+  try {
+    const existing = await fetchTechnocoreText(location.path, technocoreTimeoutMs);
+    const existingProfile = existing.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) || "";
+    if (existingProfile === profile) return false;
+  } catch {
+    /* Missing or stale DID profile: set it below. */
+  }
+  try {
+    await writeTechnocoreNote(`did-${location.fingerprint.slice(0, 2)}`, location.fingerprint.slice(2), profile);
+    return true;
+  } catch (error) {
+    console.warn(`Technocore DID profile ensure failed: ${error.message}`);
+    return false;
+  }
+}
+
+async function writeTechnocoreNote(namespace, key, value) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), technocoreMetadataTimeoutMs);
+  try {
+    const response = await fetch(technocoreUrl(`/kv/${namespace}/${key}`), {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        accept: "application/json, text/plain",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ value })
+    });
+    if (!response.ok) throw new Error(`Technocore returned ${response.status}`);
+    return true;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -9031,6 +9109,9 @@ server.listen(port, host, () => {
   startFederationPeerSync();
   ensureTechnocorePublicRoomTopic().catch((error) => {
     console.warn(`Technocore public room topic ensure failed: ${error.message}`);
+  });
+  ensureTechnocoreDidProfile().catch((error) => {
+    console.warn(`Technocore DID profile ensure failed: ${error.message}`);
   });
 });
 

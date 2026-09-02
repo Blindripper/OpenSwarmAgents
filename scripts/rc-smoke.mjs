@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { createPublicKey, verify as verifySignature } from "node:crypto";
+import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
@@ -18,6 +18,7 @@ const testWalletPrivateKey = Uint8Array.from(Buffer.from("1111111111111111111111
 const testWalletAddress = ethereumAddressFromPrivateKey(testWalletPrivateKey);
 const technocoreWrites = [];
 const technocoreReads = [];
+const technocoreNotes = new Map();
 let server = null;
 let technocoreServer = null;
 
@@ -67,6 +68,18 @@ try {
   assert(health.runtime.technocoreReadHedgeMs === 1200, "Technocore read hedge timing should be visible in runtime status");
   assert(health.runtime.technocoreSignedMessages === true, "Technocore writes should use the signed DID lane by default");
   assert(String(health.runtime.technocoreDid || "").startsWith("did:key:z6Mk"), "Technocore DID should be derived from the OSA node identity");
+  assert(health.runtime.technocoreProfileEnabled === true, "Technocore DID profile publication should be enabled by default");
+  const didFingerprint = createHash("sha256").update(health.runtime.technocoreDid).digest("hex").slice(0, 16);
+  const didProfileKey = `did-${didFingerprint.slice(0, 2)}/${didFingerprint.slice(2)}`;
+  for (
+    let attempt = 0;
+    attempt < 40 && (!technocoreNotes.has(didProfileKey) || !technocoreNotes.has("topic/osa-network"));
+    attempt += 1
+  ) await delay(50);
+  const didProfile = technocoreNotes.get(didProfileKey) || "";
+  assert(didProfile.includes(health.runtime.technocoreDid) && didProfile.includes("name:OpenSwarmAgents") && didProfile.includes("room:osa-network"), "Fresh OSA nodes should publish a discoverable Technocore DID profile");
+  assert(health.runtime.technocoreDidProfilePath === `/kv/did-${didFingerprint.slice(0, 2)}/${didFingerprint.slice(2)}`, "Runtime status should expose the DID profile note path");
+  assert(technocoreNotes.get("topic/osa-network")?.startsWith("OpenSwarmAgents: signed project announcements"), "OSA should publish an informative public-room topic");
   const channels = await getJson("/api/network/channels?limit=10");
   assert(channels.channels.some((item) => item.id === "osa-network" && item.pinned === true), "Channel list should include pinned osa-network");
   assert(channels.channels.some((item) => item.id === "osa-lab"), "Channel list should include available Technocore channels");
@@ -464,6 +477,38 @@ try {
 function startTechnocoreFixture() {
   const fixture = createServer((req, res) => {
     const url = new URL(req.url || "/", technocoreBaseUrl);
+    const noteMatch = url.pathname.match(/^\/kv\/([^/]+)\/([^/]+)(?:\/set\/(.+))?$/);
+    if (noteMatch && req.method === "POST" && noteMatch[3] === undefined) {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        const parsed = JSON.parse(body || "{}");
+        technocoreNotes.set(`${noteMatch[1]}/${noteMatch[2]}`, String(parsed.value || ""));
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      });
+      return;
+    }
+    if (noteMatch && req.method === "GET") {
+      const key = `${noteMatch[1]}/${noteMatch[2]}`;
+      if (noteMatch[3] !== undefined) {
+        technocoreNotes.set(key, decodeURIComponent(noteMatch[3]));
+        res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+        res.end("ok\n");
+        return;
+      }
+      if (!technocoreNotes.has(key)) {
+        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        res.end("missing\n");
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+      res.end(`${technocoreNotes.get(key)}\n`);
+      return;
+    }
     if (url.pathname === "/rooms") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({
