@@ -72,6 +72,11 @@ const federationSyncMs = Math.max(1000, Number(process.env.OSA_FEDERATION_SYNC_M
 const federationCollectionLimit = Math.max(100, Math.min(5000, Number(process.env.OSA_FEDERATION_COLLECTION_LIMIT || 2000)));
 const federationSnapshotMaxBytes = Math.max(maxJsonBytes, Number(process.env.OSA_FEDERATION_SNAPSHOT_MAX_BYTES || maxJsonBytes * 4));
 const federationPeerSyncs = new Set();
+// Phase 10: Real FLOP settlement — gated by env until official release conditions met
+const osaRealSettlementEnabled = String(process.env.OSA_REAL_SETTLEMENT_ENABLED || "").trim() === "1";
+const osaRealSettlementAsset = String(process.env.OSA_REAL_SETTLEMENT_ASSET || "").trim() || "FLOP";
+const osaRealSettlementRequirementsMet = osaRealSettlementEnabled && String(process.env.OSA_SETTLEMENT_NETWORK_ID || "").trim().length > 0;
+const osaLegacyFederationDisabled = String(process.env.OSA_LEGACY_FEDERATION_DISABLED || "").trim() === "1";
 const technocoreEnabled = process.env.OSA_TECHNOCORE_ENABLED === "1";
 const technocoreBaseUrl = normalizeTechnocoreBaseUrl(process.env.OSA_TECHNOCORE_URL || "https://technocore.chat");
 const technocorePublicRoom = normalizeTechnocoreName(process.env.OSA_TECHNOCORE_PUBLIC_ROOM || process.env.OSA_TECHNOCORE_ANNOUNCE_ROOM || "osa-network");
@@ -2857,6 +2862,7 @@ function federationAccessFromReq(req) {
 }
 
 function publicFederationSnapshot() {
+  if (osaLegacyFederationDisabled) return null;
   return {
     protocol: "osa-federation-snapshot",
     version: 1,
@@ -7546,6 +7552,8 @@ function nextTechnocoreNonce(room) {
   return next.toString();
 }
 
+// Phase 11: Legacy federation deprecation — Technocore-native paths are primary.
+// Set OSA_LEGACY_FEDERATION_DISABLED=1 to disable legacy endpoints.
 function publicProjectTaskSummary(task) {
   const result = store.results.find((item) => item.taskId === task.id && item.status === "accepted")
     || store.results.find((item) => item.taskId === task.id);
