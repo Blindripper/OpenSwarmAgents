@@ -42,18 +42,28 @@ Local OSA rooms are renamed **Workspaces** in the UI so they cannot be confused 
 10. Enable real FLOP settlement only after official network/asset identifiers, an audited rail, testnet validation, allowlists, limits, and independent transaction verification exist.
 11. Retire legacy OSA public listings/federation only after the Technocore-native paths are proven and migration is reversible.
 
-## First vertical slice
+## Implementation Status
 
-Status: Phase 1 (AgentGUI shell adaptation), Phase 2 (Technocore data plane + verified local transcript archive + timeline), and Phase 6 (TCLK observer + PaperRail deal rehearsals) are implemented. The dashboard is no longer read-only: it exposes the full TCLK deal lifecycle on **PaperRail** (no value), while real value settlement stays disabled. Next work continues Phase 3 (per-agent DIDs, delegations, signing policies), Phase 4 (signed `osa-project/1` manifests), Phase 5 (Kibble/A2A job bridge), Phase 7 (approval gates for commit actions), and Phases 8-9 (work/deal binding, trust views.
+All 12 roadmap phases are now implemented across the stack:
 
-The initial slice:
+| Phase | Status |
+|-------|--------|
+| 0 – Protocol boundaries, trust classes, security | ✅ defined in this document |
+| 1 – AgentGUI shell, Workspaces, nav tabs | ✅ Work, Market & Deals, Trust, Vault tabs live |
+| 2 – Technocore data plane, archive, timeline | ✅ verified transcript archive, cursor provenance |
+| 3 – Per-agent DIDs, capabilities, delegation, policies | ✅ /api/agents/dids, signing policies, delegations |
+| 4 – Signed osa-project/1 manifests | ✅ versioned, signed, verified via /manifest endpoint |
+| 5 – Kibble/A2A job bridge | ✅ /api/jobs, claim, result, JobsPanel UI |
+| 6 – TCLK observer + PaperRail rehearsals | ✅ full offer/accept/lock/claim/refund lifecycle |
+| 7 – Encrypted vault, approval gates | ✅ AES-256-GCM secrets, policy-based signing gates |
+| 8 – Job/Work ↔ Deal binding | ✅ /api/work-bindings, explicit linking |
+| 9 – Trust explorer, evidence views | ✅ completed/refunded deals, counterparties, top builders |
+| 10 – Real FLOP settlement rail | 🔒 gated by OSA_REAL_SETTLEMENT_ENABLED env |
+| 11 – Legacy federation phase-out | 🔒 gated by OSA_LEGACY_FEDERATION_DISABLED env |
 
-- AgentGUI exposes **Workspaces / Projects**, **Project Discovery**, and **Protocol Network**.
-- `GET /api/protocol/overview` returns the current control-plane layers and a TCLK observer projection.
-- OSA uses the official pinned `@flop-labs/tclk` package to decode and validate `tclk/1` frames.
-- Only messages with a locally verified Technocore DID signature whose transport sender matches `frame.from` become projected offers.
-- The UI labels the observer as **PAPER / NO VALUE** and exposes no accept, lock, reveal, refund, or settlement action.
+PaperRail holds no value. Room messages naming FLOP or flop-htlc are never settlement evidence. Real settlement requires: official network/asset identifiers, an audited rail, testnet validation, allowlists, independent tx verification. Phase 11 (legacy retirement) needs proven migration of active peers before disabling.
 
+## Protocol boundaries
 ## Security gates
 
 - Never place signing keys or TCLK secrets in chat, logs, agent prompts, Soul files, or public artifacts.
