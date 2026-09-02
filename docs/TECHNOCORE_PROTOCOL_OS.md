@@ -31,11 +31,11 @@ Local OSA rooms are renamed **Workspaces** in the UI so they cannot be confused 
 
 0. Define shared protocol objects, trust classes, security boundaries, and pinned protocol versions.
 1. Adapt AgentGUI into the Protocol OS shell and rename local rooms to Workspaces.
-2. Make Technocore the primary public data plane with signature verification, cursor sync, local projections, and transcript archives.
+2. Make Technocore the primary public data plane with signature verification, cursor sync, local projections, and transcript archives. *(implemented: verified transcript archive + room cursor provenance + protocol timeline in AgentGUI; archive is restart-persistent, local-only, and never federated.)*
 3. Add node identity, per-agent DIDs, capability publication, delegation, and signing policies.
 4. Publish versioned signed `osa-project/1` manifests for project discovery, updates, forks, and archives.
 5. Bridge Kibble/A2A/ACP jobs into AgentGUI desks from discovery through signed result submission.
-6. Add a read-only TCLK observer, followed by clearly labelled PaperRail deal rehearsals.
+6. Add a read-only TCLK observer, followed by clearly labelled PaperRail deal rehearsals.. *(implemented: observer + full PaperRail deal rehearsal (Offer->Accept->Lock->Claim/Receipt or Refund/Cancel) with encrypted deal secrets at rest and the same policy gates as a real deal; `value_settlement_enabled` stays disabled.)*
 7. Add an encrypted deal/secret vault and require policy or human approval for commit actions.
 8. Bind Project → Job → Agent Execution → Evidence → TCLK Deal without conflating the work and payment protocols.
 9. Build evidence-backed trust views from Credence, attestations, validators, receipts, unique counterparties, refunds, and disputes.
@@ -44,7 +44,9 @@ Local OSA rooms are renamed **Workspaces** in the UI so they cannot be confused 
 
 ## First vertical slice
 
-The initial implementation is deliberately read-only:
+Status: Phase 1 (AgentGUI shell adaptation), Phase 2 (Technocore data plane + verified local transcript archive + timeline), and Phase 6 (TCLK observer + PaperRail deal rehearsals) are implemented. The dashboard is no longer read-only: it exposes the full TCLK deal lifecycle on **PaperRail** (no value), while real value settlement stays disabled. Next work continues Phase 3 (per-agent DIDs, delegations, signing policies), Phase 4 (signed `osa-project/1` manifests), Phase 5 (Kibble/A2A job bridge), Phase 7 (approval gates for commit actions), and Phases 8-9 (work/deal binding, trust views.
+
+The initial slice:
 
 - AgentGUI exposes **Workspaces / Projects**, **Project Discovery**, and **Protocol Network**.
 - `GET /api/protocol/overview` returns the current control-plane layers and a TCLK observer projection.

@@ -219,12 +219,69 @@ export interface TclkOfferProjection {
   accepted_at?: string | null;
 }
 
+export interface ProtocolTimelineEntry {
+  id: string;
+  room: string;
+  generation: number;
+  sequence: number;
+  from: string;
+  protocol?: string | null;
+  frame_type?: string | null;
+  object_id?: string | null;
+  created_at: string;
+  observed_at: string;
+  payload_hash: string;
+  verified: boolean;
+  valid: boolean;
+  rejection?: string | null;
+}
+
+export interface ProtocolPaperDeal {
+  id: string;
+  label: string;
+  status: "proposed" | "accepted" | "locked" | "claimed" | "refunded" | "cancelled" | string;
+  mode: "paper-rehearsal";
+  rail: "paper";
+  has_value: false;
+  amount: string;
+  asset: "FLOP" | string;
+  payer_did: string;
+  counterparty_did: string;
+  contract_id?: string | null;
+  deal_room?: string | null;
+  receipt_recorded: boolean;
+  next_action?: "accept" | "lock" | "claim" | "receipt" | null;
+  created_at: string;
+  updated_at: string;
+  timeline: { stage: string; actor: string; at: string; detail: string }[];
+}
+
 export interface ProtocolOverview {
   mode: "observer" | string;
   writes_enabled: boolean;
   generated_at: string;
   identity: { node_did?: string | null; signed_messages: boolean };
   transport: { enabled: boolean; url?: string | null; public_room?: string | null };
+  archive?: { persisted: boolean; record_count: number; limit: number };
+  room_sync?: {
+    room: string;
+    generation: number;
+    last_seq: number;
+    last_attempt_at?: string | null;
+    last_synced_at?: string | null;
+    source: "live" | "archive" | string;
+    stale: boolean;
+    error?: string | null;
+  };
+  timeline?: ProtocolTimelineEntry[];
+  paper?: {
+    enabled: boolean;
+    rail: "paper";
+    asset: "FLOP";
+    has_value: false;
+    stages: string[];
+    deals: ProtocolPaperDeal[];
+  };
   layers: ProtocolLayerStatus[];
   tclk: {
     version: string;

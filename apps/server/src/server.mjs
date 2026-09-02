@@ -6,6 +6,8 @@ import { join, extname, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createPublicKey,
+  createCipheriv,
+  createDecipheriv,
   createHash,
   generateKeyPairSync,
   pbkdf2Sync,
@@ -20,10 +22,16 @@ import { keccak_256 } from "@noble/hashes/sha3.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import {
   OFFER_ROOM as tclkOfferRoom,
+  PaperRail,
   applyFrame as applyTclkFrame,
+  decodeFrame as decodeTclkFrame,
   dealRoom as tclkDealRoom,
-  openContract as openTclkContract,
-  tryDecodeFrame as tryDecodeTclkFrame
+  encodeFrame as encodeTclkFrame,
+  generateHashLock as generateTclkHashLock,
+  lockTerms as tclkLockTerms,
+  makeAccept as makeTclkAccept,
+  makeOffer as makeTclkOffer,
+  openContract as openTclkContract
 } from "@flop-labs/tclk";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -103,6 +111,7 @@ const technocoreTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_TIMEOUT_MS,
 const technocoreReadHedgeMs = boundedNumber(process.env.OSA_TECHNOCORE_READ_HEDGE_MS, 1200, 250, 5000);
 const technocoreWriteTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_WRITE_TIMEOUT_MS, Math.max(technocoreTimeoutMs, 8000), 1000, 20000);
 const technocoreWriteAttempts = Math.round(boundedNumber(process.env.OSA_TECHNOCORE_WRITE_ATTEMPTS, 2, 1, 4));
+const protocolTranscriptLimit = Math.round(boundedNumber(process.env.OSA_PROTOCOL_TRANSCRIPT_LIMIT, 2000, 100, 10000));
 const technocoreChannelTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS, Math.max(technocoreTimeoutMs, 12000), 1000, 15000);
 const technocoreMetadataTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_METADATA_TIMEOUT_MS, 60000, 5000, 120000);
 const technocoreAnnounceEnabled = process.env.OSA_TECHNOCORE_ANNOUNCE === "1";
@@ -117,6 +126,8 @@ const technocoreNonceByRoom = new Map();
 const technocoreRoomReadBackoff = new Map();
 const technocoreLocalMirrorCache = new Map();
 const technocoreDidPublicKeyCache = new Map();
+const protocolRoomSyncPromises = new Map();
+const protocolPaperDealPromises = new Map();
 let technocoreReadRequestCounter = 0;
 const managedConnectorProcesses = new Map();
 const managedConnectorLogLimit = 12 * 1024;
@@ -227,6 +238,10 @@ async function loadStore() {
       publicProjectCopies: [],
       managerAudits: [],
       networkChatMessages: [],
+      protocolTranscripts: [],
+      protocolRoomSync: {},
+      protocolPaperDeals: [],
+      protocolPaperNotes: {},
       federationPeerAnnouncements: [],
       publicRooms: [],
       publicProjects: [],
@@ -267,6 +282,10 @@ function normalizeStore(input) {
     publicProjectCopies: normalizePublicProjectCopies(input.publicProjectCopies || []),
     managerAudits: normalizeManagerAudits(input.managerAudits || []),
     networkChatMessages: normalizeNetworkChatMessages(input.networkChatMessages || []),
+    protocolTranscripts: normalizeProtocolTranscripts(input.protocolTranscripts || []),
+    protocolRoomSync: normalizeProtocolRoomSync(input.protocolRoomSync || {}),
+    protocolPaperDeals: normalizeProtocolPaperDeals(input.protocolPaperDeals || []),
+    protocolPaperNotes: normalizeProtocolPaperNotes(input.protocolPaperNotes || {}),
     federationPeerAnnouncements: normalizeFederationPeerAnnouncements(input.federationPeerAnnouncements || []),
     publicRooms: normalizePublicCollections(input.publicRooms || [], "room"),
     publicProjects: normalizePublicCollections(input.publicProjects || [], "project"),
@@ -957,6 +976,426 @@ function normalizeNetworkChatMessages(messages) {
     .filter((message) => message && message.message.length > 0);
 }
 
+function normalizeProtocolTranscripts(records) {
+  if (!Array.isArray(records)) return [];
+  const byId = new Map();
+  for (const record of records) {
+    const room = normalizeTechnocoreName(record?.room);
+    const sequence = Number(record?.sequence ?? record?.seq);
+    const generation = Number(record?.generation ?? 0);
+    const text = String(record?.text || "").slice(0, 4096);
+    if (!room || !Number.isSafeInteger(sequence) || sequence < 0 || !Number.isSafeInteger(generation) || generation < 0 || !text) continue;
+    const from = String(record?.from || "unknown").slice(0, 120);
+    const nonce = String(record?.nonce ?? "").slice(0, 20);
+    const signature = String(record?.signature || record?.sig || "").slice(0, 120);
+    const verification = inspectProtocolTranscript(room, { from, nonce, sig: signature, text });
+    const id = `technocore-protocol-${room}-${generation}-${sequence}`;
+    byId.set(id, {
+      id,
+      room,
+      generation,
+      sequence,
+      from,
+      nonce,
+      signature,
+      text,
+      payloadHash: createHash("sha256").update(text).digest("hex"),
+      createdAt: validIsoTimestamp(record?.createdAt || record?.created_at) || now(),
+      observedAt: validIsoTimestamp(record?.observedAt || record?.observed_at) || now(),
+      protocol: verification.protocol,
+      frameType: verification.frameType,
+      objectId: verification.objectId,
+      verified: verification.verified,
+      valid: verification.valid,
+      rejection: verification.rejection
+    });
+  }
+  return [...byId.values()]
+    .sort((a, b) => String(b.observedAt).localeCompare(String(a.observedAt)) || b.generation - a.generation || b.sequence - a.sequence)
+    .slice(0, protocolTranscriptLimit);
+}
+
+function normalizeProtocolRoomSync(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const output = {};
+  for (const [rawRoom, rawState] of Object.entries(value)) {
+    const room = normalizeTechnocoreName(rawRoom);
+    if (!room || !rawState || typeof rawState !== "object") continue;
+    const generation = Number(rawState.generation ?? 0);
+    const lastSeq = Number(rawState.lastSeq ?? rawState.last_seq ?? 0);
+    output[room] = {
+      generation: Number.isSafeInteger(generation) && generation >= 0 ? generation : 0,
+      lastSeq: Number.isSafeInteger(lastSeq) && lastSeq >= 0 ? lastSeq : 0,
+      lastAttemptAt: validIsoTimestamp(rawState.lastAttemptAt || rawState.last_attempt_at),
+      lastSyncedAt: validIsoTimestamp(rawState.lastSyncedAt || rawState.last_synced_at),
+      lastError: rawState.lastError || rawState.last_error
+        ? String(rawState.lastError || rawState.last_error).slice(0, 300)
+        : null
+    };
+  }
+  return output;
+}
+
+function normalizeProtocolPaperNotes(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const output = {};
+  for (const [key, encrypted] of Object.entries(value)) {
+    if (!/^[a-z0-9-]{1,80}\/[a-z0-9-]{1,80}$/.test(key) || !isEncryptedPaperValue(encrypted)) continue;
+    output[key] = {
+      version: 1,
+      iv: String(encrypted.iv),
+      ciphertext: String(encrypted.ciphertext),
+      tag: String(encrypted.tag)
+    };
+  }
+  return output;
+}
+
+function normalizeProtocolPaperDeals(records) {
+  if (!Array.isArray(records)) return [];
+  const statuses = new Set(["proposed", "accepted", "locked", "claimed", "refunded", "cancelled"]);
+  const output = [];
+  for (const record of records) {
+    try {
+      const offer = decodeTclkFrame(encodeTclkFrame(record?.offer));
+      if (offer.type !== "offer") continue;
+      const id = String(record?.id || offer.id);
+      if (id !== offer.id || !/^0x[0-9a-f]{64}$/.test(id)) continue;
+      const status = statuses.has(record?.status) ? record.status : "proposed";
+      const accept = record?.accept ? decodeTclkFrame(encodeTclkFrame(record.accept)) : null;
+      const lockFrame = record?.lockFrame ? decodeTclkFrame(encodeTclkFrame(record.lockFrame)) : null;
+      if (accept && accept.type !== "accept") continue;
+      if (lockFrame && lockFrame.type !== "lock") continue;
+      const encryptedSecret = isEncryptedPaperValue(record?.encryptedSecret) ? {
+        version: 1,
+        iv: String(record.encryptedSecret.iv),
+        ciphertext: String(record.encryptedSecret.ciphertext),
+        tag: String(record.encryptedSecret.tag)
+      } : null;
+      if (!encryptedSecret) continue;
+      output.push({
+        id,
+        label: String(record?.label || "FLOP rehearsal deal").trim().slice(0, 100) || "FLOP rehearsal deal",
+        status,
+        offer,
+        accept,
+        lockFrame,
+        statement: String(record?.statement || "").slice(0, 70),
+        counterpartyDid: String(record?.counterpartyDid || "").slice(0, 120),
+        encryptedSecret,
+        railRef: record?.railRef ? String(record.railRef).slice(0, 100) : null,
+        receiptRecorded: record?.receiptRecorded === true,
+        createdAt: validIsoTimestamp(record?.createdAt) || now(),
+        updatedAt: validIsoTimestamp(record?.updatedAt) || now(),
+        timeline: Array.isArray(record?.timeline) ? record.timeline.slice(-30).map((entry) => ({
+          stage: String(entry?.stage || "unknown").slice(0, 30),
+          actor: String(entry?.actor || "osa").slice(0, 30),
+          at: validIsoTimestamp(entry?.at) || now(),
+          detail: String(entry?.detail || "").slice(0, 180)
+        })) : []
+      });
+    } catch {
+      /* Corrupt rehearsal records are discarded instead of entering a deal state. */
+    }
+  }
+  return output.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0, 100);
+}
+
+function isEncryptedPaperValue(value) {
+  return Boolean(
+    value && Number(value.version || 1) === 1 &&
+    /^[A-Za-z0-9_-]{16}$/.test(String(value.iv || "")) &&
+    /^[A-Za-z0-9_-]+$/.test(String(value.ciphertext || "")) &&
+    /^[A-Za-z0-9_-]{22}$/.test(String(value.tag || ""))
+  );
+}
+
+function inspectProtocolTranscript(room, message) {
+  const text = String(message?.text || "");
+  const verified = verifyTechnocoreDidMessage(room, message);
+  if (!text.startsWith("tclk1 ")) {
+    return { protocol: null, frameType: null, objectId: null, verified, valid: false, rejection: "not_tclk_frame", frame: null };
+  }
+  let frame;
+  try {
+    frame = decodeTclkFrame(text);
+  } catch (error) {
+    return {
+      protocol: "tclk/1",
+      frameType: null,
+      objectId: null,
+      verified,
+      valid: false,
+      rejection: `invalid_frame:${String(error?.message || "decode failed").replace(/\s+/g, " ").slice(0, 140)}`,
+      frame: null
+    };
+  }
+  const frameType = String(frame.type || "").slice(0, 24) || null;
+  const objectId = String(frame.id || frame.contract || frame.ref || "").slice(0, 100) || null;
+  if (!verified) return { protocol: "tclk/1", frameType, objectId, verified: false, valid: false, rejection: "signature_unverified", frame };
+  if (frame.from !== message.from) return { protocol: "tclk/1", frameType, objectId, verified: true, valid: false, rejection: "transport_sender_mismatch", frame };
+  return { protocol: "tclk/1", frameType, objectId, verified: true, valid: true, rejection: null, frame };
+}
+
+function paperVaultKey() {
+  return createHash("sha256")
+    .update("OSA::tclk-paper-vault::v1\0", "utf8")
+    .update(String(nodeIdentity.privateKeyPem || ""), "utf8")
+    .digest();
+}
+
+function encryptPaperValue(value) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", paperVaultKey(), iv);
+  const ciphertext = Buffer.concat([cipher.update(String(value), "utf8"), cipher.final()]);
+  return {
+    version: 1,
+    iv: iv.toString("base64url"),
+    ciphertext: ciphertext.toString("base64url"),
+    tag: cipher.getAuthTag().toString("base64url")
+  };
+}
+
+function decryptPaperValue(value) {
+  if (!isEncryptedPaperValue(value)) throw new Error("Invalid encrypted PaperRail vault record");
+  const decipher = createDecipheriv("aes-256-gcm", paperVaultKey(), Buffer.from(value.iv, "base64url"));
+  decipher.setAuthTag(Buffer.from(value.tag, "base64url"));
+  return Buffer.concat([
+    decipher.update(Buffer.from(value.ciphertext, "base64url")),
+    decipher.final()
+  ]).toString("utf8");
+}
+
+function paperCounterpartyDid() {
+  const raw = createHash("sha256").update(`OSA::paper-counterparty::${nodeIdentity.nodeId}`).digest();
+  return `did:key:z${base58btcEncode(Buffer.concat([Buffer.from([0xed, 0x01]), raw]))}`;
+}
+
+function persistentPaperNoteStore() {
+  store.protocolPaperNotes = normalizeProtocolPaperNotes(store.protocolPaperNotes || {});
+  return {
+    async get(namespace, key) {
+      const encrypted = store.protocolPaperNotes[`${namespace}/${key}`];
+      return encrypted ? decryptPaperValue(encrypted) : null;
+    },
+    async set(namespace, key, value, condition) {
+      const path = `${namespace}/${key}`;
+      const currentEncrypted = store.protocolPaperNotes[path];
+      const current = currentEncrypted ? decryptPaperValue(currentEncrypted) : null;
+      if (condition && "ifAbsent" in condition && currentEncrypted) return false;
+      if (condition && "if" in condition && current !== condition.if) return false;
+      store.protocolPaperNotes[path] = encryptPaperValue(value);
+      return true;
+    }
+  };
+}
+
+function appendPaperDealStage(deal, stage, actor, detail) {
+  deal.timeline = [...(deal.timeline || []), { stage, actor, detail, at: now() }].slice(-30);
+  deal.updatedAt = now();
+}
+
+function reconstructPaperDealState(deal) {
+  let state = openTclkContract(deal.offer);
+  const baseTime = Date.parse(deal.createdAt) || Date.now();
+  if (deal.accept) {
+    const accepted = applyTclkFrame(state, deal.accept, baseTime + 1);
+    if (!accepted.ok) throw new Error(`Stored PaperRail accept is invalid: ${accepted.reason}`);
+    state = accepted.state;
+  }
+  if (deal.lockFrame) {
+    const locked = applyTclkFrame(state, deal.lockFrame, baseTime + 2);
+    if (!locked.ok) throw new Error(`Stored PaperRail lock is invalid: ${locked.reason}`);
+    state = locked.state;
+  }
+  if (deal.status === "claimed") {
+    const reveal = decodeTclkFrame(encodeTclkFrame({
+      type: "reveal",
+      from: state.payeeDid,
+      contract: state.contract,
+      secret: decryptPaperValue(deal.encryptedSecret)
+    }));
+    const claimed = applyTclkFrame(state, reveal, baseTime + 3);
+    if (!claimed.ok) throw new Error(`Stored PaperRail claim is invalid: ${claimed.reason}`);
+    state = claimed.state;
+  } else if (deal.status === "refunded") {
+    const refund = decodeTclkFrame(encodeTclkFrame({
+      type: "refund",
+      from: state.payerDid,
+      contract: state.contract,
+      reason: "paper-rehearsal-expiry"
+    }));
+    const refunded = applyTclkFrame(state, refund, deal.offer.refundAfterMs + 1);
+    if (!refunded.ok) throw new Error(`Stored PaperRail refund is invalid: ${refunded.reason}`);
+    state = refunded.state;
+  }
+  return state;
+}
+
+function publicProtocolPaperDeal(deal) {
+  const nextAction = deal.status === "proposed"
+    ? "accept"
+    : deal.status === "accepted"
+      ? "lock"
+      : deal.status === "locked"
+        ? "claim"
+        : deal.status === "claimed" && !deal.receiptRecorded
+          ? "receipt"
+          : null;
+  return {
+    id: deal.id,
+    label: deal.label,
+    status: deal.status,
+    mode: "paper-rehearsal",
+    rail: "paper",
+    has_value: false,
+    amount: deal.offer.amount,
+    asset: deal.offer.asset,
+    payer_did: deal.offer.from,
+    counterparty_did: deal.counterpartyDid,
+    contract_id: deal.accept?.contract || null,
+    deal_room: deal.accept?.contract ? tclkDealRoom(deal.accept.contract) : null,
+    receipt_recorded: deal.receiptRecorded,
+    next_action: nextAction,
+    created_at: deal.createdAt,
+    updated_at: deal.updatedAt,
+    timeline: deal.timeline || []
+  };
+}
+
+async function createProtocolPaperDeal(body = {}) {
+  if (!technocoreDid) {
+    const error = new Error("A local DID is required for a PaperRail rehearsal");
+    error.statusCode = 400;
+    throw error;
+  }
+  const amount = String(body.amount || "100").trim();
+  if (!/^[1-9][0-9]{0,31}$/.test(amount)) {
+    const error = new Error("FLOP amount must be a positive integer with at most 32 digits");
+    error.statusCode = 400;
+    throw error;
+  }
+  const started = Date.now();
+  const secret = generateTclkHashLock();
+  const offer = makeTclkOffer({
+    from: technocoreDid,
+    role: "payer",
+    amount,
+    asset: "FLOP",
+    lock: "hash",
+    rails: ["paper"],
+    expiresMs: started + 15 * 60_000,
+    claimByMs: started + 30 * 60_000,
+    refundAfterMs: started + 60 * 60_000
+  });
+  const createdAt = now();
+  const deal = {
+    id: offer.id,
+    label: String(body.label || "FLOP rehearsal deal").trim().slice(0, 100) || "FLOP rehearsal deal",
+    status: "proposed",
+    offer,
+    accept: null,
+    lockFrame: null,
+    statement: secret.hash,
+    counterpartyDid: paperCounterpartyDid(),
+    encryptedSecret: encryptPaperValue(secret.preimage),
+    railRef: null,
+    receiptRecorded: false,
+    createdAt,
+    updatedAt: createdAt,
+    timeline: [{ stage: "offer", actor: "osa", detail: `${amount} FLOP on paper rail`, at: createdAt }]
+  };
+  store.protocolPaperDeals = normalizeProtocolPaperDeals([deal, ...(store.protocolPaperDeals || [])]);
+  await saveStore();
+  return publicProtocolPaperDeal(store.protocolPaperDeals.find((item) => item.id === deal.id));
+}
+
+async function mutateProtocolPaperDeal(id, operation) {
+  const dealId = String(id || "");
+  if (protocolPaperDealPromises.has(dealId)) return protocolPaperDealPromises.get(dealId);
+  const promise = (async () => {
+    store.protocolPaperDeals = normalizeProtocolPaperDeals(store.protocolPaperDeals || []);
+    const deal = store.protocolPaperDeals.find((item) => item.id === dealId);
+    if (!deal) {
+      const error = new Error("PaperRail rehearsal deal not found");
+      error.statusCode = 404;
+      throw error;
+    }
+    let state = reconstructPaperDealState(deal);
+    const rail = new PaperRail(persistentPaperNoteStore(), () => Date.now());
+    if (operation === "advance") {
+      if (deal.status === "proposed") {
+        deal.accept = makeTclkAccept(deal.offer, { from: deal.counterpartyDid, statement: deal.statement });
+        const result = applyTclkFrame(state, deal.accept, Date.now());
+        if (!result.ok) throw new Error(result.reason);
+        state = result.state;
+        deal.status = state.status;
+        appendPaperDealStage(deal, "accept", "sandbox-counterparty", "Offer accepted with a valid hash-lock statement");
+      } else if (deal.status === "accepted") {
+        const terms = tclkLockTerms(state);
+        deal.railRef = await rail.lock(terms);
+        deal.lockFrame = decodeTclkFrame(encodeTclkFrame({ type: "lock", from: state.payerDid, contract: state.contract, rail: "paper", ref: deal.railRef }));
+        const result = applyTclkFrame(state, deal.lockFrame, Date.now());
+        if (!result.ok) throw new Error(result.reason);
+        deal.status = result.state.status;
+        appendPaperDealStage(deal, "lock", "osa", "PaperRail recorded a non-value lock");
+      } else if (deal.status === "locked") {
+        const secret = decryptPaperValue(deal.encryptedSecret);
+        await rail.claim(deal.railRef, secret);
+        const reveal = decodeTclkFrame(encodeTclkFrame({ type: "reveal", from: state.payeeDid, contract: state.contract, secret }));
+        const result = applyTclkFrame(state, reveal, Date.now());
+        if (!result.ok) throw new Error(result.reason);
+        deal.status = result.state.status;
+        appendPaperDealStage(deal, "claim", "sandbox-counterparty", "Secret verified; rehearsal claim completed");
+      } else if (deal.status === "claimed" && !deal.receiptRecorded) {
+        const receipt = decodeTclkFrame(encodeTclkFrame({ type: "receipt", from: state.payerDid, contract: state.contract, outcome: "claimed", rail: "paper", ref: deal.railRef }));
+        const result = applyTclkFrame(state, receipt, Date.now());
+        if (!result.ok) throw new Error(result.reason);
+        deal.receiptRecorded = true;
+        appendPaperDealStage(deal, "receipt", "osa", "Terminal PaperRail receipt recorded");
+      } else {
+        const error = new Error("This PaperRail rehearsal has no next transition");
+        error.statusCode = 409;
+        throw error;
+      }
+    } else if (operation === "refund") {
+      if (deal.status !== "locked") {
+        const error = new Error("Only a locked PaperRail rehearsal can be refunded");
+        error.statusCode = 409;
+        throw error;
+      }
+      const refundRail = new PaperRail(persistentPaperNoteStore(), () => deal.offer.refundAfterMs + 1);
+      await refundRail.refund(deal.railRef);
+      const refund = decodeTclkFrame(encodeTclkFrame({ type: "refund", from: state.payerDid, contract: state.contract, reason: "paper-rehearsal-expiry" }));
+      const result = applyTclkFrame(state, refund, deal.offer.refundAfterMs + 1);
+      if (!result.ok) throw new Error(result.reason);
+      deal.status = result.state.status;
+      appendPaperDealStage(deal, "refund", "osa", "Refund deadline simulated; paper record refunded");
+    } else if (operation === "cancel") {
+      if (!["proposed", "accepted"].includes(deal.status)) {
+        const error = new Error("Only proposed or accepted rehearsals can be cancelled");
+        error.statusCode = 409;
+        throw error;
+      }
+      const cancel = decodeTclkFrame(encodeTclkFrame({ type: "cancel", from: technocoreDid, contract: state.contract || deal.offer.id, reason: "operator-cancelled-paper-rehearsal" }));
+      const result = applyTclkFrame(state, cancel, Date.now());
+      if (!result.ok) throw new Error(result.reason);
+      deal.status = result.state.status;
+      appendPaperDealStage(deal, "cancel", "osa", "Operator cancelled the rehearsal before lock");
+    }
+    deal.updatedAt = now();
+    store.protocolPaperDeals = normalizeProtocolPaperDeals(store.protocolPaperDeals);
+    await saveStore();
+    return publicProtocolPaperDeal(store.protocolPaperDeals.find((item) => item.id === dealId));
+  })();
+  protocolPaperDealPromises.set(dealId, promise);
+  try {
+    return await promise;
+  } finally {
+    if (protocolPaperDealPromises.get(dealId) === promise) protocolPaperDealPromises.delete(dealId);
+  }
+}
+
 function normalizeFederationPeerAnnouncements(announcements) {
   return announcements
     .filter((announcement) => announcement?.nodeId)
@@ -1456,7 +1895,11 @@ async function loadPostgresStore() {
     agentDonations: [],
     publicProjectReviews: [],
     publicProjectCopies: [],
-    networkChatMessages: [],
+      networkChatMessages: [],
+      protocolTranscripts: [],
+      protocolRoomSync: {},
+      protocolPaperDeals: [],
+      protocolPaperNotes: {},
     federationPeerAnnouncements: [],
     publicRooms: [],
     publicProjects: [],
@@ -6279,11 +6722,138 @@ async function technocorePublicChatMessages(limit = 60, channel = technocorePubl
   }
 }
 
+function protocolTranscriptsForRoom(room) {
+  return normalizeProtocolTranscripts(store.protocolTranscripts || [])
+    .filter((record) => record.room === room)
+    .sort((a, b) => a.generation - b.generation || a.sequence - b.sequence);
+}
+
+function protocolSyncPublicState(room, source = "archive") {
+  const sync = normalizeProtocolRoomSync(store.protocolRoomSync || {})[room] || {
+    generation: 0,
+    lastSeq: 0,
+    lastAttemptAt: null,
+    lastSyncedAt: null,
+    lastError: null
+  };
+  return {
+    room,
+    generation: sync.generation,
+    last_seq: sync.lastSeq,
+    last_attempt_at: sync.lastAttemptAt,
+    last_synced_at: sync.lastSyncedAt,
+    source,
+    stale: Boolean(sync.lastError),
+    error: sync.lastError
+  };
+}
+
+async function syncTechnocoreProtocolRoom(room = tclkOfferRoom) {
+  const normalizedRoom = normalizeTechnocoreName(room);
+  if (!normalizedRoom) throw new Error("Invalid Technocore protocol room");
+  if (protocolRoomSyncPromises.has(normalizedRoom)) return protocolRoomSyncPromises.get(normalizedRoom);
+
+  const promise = (async () => {
+    store.protocolTranscripts = normalizeProtocolTranscripts(store.protocolTranscripts || []);
+    store.protocolRoomSync = normalizeProtocolRoomSync(store.protocolRoomSync || {});
+    const previous = store.protocolRoomSync[normalizedRoom] || {
+      generation: 0,
+      lastSeq: 0,
+      lastAttemptAt: null,
+      lastSyncedAt: null,
+      lastError: null
+    };
+    const attemptedAt = now();
+    try {
+      const query = { format: "json", limit: Math.min(100, technocoreRoomLimit) };
+      if (previous.lastSeq > 0) {
+        query.since = previous.lastSeq;
+        query.wait = 1;
+      }
+      let view = await fetchTechnocoreRoomJson(`/r/${normalizedRoom}`, query);
+      let generation = Number(view?.generation ?? previous.generation ?? 0);
+      if (!Number.isSafeInteger(generation) || generation < 0) generation = 0;
+      if (previous.lastSyncedAt && generation !== previous.generation) {
+        view = await fetchTechnocoreRoomJson(`/r/${normalizedRoom}`, {
+          format: "json",
+          limit: Math.min(100, technocoreRoomLimit)
+        });
+        generation = Number(view?.generation ?? generation);
+        if (!Number.isSafeInteger(generation) || generation < 0) generation = 0;
+      }
+      const observedAt = now();
+      const incoming = (Array.isArray(view?.messages) ? view.messages : [])
+        .filter((message) => message && Number.isSafeInteger(Number(message.seq)) && Number(message.seq) >= 0)
+        .map((message) => ({
+          room: normalizedRoom,
+          generation,
+          sequence: Number(message.seq),
+          from: String(message.from || "unknown").slice(0, 120),
+          nonce: String(message.nonce ?? "").slice(0, 20),
+          signature: String(message.sig || "").slice(0, 120),
+          text: String(message.text || "").slice(0, 4096),
+          createdAt: validIsoTimestamp(message.ts) || observedAt,
+          observedAt
+        }));
+      store.protocolTranscripts = normalizeProtocolTranscripts([...incoming, ...store.protocolTranscripts]);
+      const responseLastSeq = Number(view?.last_seq);
+      const observedLastSeq = incoming.reduce((max, record) => Math.max(max, record.sequence), 0);
+      const lastSeq = Math.max(
+        generation === previous.generation ? previous.lastSeq : 0,
+        Number.isSafeInteger(responseLastSeq) && responseLastSeq >= 0 ? responseLastSeq : 0,
+        observedLastSeq
+      );
+      store.protocolRoomSync[normalizedRoom] = {
+        generation,
+        lastSeq,
+        lastAttemptAt: attemptedAt,
+        lastSyncedAt: observedAt,
+        lastError: null
+      };
+      await saveStore();
+      return { records: protocolTranscriptsForRoom(normalizedRoom), sync: protocolSyncPublicState(normalizedRoom, "live") };
+    } catch (error) {
+      store.protocolRoomSync[normalizedRoom] = {
+        ...previous,
+        lastAttemptAt: attemptedAt,
+        lastError: String(error?.message || "Technocore protocol sync failed").slice(0, 300)
+      };
+      await saveStore();
+      return { records: protocolTranscriptsForRoom(normalizedRoom), sync: protocolSyncPublicState(normalizedRoom, "archive") };
+    }
+  })();
+  protocolRoomSyncPromises.set(normalizedRoom, promise);
+  try {
+    return await promise;
+  } finally {
+    if (protocolRoomSyncPromises.get(normalizedRoom) === promise) protocolRoomSyncPromises.delete(normalizedRoom);
+  }
+}
+
+function publicProtocolTimelineRecord(record) {
+  return {
+    id: record.id,
+    room: record.room,
+    generation: record.generation,
+    sequence: record.sequence,
+    from: record.from,
+    protocol: record.protocol,
+    frame_type: record.frameType,
+    object_id: record.objectId,
+    created_at: record.createdAt,
+    observed_at: record.observedAt,
+    payload_hash: record.payloadHash,
+    verified: record.verified,
+    valid: record.valid,
+    rejection: record.rejection
+  };
+}
+
 async function technocoreProtocolOverview() {
   const observedAt = now();
   const overview = {
-    mode: "observer",
-    writes_enabled: false,
+    mode: "paper-rehearsal",
+    writes_enabled: true,
     generated_at: observedAt,
     identity: {
       node_did: technocoreDid || null,
@@ -6294,46 +6864,68 @@ async function technocoreProtocolOverview() {
       url: technocoreEnabled ? technocoreBaseUrl : null,
       public_room: technocorePublicRoom || null
     },
+    archive: {
+      persisted: true,
+      record_count: 0,
+      limit: protocolTranscriptLimit
+    },
+    room_sync: protocolSyncPublicState(tclkOfferRoom, "archive"),
+    timeline: [],
     layers: [
       { id: "technocore", label: "Technocore", role: "public transport and rooms", status: technocoreEnabled ? "connected" : "disabled" },
       { id: "did", label: "DID", role: "identity and message signatures", status: technocoreDid ? "ready" : "unavailable" },
       { id: "work", label: "A2A / Kibble", role: "jobs and work lifecycle", status: "planned" },
-      { id: "tclk", label: "TCLK", role: "deal and payment coordination", status: technocoreEnabled ? "observer" : "disabled" },
-      { id: "rail", label: "Settlement Rail", role: "value lock and settlement", status: "paper-only" }
+      { id: "tclk", label: "TCLK", role: "deal and payment coordination", status: technocoreEnabled ? "rehearsal" : "local-rehearsal" },
+      { id: "rail", label: "Settlement Rail", role: "value lock and settlement", status: "paper-ready" }
     ],
     tclk: {
       version: "tclk/1",
       offer_room: tclkOfferRoom,
-      mode: "observer",
+      mode: "observer+paper-rehearsal",
       value_settlement_enabled: false,
-      warning: "Observer mode only. OSA does not lock or transfer value; PaperRail is rehearsal infrastructure.",
+      warning: "The complete deal lifecycle is enabled on PaperRail. It follows TCLK states but locks and transfers no real FLOP.",
       observed_message_count: 0,
       valid_frame_count: 0,
       invalid_frame_count: 0,
       offers: []
+    },
+    paper: {
+      enabled: true,
+      rail: "paper",
+      asset: "FLOP",
+      has_value: false,
+      stages: ["offer", "accept", "lock", "claim", "receipt"],
+      deals: normalizeProtocolPaperDeals(store.protocolPaperDeals || []).map(publicProtocolPaperDeal)
     }
   };
 
   if (!technocoreEnabled) return overview;
 
-  const messages = await technocorePublicChatMessages(
-    Math.min(100, technocoreRoomLimit),
-    tclkOfferRoom,
-    0,
-    4096
-  );
-  overview.tclk.observed_message_count = messages.length;
+  const projection = await syncTechnocoreProtocolRoom(tclkOfferRoom);
+  const records = projection.records;
+  overview.archive.record_count = records.length;
+  overview.room_sync = projection.sync;
+  overview.timeline = records.slice().reverse().slice(0, 100).map(publicProtocolTimelineRecord);
+  overview.tclk.observed_message_count = records.length;
 
   const validFrames = [];
-  for (const message of messages) {
-    if (!String(message.message || "").startsWith("tclk1 ")) continue;
-    const frame = tryDecodeTclkFrame(String(message.message || ""));
-    if (!frame || message.verified !== true || frame.from !== message.from) {
+  for (const record of records) {
+    if (record.protocol !== "tclk/1") continue;
+    const inspection = inspectProtocolTranscript(record.room, {
+      from: record.from,
+      nonce: record.nonce,
+      sig: record.signature,
+      text: record.text
+    });
+    if (!inspection.valid || !inspection.frame) {
       overview.tclk.invalid_frame_count += 1;
       continue;
     }
     overview.tclk.valid_frame_count += 1;
-    validFrames.push({ frame, message });
+    validFrames.push({
+      frame: inspection.frame,
+      message: { seq: record.sequence, created_at: record.createdAt }
+    });
   }
 
   const acceptsByOffer = new Map();
@@ -7307,6 +7899,26 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
 
   if (method === "GET" && path === "/api/protocol/overview") {
     return sendJson(res, 200, await technocoreProtocolOverview());
+  }
+
+  if (method === "POST" && path === "/api/protocol/paper-deals") {
+    try {
+      return sendJson(res, 201, await createProtocolPaperDeal(await readJson(req)));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to create PaperRail rehearsal" });
+    }
+  }
+
+  const paperDealActionMatch = path.match(/^\/api\/protocol\/paper-deals\/([^/]+)\/(advance|refund|cancel)$/);
+  if (method === "POST" && paperDealActionMatch) {
+    try {
+      return sendJson(res, 200, await mutateProtocolPaperDeal(
+        decodeURIComponent(paperDealActionMatch[1]),
+        paperDealActionMatch[2]
+      ));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to advance PaperRail rehearsal" });
+    }
   }
 
   if (method === "GET" && path === "/api/network/chat") {

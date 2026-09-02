@@ -22,6 +22,7 @@ const technocoreReads = [];
 const technocoreNotes = new Map();
 let server = null;
 let technocoreServer = null;
+let technocoreTclkUnavailable = false;
 
 try {
   await assertProductionLocalValidation();
@@ -107,10 +108,35 @@ try {
     message: encodeTclkFrame(tclkOffer)
   });
   const protocolOverview = await getJson("/api/protocol/overview");
-  assert(protocolOverview.mode === "observer" && protocolOverview.writes_enabled === false, "Protocol OS should start in read-only observer mode");
+  assert(protocolOverview.mode === "paper-rehearsal" && protocolOverview.writes_enabled === true, "Protocol OS should expose the local PaperRail rehearsal workflow");
   assert(protocolOverview.tclk?.value_settlement_enabled === false && protocolOverview.tclk?.offer_room === "tclk-offers", "TCLK observer must not imply value settlement");
   assert(protocolOverview.tclk?.offers?.some((offer) => offer.id === tclkOffer.id && offer.verified === true && offer.asset === "PAPER"), "Protocol OS should project verified official tclk/1 offers");
   assert(protocolOverview.tclk?.offers?.filter((offer) => offer.id === tclkOffer.id).length === 1, "Protocol OS should collapse replayed offer frames by canonical offer id");
+  assert(protocolOverview.archive?.persisted === true && protocolOverview.archive?.record_count >= 3, "Protocol OS should persist the observed Technocore transcript locally");
+  assert(protocolOverview.room_sync?.source === "live" && protocolOverview.room_sync?.last_seq >= 43, "Protocol OS should expose room generation and cursor provenance");
+  const timelineOffer = protocolOverview.timeline?.find((record) => record.object_id === tclkOffer.id && record.valid === true);
+  assert(timelineOffer?.verified === true && timelineOffer?.frame_type === "offer" && timelineOffer?.payload_hash, "Protocol timeline should expose verified frame metadata and hashes");
+  assert(timelineOffer?.text === undefined && timelineOffer?.signature === undefined && timelineOffer?.nonce === undefined, "Protocol timeline must not expose raw signed frames or signature material");
+  technocoreTclkUnavailable = true;
+  const archivedProtocolOverview = await getJson("/api/protocol/overview");
+  assert(archivedProtocolOverview.room_sync?.source === "archive" && archivedProtocolOverview.room_sync?.stale === true, "Protocol OS should retain its archived projection during a Technocore outage");
+  assert(archivedProtocolOverview.tclk?.offers?.some((offer) => offer.id === tclkOffer.id), "Archived TCLK offers should survive an upstream read failure");
+  technocoreTclkUnavailable = false;
+  let paperDeal = await postJson("/api/protocol/paper-deals", { amount: "250", label: "RC full FLOP rehearsal" });
+  assert(paperDeal.status === "proposed" && paperDeal.asset === "FLOP" && paperDeal.has_value === false && paperDeal.next_action === "accept", "PaperRail should create a production-shaped FLOP rehearsal without value");
+  for (const expected of ["accepted", "locked", "claimed", "claimed"]) {
+    paperDeal = await postJson(`/api/protocol/paper-deals/${encodeURIComponent(paperDeal.id)}/advance`, {});
+    assert(paperDeal.status === expected, `PaperRail rehearsal should advance to ${expected}`);
+  }
+  assert(paperDeal.receipt_recorded === true && paperDeal.next_action === null, "PaperRail rehearsal should finish with a terminal receipt");
+  let refundDeal = await postJson("/api/protocol/paper-deals", { amount: "50", label: "RC refund rehearsal" });
+  refundDeal = await postJson(`/api/protocol/paper-deals/${encodeURIComponent(refundDeal.id)}/advance`, {});
+  refundDeal = await postJson(`/api/protocol/paper-deals/${encodeURIComponent(refundDeal.id)}/advance`, {});
+  refundDeal = await postJson(`/api/protocol/paper-deals/${encodeURIComponent(refundDeal.id)}/refund`, {});
+  assert(refundDeal.status === "refunded", "PaperRail rehearsal should exercise the refund path against a simulated deadline");
+  const persistedProtocolStore = JSON.parse(await readFile(join(dataDir, "agentswarm.json"), "utf8"));
+  assert(persistedProtocolStore.protocolTranscripts?.length >= 3 && persistedProtocolStore.protocolRoomSync?.["tclk-offers"]?.lastSeq >= 43, "Protocol transcript and room cursor should be restart-persistent");
+  assert(Object.values(persistedProtocolStore.protocolPaperNotes || {}).every((record) => record.ciphertext && !String(record.ciphertext).includes("tclkpaper1")), "PaperRail note records should be encrypted at rest");
   const bridgedActivity = await getJson("/api/network/activity?limit=10");
   const bridgedEvent = bridgedActivity.events.find((item) => item.type === "technocore_chat_message");
   assert(!bridgedEvent, "OSA Network Activity should not include raw Technocore room messages");
@@ -550,6 +576,11 @@ function startTechnocoreFixture() {
     }
     if (["/r/osa-lab", "/r/osa-network", "/r/tclk-offers"].includes(url.pathname) && req.method === "GET") {
       const room = url.pathname.split("/").at(-1);
+      if (room === "tclk-offers" && technocoreTclkUnavailable) {
+        res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+        res.end("fixture unavailable\n");
+        return;
+      }
       technocoreReads.push({
         room,
         since: url.searchParams.get("since") || "",

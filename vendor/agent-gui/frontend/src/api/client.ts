@@ -1,4 +1,4 @@
-import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolOverview, PublicProjectDetail, PublicProjectReview, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
+import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolOverview, ProtocolPaperDeal, PublicProjectDetail, PublicProjectReview, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
 
 const BASE = "/api";
 const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
@@ -378,6 +378,14 @@ export const api = {
   },
   protocol: {
     overview: (signal?: AbortSignal) => get<ProtocolOverview>("/protocol/overview", signal),
+    createPaperDeal: (body: { amount: string; label?: string }) =>
+      post<ProtocolPaperDeal>("/protocol/paper-deals", body),
+    advancePaperDeal: (id: string) =>
+      post<ProtocolPaperDeal>(`/protocol/paper-deals/${encodeURIComponent(id)}/advance`, {}),
+    refundPaperDeal: (id: string) =>
+      post<ProtocolPaperDeal>(`/protocol/paper-deals/${encodeURIComponent(id)}/refund`, {}),
+    cancelPaperDeal: (id: string) =>
+      post<ProtocolPaperDeal>(`/protocol/paper-deals/${encodeURIComponent(id)}/cancel`, {}),
   },
   wallet: {
     challenge: (body: { address: string; chain_id?: string | null }) =>
