@@ -242,6 +242,7 @@ async function loadStore() {
       protocolRoomSync: {},
       protocolPaperDeals: [],
       protocolPaperNotes: {},
+      projectManifests: [],
       federationPeerAnnouncements: [],
       publicRooms: [],
       publicProjects: [],
@@ -286,6 +287,7 @@ function normalizeStore(input) {
     protocolRoomSync: normalizeProtocolRoomSync(input.protocolRoomSync || {}),
     protocolPaperDeals: normalizeProtocolPaperDeals(input.protocolPaperDeals || []),
     protocolPaperNotes: normalizeProtocolPaperNotes(input.protocolPaperNotes || {}),
+    projectManifests: normalizeProjectManifests(input.projectManifests || []),
     federationPeerAnnouncements: normalizeFederationPeerAnnouncements(input.federationPeerAnnouncements || []),
     publicRooms: normalizePublicCollections(input.publicRooms || [], "room"),
     publicProjects: normalizePublicCollections(input.publicProjects || [], "project"),
@@ -1101,6 +1103,149 @@ function normalizeProtocolPaperDeals(records) {
   return output.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0, 100);
 }
 
+
+function normalizeProjectManifests(records) {
+  if (!Array.isArray(records)) return [];
+  const seen = new Set();
+  const output = [];
+  for (const rec of records) {
+    try {
+      const version = Number(rec.version);
+      if (rec.schema !== "osa-project/1" || !Number.isFinite(version) || version < 1) continue;
+      const key = rec.project_id + "\x00" + version;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const issuedAt = validIsoTimestamp(rec.issued_at) || now();
+      output.push({
+        schema: "osa-project/1",
+        project_id: String(rec.project_id).slice(0, 140),
+        version,
+        payload: typeof rec.payload === "object" && rec.payload !== null ? rec.payload : {},
+        payload_hash: String(rec.payload_hash || "").slice(0, 100),
+        issuer_did: String(rec.issuer_did || "").slice(0, 120) || null,
+        issued_at: issuedAt,
+        prev_version_hash: String(rec.prev_version_hash || "").slice(0, 100) || "0",
+        signature: String(rec.signature || "").slice(0, 200),
+        node_id: String(rec.node_id || "").slice(0, 80)
+      });
+    } catch { /* skip corrupt */ }
+  }
+  return output.sort((a, b) => String(b.issued_at).localeCompare(String(a.issued_at))).slice(0, 1000);
+}
+
+function latestProjectManifest(projectId) {
+  store.projectManifests = normalizeProjectManifests(store.projectManifests || []);
+  return store.projectManifests.find((m) => m.project_id === projectId) || null;
+}
+
+function makeProjectManifest(project, previous) {
+  const payload = {
+    project_id: String(project.id || "").slice(0, 140),
+    type: "project",
+    name: String(project.name || "OSA Project").slice(0, 120),
+    summary_hash: hashToken(project.summary || ""),
+    task_count: (project.taskIds || []).length,
+    room_count: (project.rooms || []).length,
+    share_file_repo: Boolean(project.shareFileRepo),
+    owner_wallet_address: project.ownerWalletAddress || null,
+    is_example: Boolean(project.isExample),
+    shared_at: project.sharedAt || null,
+    updated_at: project.updatedAt || project.sharedAt || null
+  };
+  const payloadHash = objectHash(payload);
+  const version = (previous?.version || 0) + 1;
+  const issuedAt = now();
+  const canonical = stableStringify({
+    schema: "osa-project/1",
+    project_id: payload.project_id,
+    version,
+    payload_hash: payloadHash,
+    payload,
+    issuer_did: technocoreDid || null,
+    issued_at: issuedAt
+  });
+  const signature = signPayload(null, Buffer.from(canonical), nodeIdentity.privateKeyPem).toString("base64");
+  return {
+    schema: "osa-project/1",
+    project_id: payload.project_id,
+    version,
+    payload,
+    payload_hash: payloadHash,
+    issuer_did: technocoreDid || null,
+    issued_at: issuedAt,
+    prev_version_hash: previous?.payload_hash || "0",
+    signature,
+    node_id: nodeIdentity.nodeId
+  };
+}
+
+function verifyProjectManifest(manifest) {
+  try {
+    if (manifest.schema !== "osa-project/1") return { ok: false, reason: "wrong schema" };
+    if (!Number.isFinite(manifest.version) || manifest.version < 1) return { ok: false, reason: "invalid version" };
+    const recomputedHash = objectHash(manifest.payload);
+    if (recomputedHash !== manifest.payload_hash) return { ok: false, reason: "payload_hash mismatch" };
+    const canonical = stableStringify({
+      schema: "osa-project/1",
+      project_id: manifest.project_id,
+      version: manifest.version,
+      payload_hash: manifest.payload_hash,
+      payload: manifest.payload,
+      issuer_did: manifest.issuer_did,
+      issued_at: manifest.issued_at
+    });
+    const publicKey = createPublicKey(nodeIdentity.publicKeyPem);
+    const verified = verify("ed25519", Buffer.from(canonical), publicKey, Buffer.from(manifest.signature, "base64"));
+    return { ok: verified, reason: verified ? "" : "signature does not match" };
+  } catch (error) {
+    return { ok: false, reason: error.message || "verification error" };
+  }
+}
+
+function projectManifestProjection(project) {
+  const manifest = latestProjectManifest(project.id);
+  if (!manifest) return null;
+  const verification = verifyProjectManifest(manifest);
+  return {
+    schema: "osa-project/1",
+    version: manifest.version,
+    payload_hash: manifest.payload_hash,
+    signed_at: manifest.issued_at,
+    verified: verification.ok,
+    issuer_did: manifest.issuer_did,
+    invalid_reason: verification.ok ? null : (verification.reason || null)
+  };
+}
+
+async function announceProjectManifest(manifest, rooms = null) {
+  if (!technocoreEnabled || !technocoreAnnounceEnabled) return false;
+  const targets = Array.isArray(rooms)
+    ? rooms.map((room) => normalizeTechnocoreName(room)).filter(Boolean)
+    : [technocoreAnnounceRoom].map((room) => normalizeTechnocoreName(room)).filter(Boolean);
+  const uniqueTargets = Array.from(new Set(targets));
+  if (!uniqueTargets.length) return false;
+  const text = ("osa-project/1 " + manifest.project_id + " v" + manifest.version + " " + manifest.payload_hash + " " + (manifest.payload?.name || "").slice(0, 60)).replace(/\s+/g, " ").trim().slice(0, 500);
+  if (!text) return false;
+  let announced = false;
+  for (const room of uniqueTargets) {
+    try {
+      await technocoreSay(room, text);
+      announced = true;
+    } catch (error) {
+      console.warn("Technocore manifest announcement to " + room + " failed: " + error.message);
+    }
+  }
+  if (announced) {
+    event("technocore_project_manifest_announced", "Project manifest announced on Technocore", {
+      source: "technocore", external: true, untrusted: true,
+      projectId: manifest.project_id,
+      version: manifest.version,
+      rooms: uniqueTargets
+    });
+    await saveStore();
+  }
+  return announced;
+}
 function isEncryptedPaperValue(value) {
   return Boolean(
     value && Number(value.version || 1) === 1 &&
@@ -1900,6 +2045,7 @@ async function loadPostgresStore() {
       protocolRoomSync: {},
       protocolPaperDeals: [],
       protocolPaperNotes: {},
+    projectManifests: [],
     federationPeerAnnouncements: [],
     publicRooms: [],
     publicProjects: [],
@@ -5072,7 +5218,8 @@ function agentGuiRankedPublicCollections(type, limit = 100) {
       const copyStats = type === "project"
         ? agentGuiProjectCopyStats(item)
         : {
-            copy_count: Math.max(0, Number(item.copyCount || 0)),
+            manifest: projectManifestProjection(item),
+        copy_count: Math.max(0, Number(item.copyCount || 0)),
             copy_event_count: 0,
             last_copied_at: item.lastCopiedAt || null
           };
@@ -5091,7 +5238,7 @@ function agentGuiRankedPublicCollections(type, limit = 100) {
         item_count: item.taskIds.length,
         shared_at: item.sharedAt,
         last_copied_at: copyStats.last_copied_at,
-        owner_wallet_address: item.ownerWalletAddress || null,
+        manifest: projectManifestProjection(item),        owner_wallet_address: item.ownerWalletAddress || null,
         ...donationStats,
         ...reviewStats
       };
@@ -5989,6 +6136,9 @@ async function shareAgentGuiProject(body = {}) {
     objectType: "public_project",
     objectId: next.id
   });
+  const prevManifest = latestProjectManifest(next.id);
+  const manifest = makeProjectManifest(next, prevManifest);
+  store.projectManifests = normalizeProjectManifests([manifest, ...(store.projectManifests || [])]);
   if (existingIndex >= 0) store.publicProjects[existingIndex] = next;
   else store.publicProjects.unshift(next);
   event("agentgui_project_shared", "Project shared to Public Projects", {
@@ -6000,6 +6150,9 @@ async function shareAgentGuiProject(body = {}) {
     technocoreChannels
   });
   await saveStore();
+  announceProjectManifest(manifest, technocoreChannels).catch((error) => {
+    console.warn("Project manifest announcement failed: " + error.message);
+  });
   announceTechnocoreProjectShare(next, technocoreChannels).catch((error) => {
     console.warn(`Technocore announcement failed: ${error.message}`);
   });
@@ -8115,6 +8268,17 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     } catch (error) {
       return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to delete project" });
     }
+  }
+
+  const projectManifestMatch = path.match(/^\/api\/public\/projects\/([^/]+)\/manifest$/);
+  if (method === "GET" && projectManifestMatch) {
+    const projectId = decodeURIComponent(projectManifestMatch[1]);
+    const project = store.publicProjects.find((item) => item.id === projectId);
+    if (!project) return notFound(res);
+    const manifest = latestProjectManifest(projectId);
+    if (!manifest) return sendJson(res, 404, { detail: "No manifest for this project" });
+    const verification = verifyProjectManifest(manifest);
+    return sendJson(res, 200, { manifest: { ...manifest, verified: verification.ok, invalid_reason: verification.ok ? null : (verification.reason || null) } });
   }
   if (method === "GET" && projectDetailMatch) {
     const details = publicProjectDetails(decodeURIComponent(projectDetailMatch[1]));

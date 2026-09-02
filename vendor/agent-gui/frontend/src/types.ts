@@ -62,6 +62,16 @@ export interface TopAgent {
   model: string;
   goal: string;
   copy_count: number;
+  manifest?: {
+    schema: "osa-project/1";
+    version: number;
+    payload_hash: string;
+    signed_at: string;
+    verified: boolean;
+    issuer_did?: string | null;
+    invalid_reason?: string | null;
+  } | null;
+
   donation_count?: number;
   donation_total_flop?: number;
   platform_fee_total_flop?: number;

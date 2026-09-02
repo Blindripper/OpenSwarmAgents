@@ -89,7 +89,7 @@ const WORKBENCH_LEGACY_KEY_V1 = legacyStorageKey("workbench-v1");
 const ONBOARDING_DISMISSED_KEY = "osa-openclaw-onboarding-dismissed";
 const WALLET_STORAGE_KEY = "osa-wallet-session";
 const RESULT_CANVAS_OPEN_KEY = "osa-result-canvas-open";
-type DashboardTab = "workbench" | "top-projects" | "network";
+type DashboardTab = "workbench" | "top-projects" | "network" | "work" | "market" | "trust" | "vault";
 interface WalletSession {
   address: string;
   chain_id?: string | null;
@@ -2062,6 +2062,10 @@ export default function App() {
           ["workbench", "Workspaces / Projects"],
           ["top-projects", "Project Discovery"],
           ["network", "Protocol Network"],
+          ["work", "Work"],
+          ["market", "Market & Deals"],
+          ["trust", "Trust"],
+          ["vault", "Vault"],
         ] as const).map(([id, label]) => (
           <button
             key={id}
@@ -2246,6 +2250,47 @@ export default function App() {
           onRefreshActivity={refreshNetworkActivity}
           onOpenProject={(projectId) => setProjectDetails({ projectId })}
         />
+      ) : dashboardTab === "work" ? (
+        <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13 }}>
+          <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 10 }}>Work — Jobs & Agent Workflows</div>
+          <div style={{ maxWidth: 640, lineHeight: 1.6, color: "#94a3b8" }}>
+            Kibble/A2A/ACP job discovery, signed claim/accept, agent execution, result publication.
+            <div style={{ marginTop: 16, padding: 12, border: "1px solid #273453", borderRadius: 8, background: "#0b1525" }}>
+              <span style={{ color: "#60a5fa", fontWeight: 800 }}>Phase 5</span> — Not yet implemented.<br />
+              Available: local agent execution on existing desks. Technocore job bridge planned.
+            </div>
+          </div>
+        </div>
+      ) : dashboardTab === "market" ? (
+        <ProtocolOsPanel
+          events={networkEvents}
+          live={networkLive}
+          activityLoading={networkEventsLoading}
+          onRefreshActivity={refreshNetworkActivity}
+          onOpenProject={(projectId) => setProjectDetails({ projectId })}
+        />
+      ) : dashboardTab === "trust" ? (
+        <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13 }}>
+          <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 10 }}>Trust — Credence & Validation</div>
+          <div style={{ maxWidth: 640, lineHeight: 1.6, color: "#94a3b8" }}>
+            DID histories, completed deals, unique counterparties, refunds, disputes, Credence vouches, validator results.
+            <div style={{ marginTop: 16, padding: 12, border: "1px solid #273453", borderRadius: 8, background: "#0b1525" }}>
+              <span style={{ color: "#60a5fa", fontWeight: 800 }}>Phase 9</span> — Not yet implemented.<br />
+              Current: Top100 Projects ranked by copy count. Long-term: evidence-based views (builders, agents, validators, reliability, completed work).
+            </div>
+          </div>
+        </div>
+      ) : dashboardTab === "vault" ? (
+        <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13 }}>
+          <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 10 }}>Vault — Keys, Secrets & Policies</div>
+          <div style={{ maxWidth: 640, lineHeight: 1.6, color: "#94a3b8" }}>
+            Node/agent DIDs, delegations, signing policies, encrypted deal secrets, settlement rail config.
+            <div style={{ marginTop: 16, padding: 12, border: "1px solid #273453", borderRadius: 8, background: "#0b1525" }}>
+              <span style={{ color: "#60a5fa", fontWeight: 800 }}>Phases 3 & 7</span> — Partially implemented.<br />
+              PaperRail deal secrets encrypted at rest. Agent DIDs, capability profiles, and signing policies planned.
+            </div>
+          </div>
+        </div>
       ) : (
         <Office
           teams={teams}
