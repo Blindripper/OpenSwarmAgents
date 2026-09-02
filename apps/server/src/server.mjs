@@ -103,6 +103,7 @@ const technocoreSignedMessages = process.env.OSA_TECHNOCORE_SIGNED !== "0";
 const technocoreChannelsCache = { key: "", expiresAt: 0, channels: [], error: null };
 const technocoreNonceByRoom = new Map();
 const technocoreRoomReadBackoff = new Map();
+const technocoreLocalMirrorCache = new Map();
 let technocoreReadRequestCounter = 0;
 const managedConnectorProcesses = new Map();
 const managedConnectorLogLimit = 12 * 1024;
@@ -922,6 +923,15 @@ function normalizeNetworkChatMessages(messages) {
           walletAddress,
           message: String(message.message || "").trim().slice(0, 500),
           createdAt: message.createdAt || message.created_at || now(),
+          technocoreRoom: normalizeTechnocoreName(message.technocoreRoom || message.technocore_room) || null,
+          technocoreFrom: message.technocoreFrom || message.technocore_from
+            ? String(message.technocoreFrom || message.technocore_from).slice(0, 120)
+            : null,
+          technocoreSeq: finitePositiveNumber(message.technocoreSeq || message.technocore_seq),
+          technocoreSigned: message.technocoreSigned === true || message.technocore_signed === true,
+          technocoreDeliveryStatus: message.technocoreDeliveryStatus || message.technocore_delivery_status
+            ? String(message.technocoreDeliveryStatus || message.technocore_delivery_status).slice(0, 20)
+            : null,
           signature: message.signature || null
         };
       } catch {
@@ -5948,6 +5958,11 @@ function finiteNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function finitePositiveNumber(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 function idleSecondsSince(value) {
   const date = new Date(String(value || ""));
   if (Number.isNaN(date.getTime())) return null;
@@ -6016,24 +6031,14 @@ async function publicNetworkChatMessages(limit = 60, channel = technocorePublicR
   const cursor = Number.isFinite(parsedSince) ? Math.max(0, parsedSince) : 0;
   const room = normalizeTechnocoreName(channel) || technocorePublicRoom;
   const includeLocal = !room || room === technocorePublicRoom;
+  const externalMessages = await technocorePublicChatMessages(max, room, cursor);
   const localMessages = includeLocal
     ? normalizeNetworkChatMessages(store.networkChatMessages || [])
       .slice()
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
       .slice(0, max)
-      .map((message) => ({
-        id: message.id,
-        node_id: message.nodeId,
-        wallet_address: message.walletAddress,
-        message: message.message,
-        created_at: message.createdAt,
-        source: "osa",
-        external: false,
-        untrusted: false,
-        room: technocorePublicRoom
-      }))
+      .map((message) => publicLocalNetworkChatMessage(message, externalMessages))
     : [];
-  const externalMessages = await technocorePublicChatMessages(max, room, cursor);
   const dedupedExternalMessages = externalMessages.filter((message) => !isMirroredLocalNetworkChat(message, localMessages));
   return [...localMessages, ...dedupedExternalMessages]
     .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))
@@ -6041,10 +6046,66 @@ async function publicNetworkChatMessages(limit = 60, channel = technocorePublicR
     .reverse();
 }
 
+function publicLocalNetworkChatMessage(message, externalMessages = []) {
+  const delivery = localNetworkChatTechnocoreDelivery(message, externalMessages);
+  return {
+    id: message.id,
+    node_id: message.nodeId,
+    wallet_address: message.walletAddress,
+    message: message.message,
+    created_at: message.createdAt,
+    source: "osa",
+    external: false,
+    untrusted: false,
+    room: technocorePublicRoom,
+    from: delivery?.from || undefined,
+    seq: delivery?.seq || undefined,
+    signed: delivery?.signed === true,
+    delivery_status: delivery?.deliveryStatus || undefined
+  };
+}
+
+function localNetworkChatTechnocoreDelivery(message, externalMessages) {
+  if (message.technocoreFrom) {
+    return {
+      from: message.technocoreFrom,
+      seq: message.technocoreSeq || null,
+      signed: message.technocoreSigned === true,
+      deliveryStatus: message.technocoreDeliveryStatus || "sent"
+    };
+  }
+  const cached = technocoreLocalMirrorCache.get(message.id);
+  if (cached) return cached;
+  if (message.nodeId !== nodeIdentity.nodeId) return null;
+  const createdAt = Date.parse(message.createdAt || "");
+  const mirror = externalMessages
+    .filter((external) => (
+      external.source === "technocore"
+      && [technocoreDid, technocoreNick].includes(external.from)
+      && external.message === message.message
+    ))
+    .map((external) => ({ external, distance: Math.abs(Date.parse(external.created_at || "") - createdAt) }))
+    .filter(({ distance }) => Number.isFinite(distance) && distance <= 120_000)
+    .sort((a, b) => a.distance - b.distance)[0]?.external;
+  if (!mirror) return null;
+  const delivery = {
+    from: mirror.from,
+    seq: mirror.seq || null,
+    signed: mirror.signed === true,
+    deliveryStatus: "sent"
+  };
+  technocoreLocalMirrorCache.set(message.id, delivery);
+  return delivery;
+}
+
 function isMirroredLocalNetworkChat(externalMessage, localMessages) {
   if (externalMessage.source !== "technocore") return false;
   if (externalMessage.from !== technocoreNick && externalMessage.from !== technocoreDid) return false;
-  return localMessages.some((localMessage) => localMessage.message === externalMessage.message);
+  return localMessages.some((localMessage) => (
+    localMessage.seq && externalMessage.seq
+      ? Number(localMessage.seq) === Number(externalMessage.seq)
+      : localMessage.message === externalMessage.message
+  ));
 }
 
 async function technocorePublicChatMessages(limit = 60, channel = technocorePublicRoom, since = 0) {
@@ -6128,16 +6189,19 @@ async function createNetworkChatMessage(body = {}) {
       ok: true,
       technocore_mirrored: true,
       message: {
-        id: `technocore-chat-outgoing-${room}-${randomUUID()}`,
+        id: technocoreWrite.seq
+          ? `technocore-chat-${room}-${technocoreWrite.seq}`
+          : `technocore-chat-outgoing-${room}-${randomUUID()}`,
         node_id: "technocore",
         wallet_address: null,
         message: text,
-        created_at: now(),
+        created_at: technocoreWrite.createdAt || now(),
         source: "technocore",
         external: true,
         untrusted: true,
         room,
         from: technocoreWrite.from || technocoreNick,
+        seq: technocoreWrite.seq || undefined,
         signed: technocoreWrite.signed === true,
         delivery_status: technocoreWrite.ambiguous ? "pending" : technocoreWrite.duplicate ? "duplicate" : "sent",
         warning: technocoreWrite.warning || null
@@ -6167,10 +6231,18 @@ async function createNetworkChatMessage(body = {}) {
     walletAddress
   });
   await saveStore();
-  const technocoreMirrored = await mirrorNetworkChatToTechnocore(message);
+  const technocoreWrite = await mirrorNetworkChatToTechnocore(message);
+  if (technocoreWrite) {
+    message.technocoreRoom = technocorePublicRoom;
+    message.technocoreFrom = technocoreWrite.from || technocoreNick;
+    message.technocoreSeq = technocoreWrite.seq || null;
+    message.technocoreSigned = technocoreWrite.signed === true;
+    message.technocoreDeliveryStatus = technocoreWrite.ambiguous ? "pending" : technocoreWrite.duplicate ? "duplicate" : "sent";
+    await saveStore();
+  }
   return {
     ok: true,
-    technocore_mirrored: technocoreMirrored,
+    technocore_mirrored: Boolean(technocoreWrite),
     message: {
       id: message.id,
       node_id: message.nodeId,
@@ -6180,21 +6252,24 @@ async function createNetworkChatMessage(body = {}) {
       source: "osa",
       external: false,
       untrusted: false,
-      room: technocorePublicRoom
+      room: technocorePublicRoom,
+      from: message.technocoreFrom || undefined,
+      seq: message.technocoreSeq || undefined,
+      signed: message.technocoreSigned === true,
+      delivery_status: message.technocoreDeliveryStatus || undefined
     }
   };
 }
 
 async function mirrorNetworkChatToTechnocore(message) {
-  if (!technocoreEnabled || !technocorePublicRoom) return false;
+  if (!technocoreEnabled || !technocorePublicRoom) return null;
   const text = String(message.message || "").replace(/\s+/g, " ").trim().slice(0, 500);
-  if (!text) return false;
+  if (!text) return null;
   try {
-    await technocoreSay(technocorePublicRoom, text);
-    return true;
+    return await technocoreSay(technocorePublicRoom, text);
   } catch (error) {
     console.warn(`Technocore network chat mirror failed: ${error.message}`);
-    return false;
+    return null;
   }
 }
 
@@ -6236,7 +6311,19 @@ async function technocoreSaySigned(room, text) {
     body: JSON.stringify({ did: technocoreDid, sig, nonce, text })
   });
   if (!response.ok) throw technocoreWriteHttpError(response.status);
-  return { signed: true, from: technocoreDid };
+  let view = null;
+  try {
+    view = await response.json();
+  } catch {
+    /* Older compatible bridges may acknowledge a signed write without JSON details. */
+  }
+  const posted = view?.posted && typeof view.posted === "object" ? view.posted : null;
+  return {
+    signed: true,
+    from: technocoreDid,
+    seq: finitePositiveNumber(posted?.seq),
+    createdAt: validIsoTimestamp(posted?.ts)
+  };
 }
 
 async function fetchTechnocoreWrite(path, options = {}) {

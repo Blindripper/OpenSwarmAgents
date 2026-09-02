@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NetworkChatMessage } from "../types";
-import { flushQueuedMessages, requestWithTimeout, stageIncomingMessages } from "./NetworkChatWindow";
+import { flushQueuedMessages, mergeMessages, requestWithTimeout, stageIncomingMessages } from "./NetworkChatWindow";
 
 function message(index: number): NetworkChatMessage {
   return {
@@ -80,5 +80,47 @@ describe("Technocore slow mode", () => {
     }));
     await expect(pending).rejects.toThrow();
     expect(aborted).toBe(true);
+  });
+});
+
+describe("Technocore delivery reconciliation", () => {
+  const did = "did:key:z6MkTestIdentity";
+
+  it("replaces a provisional outgoing message with its confirmed sequence record", () => {
+    const provisional: NetworkChatMessage = {
+      ...message(1),
+      id: "technocore-chat-outgoing-lobby-1",
+      room: "lobby",
+      from: did,
+      seq: undefined,
+      message: "One signed message",
+    };
+    const confirmed: NetworkChatMessage = {
+      ...provisional,
+      id: "technocore-chat-lobby-42",
+      seq: 42,
+    };
+    expect(mergeMessages([provisional], [confirmed])).toEqual([confirmed]);
+  });
+
+  it("prefers the trusted local osa-network record over its mirrored external copy", () => {
+    const local: NetworkChatMessage = {
+      ...message(1),
+      id: "network-chat-local-1",
+      room: "osa-network",
+      from: did,
+      seq: 77,
+      source: "osa",
+      signed: true,
+      message: "Mirrored public message",
+    };
+    const external: NetworkChatMessage = {
+      ...local,
+      id: "technocore-chat-osa-network-77",
+      source: "technocore",
+      external: true,
+      untrusted: true,
+    };
+    expect(mergeMessages([external], [local])).toEqual([local]);
   });
 });

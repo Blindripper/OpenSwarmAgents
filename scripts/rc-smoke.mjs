@@ -89,12 +89,14 @@ try {
     message: "RC smoke direct Technocore channel write"
   });
   assert(labPost.message?.source === "technocore" && labPost.message?.room === "osa-lab", "Non-public Technocore channel posts should stay external");
+  assert(labPost.message?.id === "technocore-chat-osa-lab-42" && labPost.message?.seq === 42, "Direct Technocore posts should immediately use their canonical sequence identity");
   assert(technocoreWrites.some((item) => item.room === "osa-lab" && item.text.includes("RC smoke direct Technocore channel write") && item.from.startsWith("did:key:z6Mk")), "Technocore fixture should receive selected-channel text from the OSA DID");
   const mirroredChat = await postJson("/api/network/chat", {
     message: "RC smoke public channel mirror",
     wallet_address: testWalletAddress
   });
   assert(mirroredChat.technocore_mirrored === true, "osa-network posts should mirror to the Technocore OSA room when enabled");
+  assert(mirroredChat.message?.from?.startsWith("did:key:z6Mk") && mirroredChat.message?.signed === true && mirroredChat.message?.seq === 42, "osa-network posts should expose their signed Technocore DID delivery instead of only the wallet identity");
   assert(technocoreWrites.some((item) => item.room === "osa-network" && item.text.includes("RC smoke public channel mirror") && item.from.startsWith("did:key:z6Mk")), "Technocore fixture should receive mirrored osa-network text from the OSA DID");
   const mirroredChannel = await getJson("/api/network/chat?limit=20");
   assert(
@@ -524,8 +526,17 @@ function startTechnocoreFixture() {
           nonce: parsed.nonce,
           text: parsed.text
         });
+        const roomWriteCount = technocoreWrites.filter((item) => item.room === room).length;
+        const posted = {
+          seq: 41 + roomWriteCount,
+          ts: "2026-09-01T06:00:10.000Z",
+          from: parsed.did,
+          nonce: parsed.nonce,
+          sig: parsed.sig,
+          text: parsed.text
+        };
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true, room }));
+        res.end(JSON.stringify({ ok: true, room, posted, messages: [posted] }));
       });
       return;
     }

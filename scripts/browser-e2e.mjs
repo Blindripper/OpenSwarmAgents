@@ -113,13 +113,42 @@ try {
     if (message.type() === "error") pageErrors.push(message.text());
   });
   let chatGetRequestCount = 0;
-  await page.route("**/api/network/chat?**", async (route) => {
+  let sentChatFixture = null;
+  await page.route("**/api/network/chat**", async (route) => {
+    if (route.request().method() === "POST") {
+      const body = route.request().postDataJSON();
+      if (body?.message !== "Browser signed DID delivery") return route.continue();
+      sentChatFixture = {
+        id: "network-chat-browser-signed",
+        node_id: "browser-fixture-node",
+        wallet_address: testWalletAddress,
+        message: body.message,
+        created_at: "2026-09-02T05:30:00.000Z",
+        source: "osa",
+        external: false,
+        untrusted: false,
+        room: "osa-network",
+        from: testTechnocoreDid,
+        seq: 9001,
+        signed: true,
+        delivery_status: "sent"
+      };
+      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ok: true, technocore_mirrored: true, message: sentChatFixture }) });
+    }
     if (route.request().method() !== "GET") return route.continue();
     chatGetRequestCount += 1;
     if (chatGetRequestCount === 3) {
       return route.fulfill({ status: 200, contentType: "application/json", body: "{" });
     }
-    return route.continue();
+    const response = await route.fetch();
+    if (!sentChatFixture) return route.fulfill({ response });
+    const payload = await response.json();
+    payload.messages = [
+      ...(payload.messages || []),
+      { ...sentChatFixture, id: "technocore-chat-osa-network-9001", source: "technocore", external: true, untrusted: true },
+      sentChatFixture
+    ];
+    return route.fulfill({ response, json: payload });
   });
   await page.route("**/api/health", async (route) => {
     const response = await route.fetch();
@@ -198,6 +227,15 @@ try {
   await expectText(page, '[data-testid="network-chat-messages"]', "Search marker 07");
   assert(!(await chatMessages.innerText()).includes("Search marker 08"), "message search should filter the cached channel messages");
   await page.getByRole("textbox", { name: "Search messages" }).fill("");
+  const chatPollCountBeforeSend = chatGetRequestCount;
+  await page.getByPlaceholder("Message osa-network").fill("Browser signed DID delivery");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expectText(page, '[data-testid="network-chat-messages"]', "Browser signed DID delivery");
+  for (let attempt = 0; attempt < 24 && chatGetRequestCount <= chatPollCountBeforeSend; attempt += 1) await delay(250);
+  assert(chatGetRequestCount > chatPollCountBeforeSend, "network chat should reconcile the sent record with a later room poll");
+  assert(await chatMessages.getByText("Browser signed DID delivery", { exact: true }).count() === 1, "a signed osa-network message and its Technocore mirror should render only once");
+  await expectText(page, '[data-testid="network-chat-messages"]', "z6MkvG23xu...");
+  await expectText(page, '[data-testid="network-chat-messages"]', "signed DID");
   await page.getByRole("button", { name: "#" }).click();
   await expectText(page, "body", "Main channels");
   await expectText(page, "body", "Other channels");

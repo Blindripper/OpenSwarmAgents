@@ -54,8 +54,8 @@ function loadSlowMode(): boolean {
 }
 
 function messageIdentity(message: NetworkChatMessage): string {
+  if (message.from?.startsWith("did:key:")) return `<${message.from.slice(8, 18)}...>`;
   if (message.source === "technocore") {
-    if (message.from?.startsWith("did:key:")) return `<${message.from.slice(8, 18)}...>`;
     return message.from ? `~${message.from.slice(0, 28)}` : "technocore";
   }
   return shortAddress(message.wallet_address);
@@ -107,13 +107,44 @@ function compareMessages(a: NetworkChatMessage, b: NetworkChatMessage): number {
   return a.id.localeCompare(b.id);
 }
 
-function mergeAllMessages(previous: NetworkChatMessage[], incoming: NetworkChatMessage[]): NetworkChatMessage[] {
-  const byId = new Map<string, NetworkChatMessage>();
-  for (const message of [...previous, ...incoming]) byId.set(message.id, message);
-  return [...byId.values()].sort(compareMessages);
+function sameTechnocoreDelivery(a: NetworkChatMessage, b: NetworkChatMessage): boolean {
+  if ((a.room || defaultChannel) !== (b.room || defaultChannel) || a.message !== b.message) return false;
+  if (a.from && b.from && a.from !== b.from) return false;
+  const aSeq = Number.isFinite(a.seq) && Number(a.seq) > 0;
+  const bSeq = Number.isFinite(b.seq) && Number(b.seq) > 0;
+  const aProvisional = a.id.startsWith("technocore-chat-outgoing-");
+  const bProvisional = b.id.startsWith("technocore-chat-outgoing-");
+  if ((aProvisional && bSeq) || (bProvisional && aSeq)) return true;
+  return aSeq && bSeq && Number(a.seq) === Number(b.seq)
+    && new Set([a.source, b.source]).has("technocore");
 }
 
-function mergeMessages(previous: NetworkChatMessage[], incoming: NetworkChatMessage[]): NetworkChatMessage[] {
+function preferredTechnocoreDelivery(a: NetworkChatMessage, b: NetworkChatMessage): NetworkChatMessage {
+  if (a.source === "osa" && b.source === "technocore") return a;
+  if (b.source === "osa" && a.source === "technocore") return b;
+  if (Number.isFinite(b.seq) && !Number.isFinite(a.seq)) return b;
+  return a;
+}
+
+function mergeAllMessages(previous: NetworkChatMessage[], incoming: NetworkChatMessage[]): NetworkChatMessage[] {
+  const merged: NetworkChatMessage[] = [];
+  for (const message of [...previous, ...incoming]) {
+    const sameIdIndex = merged.findIndex((existing) => existing.id === message.id);
+    if (sameIdIndex >= 0) {
+      merged[sameIdIndex] = message;
+      continue;
+    }
+    const deliveryIndex = merged.findIndex((existing) => sameTechnocoreDelivery(existing, message));
+    if (deliveryIndex >= 0) {
+      merged[deliveryIndex] = preferredTechnocoreDelivery(merged[deliveryIndex], message);
+      continue;
+    }
+    merged.push(message);
+  }
+  return merged.sort(compareMessages);
+}
+
+export function mergeMessages(previous: NetworkChatMessage[], incoming: NetworkChatMessage[]): NetworkChatMessage[] {
   return mergeAllMessages(previous, incoming).slice(-100);
 }
 
@@ -773,6 +804,13 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
                         {message.delivery_status}
                       </span>
                     )}
+                  </div>
+                )}
+                {message.source !== "technocore" && message.signed && message.from?.startsWith("did:key:") && (
+                  <div style={{ marginTop: 5 }}>
+                    <span style={{ height: 17, display: "inline-flex", alignItems: "center", padding: "0 6px", borderRadius: 5, border: "1px solid #244c35", background: "#102419", color: "#86efac", fontSize: 10, fontWeight: 900 }}>
+                      signed DID
+                    </span>
                   </div>
                 )}
                 <div style={{ marginTop: 5, fontSize: 12, lineHeight: 1.4 }}>{message.message}</div>
