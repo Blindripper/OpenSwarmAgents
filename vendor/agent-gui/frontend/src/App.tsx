@@ -10,6 +10,8 @@ import { GlobalDefaultPersonaEditor } from "./components/GlobalDefaultPersonaEdi
 import { OpenClawOnboarding } from "./components/OpenClawOnboarding";
 import { TopAgentsPanel } from "./components/TopAgentsPanel";
 import { ProtocolOsPanel } from "./components/ProtocolOsPanel";
+import { VaultPanel } from "./components/VaultPanel";
+import { JobsPanel } from "./components/JobsPanel";
 import { NetworkChatWindow } from "./components/NetworkChatWindow";
 import { ProjectDetailsModal } from "./components/ProjectDetailsModal";
 import { ManagerAuditHistoryModal } from "./components/ManagerAuditHistoryModal";
@@ -2252,14 +2254,7 @@ export default function App() {
         />
       ) : dashboardTab === "work" ? (
         <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13 }}>
-          <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 10 }}>Work — Jobs & Agent Workflows</div>
-          <div style={{ maxWidth: 640, lineHeight: 1.6, color: "#94a3b8" }}>
-            Kibble/A2A/ACP job discovery, signed claim/accept, agent execution, result publication.
-            <div style={{ marginTop: 16, padding: 12, border: "1px solid #273453", borderRadius: 8, background: "#0b1525" }}>
-              <span style={{ color: "#60a5fa", fontWeight: 800 }}>Phase 5</span> — Not yet implemented.<br />
-              Available: local agent execution on existing desks. Technocore job bridge planned.
-            </div>
-          </div>
+          <JobsPanel />
         </div>
       ) : dashboardTab === "market" ? (
         <ProtocolOsPanel
@@ -2282,14 +2277,7 @@ export default function App() {
         </div>
       ) : dashboardTab === "vault" ? (
         <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13 }}>
-          <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 10 }}>Vault — Keys, Secrets & Policies</div>
-          <div style={{ maxWidth: 640, lineHeight: 1.6, color: "#94a3b8" }}>
-            Node/agent DIDs, delegations, signing policies, encrypted deal secrets, settlement rail config.
-            <div style={{ marginTop: 16, padding: 12, border: "1px solid #273453", borderRadius: 8, background: "#0b1525" }}>
-              <span style={{ color: "#60a5fa", fontWeight: 800 }}>Phases 3 & 7</span> — Partially implemented.<br />
-              PaperRail deal secrets encrypted at rest. Agent DIDs, capability profiles, and signing policies planned.
-            </div>
-          </div>
+          <VaultPanel />
         </div>
       ) : (
         <Office

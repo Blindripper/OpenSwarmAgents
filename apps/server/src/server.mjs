@@ -245,6 +245,8 @@ async function loadStore() {
       projectManifests: [],
       agentCapabilities: [],
       delegations: [],
+      jobClaims: [],
+      jobResults: [],
       federationPeerAnnouncements: [],
       publicRooms: [],
       publicProjects: [],
@@ -292,6 +294,8 @@ function normalizeStore(input) {
     projectManifests: normalizeProjectManifests(input.projectManifests || []),
     agentCapabilities: normalizeAgentCapabilities(input.agentCapabilities || []),
     delegations: normalizeDelegations(input.delegations || []),
+    jobClaims: normalizeJobClaims(input.jobClaims || []),
+    jobResults: normalizeJobResults(input.jobResults || []),
     federationPeerAnnouncements: normalizeFederationPeerAnnouncements(input.federationPeerAnnouncements || []),
     publicRooms: normalizePublicCollections(input.publicRooms || [], "room"),
     publicProjects: normalizePublicCollections(input.publicProjects || [], "project"),
@@ -1281,6 +1285,60 @@ function normalizeAgentCapabilities(records) {
   }));
 }
 
+function normalizeJobClaims(records) {
+  if (!Array.isArray(records)) return [];
+  return records.slice(0, 500).map((rec) => ({
+    id: String(rec.id || "job-" + randomUUID()).slice(0, 100),
+    job_id: String(rec.job_id || "").slice(0, 140),
+    room: String(rec.room || "").slice(0, 80),
+    claimed_by: String(rec.claimed_by || "").slice(0, 120),
+    claimed_at: validIsoTimestamp(rec.claimed_at) || now(),
+    status: ["pending", "accepted", "working", "completed", "failed"].includes(rec.status) ? rec.status : "pending",
+    updated_at: validIsoTimestamp(rec.updated_at) || now()
+  }));
+}
+
+function normalizeJobResults(records) {
+  if (!Array.isArray(records)) return [];
+  return records.slice(0, 500).map((rec) => ({
+    id: String(rec.id || "result-" + randomUUID()).slice(0, 100),
+    job_id: String(rec.job_id || "").slice(0, 140),
+    claim_id: String(rec.claim_id || "").slice(0, 100),
+    agent_id: String(rec.agent_id || "").slice(0, 80),
+    summary: String(rec.summary || "").slice(0, 300),
+    output_hash: String(rec.output_hash || "").slice(0, 100),
+    submitted_at: validIsoTimestamp(rec.submitted_at) || now(),
+    verified: rec.verified === true
+  }));
+}
+
+async function discoverTechnocoreJobs(limit) {
+  if (!technocoreEnabled) return [];
+  // Try known job rooms
+  const jobRooms = ["kibble", "flop-market", "credence"];
+  const jobs = [];
+  for (const room of jobRooms) {
+    try {
+      const messages = await technocorePublicChatMessages(Math.max(1, Math.min(100, limit || 20)), room, 0);
+      for (const msg of messages) {
+        const text = msg.text || msg.message || "";
+        if (text.includes("JOB:") || text.includes("kibble:") || text.includes("ACP:") || text.includes("a2a:")) {
+          jobs.push({
+            room,
+            seq: msg.seq || 0,
+            from: msg.from || "unknown",
+            text: text.slice(0, 500),
+            observed_at: now()
+          });
+        }
+      }
+    } catch {
+      // skip unreachable rooms
+    }
+  }
+  return jobs.slice(0, Math.max(1, Math.min(200, limit || 50)));
+}
+
 function normalizeDelegations(records) {
   if (!Array.isArray(records)) return [];
   const seen = new Set();
@@ -2108,6 +2166,8 @@ async function loadPostgresStore() {
     projectManifests: [],
     agentCapabilities: [],
     delegations: [],
+    jobClaims: [],
+    jobResults: [],
     federationPeerAnnouncements: [],
     publicRooms: [],
     publicProjects: [],
@@ -8177,6 +8237,60 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     const policy = signingPolicyForAgent(agentId, action);
     return sendJson(res, 200, { agent_id: agentId || "default", action, policy, generated_at: now() });
   }
+  // Phase 5: Kibble / A2A job bridge
+  if (method === "GET" && path === "/api/jobs") {
+    const limit = Number(url.searchParams.get("limit") || 50);
+    const technocoreJobs = await discoverTechnocoreJobs(limit);
+    const localClaims = normalizeJobClaims(store.jobClaims || []);
+    const localResults = normalizeJobResults(store.jobResults || []);
+    return sendJson(res, 200, { technocore_jobs: technocoreJobs, local_claims: localClaims, local_results: localResults, generated_at: now() });
+  }
+
+  if (method === "POST" && path === "/api/jobs/claim") {
+    const body = await readJson(req);
+    const jobId = String(body.job_id || "").slice(0, 140);
+    const room = String(body.room || "").slice(0, 80);
+    const agentId = String(body.agent_id || "coder").slice(0, 80);
+    if (!jobId || !room) return sendJson(res, 400, { detail: "job_id and room are required" });
+    const claim = {
+      job_id: jobId,
+      room,
+      claimed_by: agentId,
+      claimed_at: now(),
+      status: "accepted",
+      updated_at: now()
+    };
+    store.jobClaims = normalizeJobClaims([claim, ...(store.jobClaims || [])]);
+    await saveStore();
+    return sendJson(res, 201, { ok: true, claim: store.jobClaims[0] });
+  }
+
+  if (method === "POST" && path === "/api/jobs/result") {
+    const body = await readJson(req);
+    const jobId = String(body.job_id || "").slice(0, 140);
+    const claimId = String(body.claim_id || "").slice(0, 100);
+    const agentId = String(body.agent_id || "coder").slice(0, 80);
+    const summary = String(body.summary || "").slice(0, 300);
+    if (!jobId || !claimId) return sendJson(res, 400, { detail: "job_id and claim_id are required" });
+    const result = {
+      job_id: jobId,
+      claim_id: claimId,
+      agent_id: agentId,
+      summary,
+      output_hash: createHash("sha256").update(summary + jobId + claimId, "utf8").digest("hex").slice(0, 64),
+      submitted_at: now(),
+      verified: true
+    };
+    store.jobResults = normalizeJobResults([result, ...(store.jobResults || [])]);
+    const claimIdx = (store.jobClaims || []).findIndex((c) => c.job_id === jobId);
+    if (claimIdx >= 0) {
+      store.jobClaims[claimIdx].status = "completed";
+      store.jobClaims[claimIdx].updated_at = now();
+    }
+    await saveStore();
+    return sendJson(res, 201, { ok: true, result: store.jobResults[0] });
+  }
+
 
 
   if (method === "POST" && path === "/api/protocol/paper-deals") {
