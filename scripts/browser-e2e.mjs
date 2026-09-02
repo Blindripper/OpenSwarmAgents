@@ -224,6 +224,26 @@ try {
     await chatMessages.evaluate((element) => getComputedStyle(element).overflowY === "scroll" && element.scrollHeight > element.clientHeight),
     "network chat messages should have a stable, scrollable viewport"
   );
+  assert(
+    await chatMessages.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight <= 2),
+    "network chat should initially follow the newest message"
+  );
+  await chatMessages.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  const newestButton = page.getByRole("button", { name: "Jump to newest message" });
+  await newestButton.waitFor();
+  assert(
+    await chatMessages.evaluate((element) => element.scrollTop === 0),
+    "manual upward scrolling should pause newest-message following"
+  );
+  await newestButton.click();
+  await newestButton.waitFor({ state: "hidden" });
+  assert(
+    await chatMessages.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight <= 2),
+    "Newest should jump to the bottom and resume following"
+  );
   assert(/\d{1,2}:\d{2}:\d{2}/.test(await chatMessages.innerText()), "network chat timestamps should include seconds");
   await page.getByRole("textbox", { name: "Search messages" }).fill("Search marker 07");
   await expectText(page, '[data-testid="network-chat-messages"]', "Search marker 07");

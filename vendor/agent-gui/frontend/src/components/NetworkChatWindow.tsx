@@ -209,6 +209,10 @@ export function flushQueuedMessages(
   };
 }
 
+export function isNearChatBottom(scrollHeight: number, scrollTop: number, clientHeight: number): boolean {
+  return scrollHeight - scrollTop - clientHeight <= 48;
+}
+
 export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffset = 16 }: Props) {
   const [messagesByChannel, setMessagesByChannel] = useState<Record<string, NetworkChatMessage[]>>({});
   const messagesByChannelRef = useRef<Record<string, NetworkChatMessage[]>>({});
@@ -243,6 +247,7 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
   const userResizedRef = useRef(false);
   const messageScrollRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
+  const [showNewest, setShowNewest] = useState(false);
 
   const channelById = new Map(channels.map((channel) => [channel.id, channel]));
   const pinnedTabs = pinnedChannels.map((id) => channelById.get(id) || defaultChannelRecord(id));
@@ -446,8 +451,11 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
 
   useEffect(() => {
     stickToBottomRef.current = true;
+    setShowNewest(false);
     setMessageSearch("");
   }, [activeChannel]);
+
+  const newestVisibleMessageId = visibleMessages[visibleMessages.length - 1]?.id || "";
 
   useEffect(() => {
     const viewport = messageScrollRef.current;
@@ -456,7 +464,15 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
       viewport.scrollTop = viewport.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [activeChannel, normalizedMessageSearch, visibleMessages.length]);
+  }, [activeChannel, minimized, normalizedMessageSearch, newestVisibleMessageId, size.height]);
+
+  function jumpToNewest() {
+    stickToBottomRef.current = true;
+    setShowNewest(false);
+    const viewport = messageScrollRef.current;
+    if (!viewport) return;
+    viewport.scrollTop = viewport.scrollHeight;
+  }
 
   useEffect(() => {
     const nextSize = userResizedRef.current ? clampChatSize(size, dockRightOffset) : defaultChatSize(dockRightOffset);
@@ -764,16 +780,20 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
             </div>
           </div>
 
-          <div
-            ref={messageScrollRef}
-            data-testid="network-chat-messages"
-            onScroll={(event) => {
-              const viewport = event.currentTarget;
-              stickToBottomRef.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 48;
-            }}
-            style={{ height: "100%", minHeight: 0, minWidth: 0, overflowY: "scroll", overflowX: "hidden", scrollbarGutter: "stable", boxSizing: "border-box" }}
-          >
-            <div style={{ minHeight: "100%", padding: 10, display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 8, boxSizing: "border-box" }}>
+          <div style={{ position: "relative", height: "100%", minHeight: 0, minWidth: 0 }}>
+            <div
+              ref={messageScrollRef}
+              data-testid="network-chat-messages"
+              onScroll={(event) => {
+                const viewport = event.currentTarget;
+                const atNewest = isNearChatBottom(viewport.scrollHeight, viewport.scrollTop, viewport.clientHeight);
+                if (stickToBottomRef.current === atNewest) return;
+                stickToBottomRef.current = atNewest;
+                setShowNewest(!atNewest);
+              }}
+              style={{ height: "100%", minHeight: 0, minWidth: 0, overflowY: "scroll", overflowX: "hidden", scrollbarGutter: "stable", boxSizing: "border-box" }}
+            >
+              <div style={{ minHeight: "100%", padding: 10, display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 8, boxSizing: "border-box" }}>
             {visibleMessages.length === 0 ? (
               <div style={{ color: "var(--text-dim)", fontSize: 12, margin: "auto", textAlign: "center" }}>
                 {loadingMessages
@@ -814,7 +834,33 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
               </div>
             ))}
             {error && <div style={{ color: "#ff8a8a", fontSize: 11 }}>{error}</div>}
+              </div>
             </div>
+            {showNewest && !normalizedMessageSearch && (
+              <button
+                type="button"
+                onClick={jumpToNewest}
+                aria-label="Jump to newest message"
+                data-testid="network-chat-newest"
+                style={{
+                  position: "absolute",
+                  right: 18,
+                  bottom: 12,
+                  height: 28,
+                  padding: "0 10px",
+                  borderRadius: 14,
+                  border: "1px solid #2a8c72",
+                  background: "#10251f",
+                  color: "#7ee0c2",
+                  boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
+                  cursor: "pointer",
+                  fontSize: 10,
+                  fontWeight: 900,
+                }}
+              >
+                Newest ↓
+              </button>
+            )}
           </div>
           <form
             onSubmit={(event) => {

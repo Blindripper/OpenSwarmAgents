@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NetworkChatMessage } from "../types";
-import { flushQueuedMessages, mergeMessages, requestWithTimeout, stageIncomingMessages } from "./NetworkChatWindow";
+import { flushQueuedMessages, isNearChatBottom, mergeMessages, requestWithTimeout, stageIncomingMessages } from "./NetworkChatWindow";
 
 function message(index: number): NetworkChatMessage {
   return {
@@ -80,6 +80,13 @@ describe("Technocore slow mode", () => {
     }));
     await expect(pending).rejects.toThrow();
     expect(aborted).toBe(true);
+  });
+});
+
+describe("Technocore chat scroll following", () => {
+  it("keeps following within the bottom threshold", () => {
+    expect(isNearChatBottom(1000, 552, 400)).toBe(true);
+    expect(isNearChatBottom(1000, 551, 400)).toBe(false);
   });
 });
 
