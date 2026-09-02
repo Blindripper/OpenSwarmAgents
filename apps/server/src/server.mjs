@@ -243,6 +243,8 @@ async function loadStore() {
       protocolPaperDeals: [],
       protocolPaperNotes: {},
       projectManifests: [],
+      agentCapabilities: [],
+      delegations: [],
       federationPeerAnnouncements: [],
       publicRooms: [],
       publicProjects: [],
@@ -288,6 +290,8 @@ function normalizeStore(input) {
     protocolPaperDeals: normalizeProtocolPaperDeals(input.protocolPaperDeals || []),
     protocolPaperNotes: normalizeProtocolPaperNotes(input.protocolPaperNotes || {}),
     projectManifests: normalizeProjectManifests(input.projectManifests || []),
+    agentCapabilities: normalizeAgentCapabilities(input.agentCapabilities || []),
+    delegations: normalizeDelegations(input.delegations || []),
     federationPeerAnnouncements: normalizeFederationPeerAnnouncements(input.federationPeerAnnouncements || []),
     publicRooms: normalizePublicCollections(input.publicRooms || [], "room"),
     publicProjects: normalizePublicCollections(input.publicProjects || [], "project"),
@@ -1255,6 +1259,62 @@ function isEncryptedPaperValue(value) {
   );
 }
 
+function agentDidForProfile(agentId) {
+  const raw = createHash("sha256").update("OSA::agent-did::" + nodeIdentity.nodeId + ":" + String(agentId)).digest();
+  return "did:key:z" + base58btcEncode(Buffer.concat([Buffer.from([0xed, 0x01]), raw]));
+}
+
+function normalizeAgentCapabilities(records) {
+  if (!Array.isArray(records)) return [];
+  const seen = new Set();
+  return records.filter((rec) => {
+    const id = String(rec.agent_id || "").slice(0, 80);
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  }).map((rec) => ({
+    agent_id: String(rec.agent_id).slice(0, 80),
+    did: String(rec.did || agentDidForProfile(rec.agent_id)).slice(0, 150),
+    capabilities: Array.isArray(rec.capabilities) ? rec.capabilities.slice(0, 50).map((c) => String(c || "").slice(0, 60).trim()).filter(Boolean) : ["sign_text", "create_deal", "request_work"],
+    published_at: validIsoTimestamp(rec.published_at) || now(),
+    updated_at: validIsoTimestamp(rec.updated_at) || now()
+  }));
+}
+
+function normalizeDelegations(records) {
+  if (!Array.isArray(records)) return [];
+  const seen = new Set();
+  return records.filter((rec) => {
+    const key = String(rec.from_agent || "") + ">" + String(rec.to_agent || "");
+    if (!key.includes(">") || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).map((rec) => ({
+    id: "deleg-" + randomUUID(),
+    from_agent: String(rec.from_agent).slice(0, 80),
+    to_agent: String(rec.to_agent).slice(0, 80),
+    scope: String(rec.scope || "deal").slice(0, 40),
+    policy: String(rec.policy || "require-approval").slice(0, 40),
+    created_at: validIsoTimestamp(rec.created_at) || now(),
+    expires_at: validIsoTimestamp(rec.expires_at) || null,
+    revoked_at: validIsoTimestamp(rec.revoked_at) || null
+  }));
+}
+
+function signingPolicyForAgent(agentId, action) {
+  const policy = (store.agentCapabilities || []).find((c) => c.agent_id === agentId);
+  if (!policy) {
+    // Default policy: critical actions require human approval
+    if (["settle", "lock", "claim", "refund", "delegate", "transfer"].includes(action)) return "require-human";
+    return "signature-only";
+  }
+  const caps = policy.capabilities || [];
+  if (caps.includes("admin")) return "signature-only";
+  if (caps.includes(action)) return "signature-only";
+  if (["settle", "lock", "claim", "refund"].includes(action)) return "require-human";
+  return "signature-only";
+}
+
 function inspectProtocolTranscript(room, message) {
   const text = String(message?.text || "");
   const verified = verifyTechnocoreDidMessage(room, message);
@@ -2046,6 +2106,8 @@ async function loadPostgresStore() {
       protocolPaperDeals: [],
       protocolPaperNotes: {},
     projectManifests: [],
+    agentCapabilities: [],
+    delegations: [],
     federationPeerAnnouncements: [],
     publicRooms: [],
     publicProjects: [],
@@ -8053,6 +8115,69 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
   if (method === "GET" && path === "/api/protocol/overview") {
     return sendJson(res, 200, await technocoreProtocolOverview());
   }
+  // Phase 3: Agent DID / Capabilities / Delegation
+  if (method === "GET" && path === "/api/agents/dids") {
+    const profiles = normalizeAgentCapabilities(store.agentCapabilities || []);
+    const defaultAgents = ["technocore-specialist", "coder", "bugfixer", "info-guy", "coinexpert", "graphicsexpert", "moneymaker", "security-expert", "explorer"];
+    const output = defaultAgents.map((id) => {
+      const existing = profiles.find((p) => p.agent_id === id);
+      return {
+        agent_id: id,
+        did: existing?.did || agentDidForProfile(id),
+        capabilities: existing?.capabilities || ["sign_text"],
+        published: Boolean(existing)
+      };
+    });
+    return sendJson(res, 200, { agents: output, generated_at: now() });
+  }
+
+  if (method === "GET" && path.match(/^\/api\/agents\/([^/]+)\/did$/)) {
+    const agentId = decodeURIComponent(path.match(/^\/api\/agents\/([^/]+)\/did$/)[1]);
+    const profile = (store.agentCapabilities || []).find((p) => p.agent_id === agentId);
+    const did = profile?.did || agentDidForProfile(agentId);
+    const sigAlgo = nodeIdentity.algorithm || "Ed25519";
+    return sendJson(res, 200, { agent_id: agentId, did, algorithm: sigAlgo, published: Boolean(profile) });
+  }
+
+  if (method === "PUT" && path.match(/^\/api\/agents\/([^/]+)\/capabilities$/)) {
+    const agentId = decodeURIComponent(path.match(/^\/api\/agents\/([^/]+)\/capabilities$/)[1]);
+    const body = await readJson(req);
+    const caps = Array.isArray(body.capabilities) ? body.capabilities.slice(0, 50).map((c) => String(c || "").slice(0, 60).trim()).filter(Boolean) : ["sign_text"];
+    store.agentCapabilities = normalizeAgentCapabilities([
+      { agent_id: agentId, did: body.did || agentDidForProfile(agentId), capabilities: caps, published_at: now(), updated_at: now() },
+      ...(store.agentCapabilities || [])
+    ]);
+    await saveStore();
+    return sendJson(res, 200, { ok: true, agent_id: agentId, did: agentDidForProfile(agentId), capabilities: caps });
+  }
+
+  if (method === "GET" && path === "/api/delegations") {
+    return sendJson(res, 200, { delegations: normalizeDelegations(store.delegations || []), generated_at: now() });
+  }
+
+  if (method === "POST" && path === "/api/delegations") {
+    const body = await readJson(req);
+    const delegation = {
+      from_agent: String(body.from_agent || "").slice(0, 80),
+      to_agent: String(body.to_agent || "").slice(0, 80),
+      scope: String(body.scope || "deal").slice(0, 40),
+      policy: String(body.policy || "require-approval").slice(0, 40)
+    };
+    if (!delegation.from_agent || !delegation.to_agent) {
+      return sendJson(res, 400, { detail: "from_agent and to_agent are required for a delegation" });
+    }
+    store.delegations = normalizeDelegations([{ ...delegation, created_at: now() }, ...(store.delegations || [])]);
+    await saveStore();
+    return sendJson(res, 201, { ok: true, delegation: store.delegations[0] });
+  }
+
+  if (method === "GET" && path === "/api/signing-policy") {
+    const agentId = String(url.searchParams.get("agent_id") || "").slice(0, 80);
+    const action = String(url.searchParams.get("action") || "sign_text").slice(0, 40);
+    const policy = signingPolicyForAgent(agentId, action);
+    return sendJson(res, 200, { agent_id: agentId || "default", action, policy, generated_at: now() });
+  }
+
 
   if (method === "POST" && path === "/api/protocol/paper-deals") {
     try {
