@@ -113,6 +113,7 @@ try {
     if (message.type() === "error") pageErrors.push(message.text());
   });
   let chatGetRequestCount = 0;
+  let delayedValidatorsReadCount = 0;
   let sentChatFixture = null;
   await page.route("**/api/network/chat**", async (route) => {
     if (route.request().method() === "POST") {
@@ -138,6 +139,31 @@ try {
       return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ok: true, technocore_mirrored: true, message: sentChatFixture }) });
     }
     if (route.request().method() !== "GET") return route.continue();
+    const requestedChannel = new URL(route.request().url()).searchParams.get("channel");
+    if (requestedChannel === "validators") {
+      delayedValidatorsReadCount += 1;
+      if (delayedValidatorsReadCount <= 2) {
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ messages: [] }) });
+      }
+      await delay(600);
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          messages: [{
+            id: "technocore-chat-validators-77",
+            node_id: "technocore",
+            message: "Delayed validators room fixture",
+            created_at: "2026-09-02T05:31:00.000Z",
+            source: "technocore",
+            external: true,
+            room: "validators",
+            from: "validator-fixture",
+            seq: 77
+          }]
+        })
+      });
+    }
     chatGetRequestCount += 1;
     if (chatGetRequestCount === 3) {
       return route.fulfill({ status: 200, contentType: "application/json", body: "{" });
@@ -150,6 +176,14 @@ try {
       { ...sentChatFixture, id: "technocore-chat-osa-network-9001", source: "technocore", external: true },
       sentChatFixture
     ];
+    return route.fulfill({ response, json: payload });
+  });
+  await page.route("**/api/network/channels**", async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.channels = (payload.channels || []).map((channel) => channel.id === "validators"
+      ? { ...channel, count: 12, topic: "Signed validation, attestations, and DID verification." }
+      : channel);
     return route.fulfill({ response, json: payload });
   });
   await page.route("**/api/health", async (route) => {
@@ -202,7 +236,8 @@ try {
   assert(await page.getByRole("button", { name: "Copy Technocore DID" }).count() === 1, "topbar should expose a copyable Technocore DID when signing is active");
   const chatWindow = page.getByTestId("network-chat-window");
   const initialChatBox = await chatWindow.boundingBox();
-  assert(initialChatBox && initialChatBox.width >= 560 && initialChatBox.height >= 600, "network chat should open as a large default window");
+  assert(initialChatBox && initialChatBox.width >= 640 && initialChatBox.height >= 680, "network chat should open as a larger default window");
+  await expectText(page, '[data-testid="network-chat-room-info"]', "OpenSwarmAgents: signed project announcements");
   const resizeHandle = page.getByTestId("network-chat-resize");
   const resizeBox = await resizeHandle.boundingBox();
   assert(resizeBox, "network chat should expose a resize handle");
@@ -265,7 +300,13 @@ try {
   await page.getByRole("textbox", { name: "Search channels" }).fill("validators");
   await expectText(page, "body", "validators");
   assert(await page.getByRole("button", { name: /builders/i }).count() === 0, "channel search should filter the # channel picker");
-  await page.getByRole("button", { name: "#" }).click();
+  await page.getByRole("button", { name: /validators/i }).click();
+  await expectText(page, '[data-testid="network-chat-room-info"]', "Signed validation, attestations, and DID verification.");
+  for (let attempt = 0; attempt < 30 && delayedValidatorsReadCount < 2; attempt += 1) await delay(50);
+  assert(delayedValidatorsReadCount >= 2, "busy-room loading fixture should return two transient empty reads");
+  await expectText(page, '[data-testid="network-chat-messages"]', "Loading validators...");
+  assert(!(await chatMessages.innerText()).includes("No cached messages in validators."), "a populated indexed room should not flash an empty state while its tail is loading");
+  await expectText(page, '[data-testid="network-chat-messages"]', "Delayed validators room fixture");
   await expectText(page, "body", "Canvas");
   await expectText(page, "body", "Start a desk to show project results.");
   await page.locator('button[title="Collapse canvas"]').click();

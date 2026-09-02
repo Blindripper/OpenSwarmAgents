@@ -104,6 +104,7 @@ const technocoreSignedMessages = process.env.OSA_TECHNOCORE_SIGNED !== "0";
 const technocoreProfileEnabled = process.env.OSA_TECHNOCORE_PROFILE !== "0";
 const technocoreProjectRepositoryUrl = "https://github.com/Blindripper/OpenSwarmAgents";
 const technocoreChannelsCache = { key: "", expiresAt: 0, channels: [], error: null };
+let technocoreChannelsRefreshPromise = null;
 const technocoreNonceByRoom = new Map();
 const technocoreRoomReadBackoff = new Map();
 const technocoreLocalMirrorCache = new Map();
@@ -5825,13 +5826,16 @@ async function publicNetworkChannels(limit = technocoreChannelLimit) {
   const externalChannels = await technocoreChannels(max);
   const byId = new Map();
   for (const channel of [...mainChannels, ...externalChannels]) {
-    if (!channel?.id || byId.has(channel.id)) continue;
+    if (!channel?.id) continue;
+    const existing = byId.get(channel.id);
     byId.set(channel.id, {
+      ...(existing || {}),
       ...channel,
-      pinned: channel.pinned === true || configuredSet.has(channel.id),
-      public: channel.public === true || channel.id === technocorePublicRoom,
+      pinned: existing?.pinned === true || channel.pinned === true || configuredSet.has(channel.id),
+      public: existing?.public === true || channel.public === true || channel.id === technocorePublicRoom,
       category: channel.category || (technocoreMainRoomDescriptions[channel.id] ? "main" : "other"),
-      description: channel.description || technocoreMainRoomDescriptions[channel.id] || ""
+      description: existing?.description || channel.description || technocoreMainRoomDescriptions[channel.id] || "",
+      topic: channel.topic || existing?.topic || ""
     });
   }
   return [...byId.values()]
@@ -5849,20 +5853,31 @@ async function technocoreChannels(limit = technocoreChannelLimit) {
   if (technocoreChannelsCache.key === key && technocoreChannelsCache.expiresAt > timestamp) {
     return technocoreChannelsCache.channels.slice(0, limit);
   }
+  if (!technocoreChannelsRefreshPromise) {
+    technocoreChannelsRefreshPromise = (async () => {
+      try {
+        const channels = (await fetchTechnocoreRoomChannels(technocoreChannelLimit)).slice(0, technocoreChannelLimit);
+        technocoreChannelsCache.key = key;
+        technocoreChannelsCache.expiresAt = Date.now() + 15_000;
+        technocoreChannelsCache.channels = channels;
+        technocoreChannelsCache.error = null;
+        return channels;
+      } catch (error) {
+        console.warn(`Technocore rooms fetch failed: ${error.message}`);
+        const staleChannels = technocoreChannelsCache.key === key ? technocoreChannelsCache.channels : [];
+        technocoreChannelsCache.key = key;
+        technocoreChannelsCache.expiresAt = Date.now() + 15_000;
+        technocoreChannelsCache.channels = staleChannels;
+        technocoreChannelsCache.error = error.message || "Technocore rooms fetch failed";
+        return staleChannels;
+      }
+    })();
+  }
+  const refresh = technocoreChannelsRefreshPromise;
   try {
-    const channels = (await fetchTechnocoreRoomChannels(limit)).slice(0, limit);
-    technocoreChannelsCache.key = key;
-    technocoreChannelsCache.expiresAt = timestamp + 15_000;
-    technocoreChannelsCache.channels = channels;
-    technocoreChannelsCache.error = null;
-    return channels;
-  } catch (error) {
-    console.warn(`Technocore rooms fetch failed: ${error.message}`);
-    technocoreChannelsCache.key = key;
-    technocoreChannelsCache.expiresAt = timestamp + 15_000;
-    technocoreChannelsCache.channels = [];
-    technocoreChannelsCache.error = error.message || "Technocore rooms fetch failed";
-    return [];
+    return (await refresh).slice(0, limit);
+  } finally {
+    if (technocoreChannelsRefreshPromise === refresh) technocoreChannelsRefreshPromise = null;
   }
 }
 
@@ -5963,13 +5978,13 @@ async function fetchTechnocoreRoomChannels(limit) {
     const view = await fetchTechnocoreJson("/rooms", {
       format: "json",
       limit: technocoreChannelLimit
-    }, Math.min(technocoreChannelTimeoutMs, 1500));
+    }, Math.min(technocoreChannelTimeoutMs, 3000));
     return technocoreChannelsFromView(view);
   } catch {
     const view = await fetchTechnocoreJson("/r/events", {
       format: "json",
       limit: Math.max(limit, technocoreChannelLimit)
-    }, Math.min(technocoreChannelTimeoutMs, 5000));
+    }, Math.min(technocoreChannelTimeoutMs, 3500));
     return technocoreChannelsFromEvents(view);
   }
 }
@@ -5987,7 +6002,8 @@ function technocoreChannelsFromView(view) {
         public: room === technocorePublicRoom,
         category: technocoreMainRoomDescriptions[room] ? "main" : "other",
         description: technocoreMainRoomDescriptions[room] || "",
-        count: finiteNumber(entry?.count),
+        topic: technocoreRoomTopic(entry?.topic),
+        count: finiteNumber(entry?.count ?? entry?.window),
         last_seq: finiteNumber(entry?.last_seq || entry?.lastSeq),
         idle_seconds: finiteNumber(entry?.idle_seconds || entry?.idleSeconds),
         url: `${technocoreBaseUrl}/r/${room}`
@@ -6025,11 +6041,16 @@ function technocoreChannel(room, options = {}) {
     public: options.public === true,
     category: options.category || "other",
     description: options.description || "",
+    topic: options.topic || "",
     count: options.count ?? null,
     last_seq: options.last_seq ?? null,
     idle_seconds: options.idle_seconds ?? null,
     url: options.url || (technocoreEnabled ? `${technocoreBaseUrl}/r/${room}` : null)
   };
+}
+
+function technocoreRoomTopic(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
 function finiteNumber(value) {

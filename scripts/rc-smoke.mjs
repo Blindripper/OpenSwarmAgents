@@ -82,6 +82,7 @@ try {
   assert(technocoreNotes.get("topic/osa-network")?.startsWith("OpenSwarmAgents: signed project announcements"), "OSA should publish an informative public-room topic");
   const channels = await getJson("/api/network/channels?limit=10");
   assert(channels.channels.some((item) => item.id === "osa-network" && item.pinned === true), "Channel list should include pinned osa-network");
+  assert(channels.channels.some((item) => item.id === "osa-network" && item.topic === "Fixture OSA room topic" && item.count === 2), "Channel list should preserve Technocore room topics and indexed window counts");
   assert(channels.channels.some((item) => item.id === "osa-lab"), "Channel list should include available Technocore channels");
   assert(channels.channels.some((item) => item.id === "builders" && item.category === "main"), "Channel list should include known main Technocore channels");
   const bridgedActivity = await getJson("/api/network/activity?limit=10");
@@ -513,7 +514,7 @@ function startTechnocoreFixture() {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({
         rooms: [
-          { room: "osa-network", count: 2, last_seq: 42, idle_seconds: 4 },
+          { room: "osa-network", window: 2, last_seq: 42, idle_seconds: 4, topic: "Fixture OSA room topic" },
           { room: "osa-lab", count: 1, last_seq: 41, idle_seconds: 8 },
           { room: "credence", count: 3, last_seq: 45, idle_seconds: 12 }
         ]

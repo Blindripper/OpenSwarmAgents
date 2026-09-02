@@ -183,6 +183,7 @@ export interface NetworkChannel {
   public?: boolean;
   category?: "main" | "other" | string;
   description?: string;
+  topic?: string;
   count?: number | null;
   last_seq?: number | null;
   idle_seconds?: number | null;

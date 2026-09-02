@@ -13,7 +13,7 @@ const pinnedChannelsKey = "osa-network-chat-pinned-channels";
 const slowModeKey = "osa-network-chat-slow-mode";
 const minimizedChatSize = { width: 240, height: 38 };
 const minChatSize = { width: 340, height: 360 };
-const preferredChatSize = { width: 600, height: 680 };
+const preferredChatSize = { width: 680, height: 740 };
 const chatMessageLimit = 60;
 const chatRefreshMs = 500;
 const channelRefreshMs = 15000;
@@ -213,13 +213,20 @@ export function isNearChatBottom(scrollHeight: number, scrollTop: number, client
   return scrollHeight - scrollTop - clientHeight <= 48;
 }
 
+export function shouldCompleteInitialChannelLoad(messageCount: number, indexedCount: number | null | undefined, emptyResponses: number): boolean {
+  if (messageCount > 0 || indexedCount === 0) return true;
+  return indexedCount == null && emptyResponses >= 2;
+}
+
 export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffset = 16 }: Props) {
   const [messagesByChannel, setMessagesByChannel] = useState<Record<string, NetworkChatMessage[]>>({});
   const messagesByChannelRef = useRef<Record<string, NetworkChatMessage[]>>({});
   const [queuedMessagesByChannel, setQueuedMessagesByChannel] = useState<Record<string, NetworkChatMessage[]>>({});
   const queuedMessagesByChannelRef = useRef<Record<string, NetworkChatMessage[]>>({});
   const lastFetchedSeqByChannelRef = useRef<Record<string, number>>({});
+  const initialEmptyResponsesByChannelRef = useRef<Record<string, number>>({});
   const initializedChannelsRef = useRef(new Set<string>());
+  const [initializedChannels, setInitializedChannels] = useState(new Set<string>());
   const refreshingChannelsRef = useRef(new Set<string>());
   const chatAbortControllersRef = useRef(new Map<string, AbortController>());
   const refreshingChannelListRef = useRef(false);
@@ -227,6 +234,7 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
   const refreshFailuresByChannelRef = useRef<Record<string, number>>({});
   const refreshBackoffUntilByChannelRef = useRef<Record<string, number>>({});
   const [channels, setChannels] = useState<NetworkChannel[]>([defaultChannelRecord(defaultChannel)]);
+  const channelsRef = useRef<NetworkChannel[]>(channels);
   const [pinnedChannels, setPinnedChannels] = useState<string[]>(loadPinnedChannels);
   const [activeChannel, setActiveChannel] = useState(() => loadPinnedChannels()[0] || defaultChannel);
   const [channelListOpen, setChannelListOpen] = useState(false);
@@ -234,7 +242,6 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
   const [channelSearch, setChannelSearch] = useState("");
   const [slowMode, setSlowMode] = useState(loadSlowMode);
   const slowModeRef = useRef(slowMode);
-  const [loadingMessages, setLoadingMessages] = useState(false);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -254,12 +261,15 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
   const availableChannels = channels.filter((channel) => !pinnedChannels.includes(channel.id));
   const normalizedChannelSearch = channelSearch.trim().toLocaleLowerCase();
   const filteredChannels = normalizedChannelSearch
-    ? availableChannels.filter((channel) => [channel.name, channel.id, channel.description, channel.category]
+    ? availableChannels.filter((channel) => [channel.name, channel.id, channel.topic, channel.description, channel.category]
       .some((value) => String(value || "").toLocaleLowerCase().includes(normalizedChannelSearch)))
     : availableChannels;
   const mainChannels = filteredChannels.filter((channel) => channel.category === "main");
   const otherChannels = filteredChannels.filter((channel) => channel.category !== "main");
-  const activeName = channelById.get(activeChannel)?.name || activeChannel || defaultChannel;
+  const activeChannelRecord = channelById.get(activeChannel);
+  const activeName = activeChannelRecord?.name || activeChannel || defaultChannel;
+  const activeRoomInfo = String(activeChannelRecord?.topic || activeChannelRecord?.description || "").trim();
+  const loadingMessages = !initializedChannels.has(activeChannel);
   const messages = messagesByChannel[activeChannel] || [];
   const queuedMessages = queuedMessagesByChannel[activeChannel] || [];
   const normalizedMessageSearch = messageSearch.trim().toLocaleLowerCase();
@@ -276,6 +286,10 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
   useEffect(() => {
     queuedMessagesByChannelRef.current = queuedMessagesByChannel;
   }, [queuedMessagesByChannel]);
+
+  useEffect(() => {
+    channelsRef.current = channels;
+  }, [channels]);
 
   useEffect(() => {
     slowModeRef.current = slowMode;
@@ -296,6 +310,17 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
     setSlowMode(next);
   }
 
+  function markChannelInitialized(channel: string) {
+    if (initializedChannelsRef.current.has(channel)) return;
+    initializedChannelsRef.current.add(channel);
+    setInitializedChannels((previous) => {
+      if (previous.has(channel)) return previous;
+      const next = new Set(previous);
+      next.add(channel);
+      return next;
+    });
+  }
+
   async function refreshMessages(channel = activeChannel) {
     if (Date.now() < (refreshBackoffUntilByChannelRef.current[channel] || 0)) return;
     if (refreshingChannelsRef.current.has(channel)) return;
@@ -311,7 +336,6 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
         .map((message) => Number(message.seq)),
     );
     const lastTechnocoreSeq = Math.max(lastVisibleTechnocoreSeq, lastFetchedSeqByChannelRef.current[channel] || 0);
-    if (!initialized) setLoadingMessages(true);
     try {
       const result = await requestWithTimeout(
         `Chat refresh for ${channel}`,
@@ -319,7 +343,15 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
         controller,
         (signal) => api.network.chat(chatMessageLimit, channel, lastTechnocoreSeq || undefined, signal),
       );
-      initializedChannelsRef.current.add(channel);
+      const indexedCount = channelsRef.current.find((item) => item.id === channel)?.count;
+      const emptyResponses = result.messages.length > 0
+        ? 0
+        : (initialEmptyResponsesByChannelRef.current[channel] || 0) + 1;
+      initialEmptyResponsesByChannelRef.current[channel] = emptyResponses;
+      if (shouldCompleteInitialChannelLoad(result.messages.length, indexedCount, emptyResponses)) {
+        initialEmptyResponsesByChannelRef.current[channel] = 0;
+        markChannelInitialized(channel);
+      }
       const fetchedSeq = Math.max(
         lastTechnocoreSeq,
         ...result.messages
@@ -342,7 +374,6 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
       refreshBackoffUntilByChannelRef.current[channel] = Date.now() + Math.min(2000, 250 * (2 ** (failures - 1)));
       setError((err as Error).message || "Chat refresh failed.");
     } finally {
-      setLoadingMessages(false);
       if (chatAbortControllersRef.current.get(channel) === controller) {
         chatAbortControllersRef.current.delete(channel);
         refreshingChannelsRef.current.delete(channel);
@@ -731,8 +762,8 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
                       >
                         <span style={{ minWidth: 0, display: "grid", gap: 2, textAlign: "left" }}>
                           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{channel.name}</span>
-                          {channel.description && (
-                            <span style={{ color: "var(--text-dim)", fontSize: 10, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{channel.description}</span>
+                          {(channel.topic || channel.description) && (
+                            <span style={{ color: "var(--text-dim)", fontSize: 10, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{channel.topic || channel.description}</span>
                           )}
                         </span>
                         <span style={{ color: "#7ee0c2", fontWeight: 900 }}>{pinnedChannels.includes(channel.id) ? "PINNED" : "PIN"}</span>
@@ -743,6 +774,16 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
                 {filteredChannels.length === 0 && (
                   <div style={{ color: "var(--text-dim)", fontSize: 11, padding: "4px 0 2px" }}>No matching channels.</div>
                 )}
+              </div>
+            )}
+            {activeRoomInfo && (
+              <div
+                data-testid="network-chat-room-info"
+                title={activeRoomInfo}
+                style={{ width: "100%", minHeight: 34, display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", alignItems: "start", gap: 8, padding: "7px 10px", borderTop: "1px solid #1d2943", background: "#0d1524", boxSizing: "border-box" }}
+              >
+                <span style={{ color: "#7ee0c2", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>Room info</span>
+                <span style={{ color: "var(--text-dim)", fontSize: 10, lineHeight: 1.35, overflowWrap: "anywhere" }}>{activeRoomInfo}</span>
               </div>
             )}
             <div style={{ height: 38, width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "0 8px", borderTop: "1px solid #1d2943", boxSizing: "border-box" }}>

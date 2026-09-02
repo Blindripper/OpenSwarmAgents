@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NetworkChatMessage } from "../types";
-import { flushQueuedMessages, isNearChatBottom, mergeMessages, requestWithTimeout, stageIncomingMessages } from "./NetworkChatWindow";
+import { flushQueuedMessages, isNearChatBottom, mergeMessages, requestWithTimeout, shouldCompleteInitialChannelLoad, stageIncomingMessages } from "./NetworkChatWindow";
 
 function message(index: number): NetworkChatMessage {
   return {
@@ -87,6 +87,20 @@ describe("Technocore chat scroll following", () => {
   it("keeps following within the bottom threshold", () => {
     expect(isNearChatBottom(1000, 552, 400)).toBe(true);
     expect(isNearChatBottom(1000, 551, 400)).toBe(false);
+  });
+});
+
+describe("Technocore initial room loading", () => {
+  it("keeps a populated indexed room loading across transient empty responses", () => {
+    expect(shouldCompleteInitialChannelLoad(0, 200, 1)).toBe(false);
+    expect(shouldCompleteInitialChannelLoad(0, 200, 5)).toBe(false);
+    expect(shouldCompleteInitialChannelLoad(1, 200, 5)).toBe(true);
+  });
+
+  it("finishes known-empty rooms immediately and unknown rooms after confirmation", () => {
+    expect(shouldCompleteInitialChannelLoad(0, 0, 1)).toBe(true);
+    expect(shouldCompleteInitialChannelLoad(0, null, 1)).toBe(false);
+    expect(shouldCompleteInitialChannelLoad(0, null, 2)).toBe(true);
   });
 });
 
