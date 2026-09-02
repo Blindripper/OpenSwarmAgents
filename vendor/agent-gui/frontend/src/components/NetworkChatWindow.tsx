@@ -14,8 +14,8 @@ const slowModeKey = "osa-network-chat-slow-mode";
 const minimizedChatSize = { width: 240, height: 38 };
 const minChatSize = { width: 340, height: 360 };
 const preferredChatSize = { width: 600, height: 680 };
-const chatMessageLimit = 25;
-const chatRefreshMs = 250;
+const chatMessageLimit = 60;
+const chatRefreshMs = 500;
 const channelRefreshMs = 15000;
 const chatRequestTimeoutMs = 6500;
 const channelRequestTimeoutMs = 8000;
@@ -303,7 +303,7 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
     } catch (err) {
       const failures = Math.min(5, (refreshFailuresByChannelRef.current[channel] || 0) + 1);
       refreshFailuresByChannelRef.current[channel] = failures;
-      refreshBackoffUntilByChannelRef.current[channel] = Date.now() + Math.min(15000, 1000 * (2 ** (failures - 1)));
+      refreshBackoffUntilByChannelRef.current[channel] = Date.now() + Math.min(2000, 250 * (2 ** (failures - 1)));
       setError((err as Error).message || "Chat refresh failed.");
     } finally {
       setLoadingMessages(false);

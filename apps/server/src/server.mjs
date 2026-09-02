@@ -92,6 +92,7 @@ const technocoreRooms = uniqueTechnocoreRooms([
 const technocoreRoomLimit = boundedNumber(process.env.OSA_TECHNOCORE_ROOM_LIMIT, 60, 1, 200);
 const technocoreChannelLimit = boundedNumber(process.env.OSA_TECHNOCORE_CHANNEL_LIMIT, 40, 5, 100);
 const technocoreTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_TIMEOUT_MS, 2500, 500, 10000);
+const technocoreReadHedgeMs = boundedNumber(process.env.OSA_TECHNOCORE_READ_HEDGE_MS, 1200, 250, 5000);
 const technocoreWriteTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_WRITE_TIMEOUT_MS, Math.max(technocoreTimeoutMs, 8000), 1000, 20000);
 const technocoreWriteAttempts = Math.round(boundedNumber(process.env.OSA_TECHNOCORE_WRITE_ATTEMPTS, 2, 1, 4));
 const technocoreChannelTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS, Math.max(technocoreTimeoutMs, 12000), 1000, 15000);
@@ -102,6 +103,7 @@ const technocoreSignedMessages = process.env.OSA_TECHNOCORE_SIGNED !== "0";
 const technocoreChannelsCache = { key: "", expiresAt: 0, channels: [], error: null };
 const technocoreNonceByRoom = new Map();
 const technocoreRoomReadBackoff = new Map();
+let technocoreReadRequestCounter = 0;
 const managedConnectorProcesses = new Map();
 const managedConnectorLogLimit = 12 * 1024;
 const agentGuiCodexRunnerEnabled = process.env.OSA_AGENTGUI_ENABLE_CODEX_RUNNER === "1";
@@ -3735,6 +3737,7 @@ function publicRuntime() {
     technocoreRooms,
     technocoreChannelLimit,
     technocoreChannelTimeoutMs,
+    technocoreReadHedgeMs,
     technocoreWriteTimeoutMs,
     technocoreWriteAttempts,
     technocoreAnnounceEnabled: technocoreEnabled && technocoreAnnounceEnabled && Boolean(technocoreAnnounceRoom),
@@ -6060,7 +6063,7 @@ async function technocorePublicChatMessages(limit = 60, channel = technocorePubl
       query.since = cursor;
       query.wait = 1;
     }
-    const view = await fetchTechnocoreJson(`/r/${room}`, query);
+    const view = await fetchTechnocoreRoomJson(`/r/${room}`, query);
     technocoreRoomReadBackoff.delete(room);
     const messages = Array.isArray(view?.messages) ? view.messages : [];
     return messages
@@ -6087,7 +6090,7 @@ async function technocorePublicChatMessages(limit = 60, channel = technocorePubl
     const failures = Math.min(5, Number(backoff?.failures || 0) + 1);
     technocoreRoomReadBackoff.set(room, {
       failures,
-      until: Date.now() + Math.min(15000, 1000 * (2 ** (failures - 1)))
+      until: Date.now() + Math.min(2000, 250 * (2 ** (failures - 1)))
     });
     return [];
   }
@@ -6798,12 +6801,43 @@ function technocoreUrl(path, query = {}) {
   return url;
 }
 
+function nextTechnocoreReadCacheBuster() {
+  technocoreReadRequestCounter = (technocoreReadRequestCounter + 1) % 1000;
+  return Date.now() * 1000 + technocoreReadRequestCounter;
+}
+
+async function fetchTechnocoreRoomJson(path, query = {}) {
+  let hedgeTimer;
+  let hedgeStarted = false;
+  const primary = fetchTechnocoreJson(path, {
+    ...query,
+    n: nextTechnocoreReadCacheBuster()
+  });
+  const hedge = new Promise((resolve, reject) => {
+    hedgeTimer = setTimeout(() => {
+      hedgeStarted = true;
+      fetchTechnocoreJson(path, {
+        ...query,
+        n: nextTechnocoreReadCacheBuster()
+      }).then(resolve, reject);
+    }, technocoreReadHedgeMs);
+  });
+  try {
+    return await Promise.any([primary, hedge]);
+  } catch (error) {
+    throw error?.errors?.at(-1) || error;
+  } finally {
+    if (!hedgeStarted) clearTimeout(hedgeTimer);
+  }
+}
+
 async function fetchTechnocoreJson(path, query = {}, timeoutMs = technocoreTimeoutMs) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(technocoreUrl(path, query), {
       signal: controller.signal,
+      cache: "no-store",
       headers: { accept: "application/json" }
     });
     if (!response.ok) throw new Error(`Technocore returned ${response.status}`);

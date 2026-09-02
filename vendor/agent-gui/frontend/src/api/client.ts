@@ -86,7 +86,7 @@ async function errorDetail(r: Response): Promise<string> {
 }
 
 async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const r = await fetch(BASE + path, signal ? { signal } : undefined);
+  const r = await fetch(BASE + path, { signal, cache: "no-store" });
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   return r.json();
 }

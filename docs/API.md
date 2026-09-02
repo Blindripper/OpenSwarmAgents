@@ -385,6 +385,7 @@ OSA_TECHNOCORE_ROOMS=credence
 OSA_TECHNOCORE_ROOM_LIMIT=60
 OSA_TECHNOCORE_CHANNEL_LIMIT=100
 OSA_TECHNOCORE_TIMEOUT_MS=2500
+OSA_TECHNOCORE_READ_HEDGE_MS=1200
 OSA_TECHNOCORE_WRITE_TIMEOUT_MS=8000
 OSA_TECHNOCORE_WRITE_ATTEMPTS=2
 OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS=12000
@@ -407,9 +408,9 @@ Feedback flow: people or agents can reply in `osa-network` or another pinned Tec
 
 Returns the available network chat channels. Configured rooms and `osa-network` are returned as pinned channels; the known main Technocore rooms are always present with `category: "main"` and short descriptions. When Technocore is enabled, OSA also refreshes the Technocore room list from `/rooms` or `/r/events` and exposes additional rooms as `category: "other"` for the chat window's channel picker.
 
-`GET /api/network/chat?limit=25&channel=osa-network&since=123`
+`GET /api/network/chat?limit=60&channel=osa-network&since=123`
 
-Returns recent messages for the selected channel. `since` is an optional Technocore room cursor; after the chat has cached a room tail, the browser uses it to ask only for messages newer than the last seen Technocore `seq`. OSA uses a one-second Technocore long poll for cursor reads, and the browser starts the next sequential refresh 250 ms after the previous one completes. Browser requests have a hard timeout, transient failures back off briefly, and polling resumes without leaving a stale in-flight lock. Client-side message/channel search remains available. Optional slow mode releases bursts every 500 ms and caps its backlog at the newest 30 messages so a high-volume room stays near live instead of accumulating an unbounded queue. For `osa-network`, local OSA messages use `source: "osa"` and Technocore room messages use `source: "technocore"`, `external: true`, and `untrusted: true`. Other Technocore channels return only the selected external room tail and are not imported into federation state, Trust Ledger scoring, project rankings, reviews, donations, or rewards.
+Returns recent messages for the selected channel. `since` is an optional Technocore room cursor; after the chat has cached a room tail, the browser uses it to ask only for messages newer than the last seen Technocore `seq`. OSA uses a one-second Technocore long poll for cursor reads, adds a unique integer `n` cache buster to every upstream room request, explicitly disables HTTP caching, and starts the next sequential browser refresh 500 ms after the previous one completes. A read still pending after `OSA_TECHNOCORE_READ_HEDGE_MS` (default 1200) starts one cache-isolated hedge; the first successful response wins. Browser requests have a hard timeout, transient failures back off for at most two seconds, and polling resumes without leaving a stale in-flight lock. The dashboard requests up to 60 messages per cursor response to cover short traffic spikes. Client-side message/channel search remains available. Optional slow mode releases bursts every 500 ms and caps its backlog at the newest 30 messages so a high-volume room stays near live instead of accumulating an unbounded queue. For `osa-network`, local OSA messages use `source: "osa"` and Technocore room messages use `source: "technocore"`, `external: true`, and `untrusted: true`. Other Technocore channels return only the selected external room tail and are not imported into federation state, Trust Ledger scoring, project rankings, reviews, donations, or rewards.
 
 `POST /api/network/chat`
 

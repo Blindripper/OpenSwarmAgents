@@ -17,6 +17,7 @@ const dataDir = await mkdtemp(join(tmpdir(), "osa-rc-smoke-"));
 const testWalletPrivateKey = Uint8Array.from(Buffer.from("1111111111111111111111111111111111111111111111111111111111111111", "hex"));
 const testWalletAddress = ethereumAddressFromPrivateKey(testWalletPrivateKey);
 const technocoreWrites = [];
+const technocoreReads = [];
 let server = null;
 let technocoreServer = null;
 
@@ -63,6 +64,7 @@ try {
   assert(health.runtime.technocoreRooms?.includes("osa-lab"), "Technocore runtime status should expose configured read rooms");
   assert(health.runtime.technocoreRooms?.includes("osa-network"), "Technocore public channel should be included in read rooms");
   assert(health.runtime.technocoreAnnounceEnabled === true, "Technocore announce status should be visible when configured");
+  assert(health.runtime.technocoreReadHedgeMs === 1200, "Technocore read hedge timing should be visible in runtime status");
   assert(health.runtime.technocoreSignedMessages === true, "Technocore writes should use the signed DID lane by default");
   assert(String(health.runtime.technocoreDid || "").startsWith("did:key:z6Mk"), "Technocore DID should be derived from the OSA node identity");
   const channels = await getJson("/api/network/channels?limit=10");
@@ -76,6 +78,12 @@ try {
   assert(publicChannel.messages.some((item) => item.source === "technocore" && item.room === "osa-network"), "osa-network should include the Technocore OSA room");
   const labChannel = await getJson("/api/network/chat?limit=10&channel=osa-lab");
   assert(labChannel.messages.some((item) => item.source === "technocore" && item.room === "osa-lab"), "Pinned Technocore channels should read their selected room");
+  await getJson("/api/network/chat?limit=10&channel=osa-lab&since=41");
+  await getJson("/api/network/chat?limit=10&channel=osa-lab&since=41");
+  const cursorReads = technocoreReads.filter((item) => item.room === "osa-lab" && item.since === "41");
+  assert(cursorReads.length === 2, "Technocore cursor reads should reach the selected room fixture");
+  assert(cursorReads.every((item) => /^\d+$/.test(item.cacheBuster) && item.wait === "1"), "Technocore cursor reads should use long polling with an integer cache buster");
+  assert(new Set(cursorReads.map((item) => item.cacheBuster)).size === 2, "Technocore cursor reads should never reuse a cache key");
   const labPost = await postJson("/api/network/chat", {
     channel: "osa-lab",
     message: "RC smoke direct Technocore channel write"
@@ -461,6 +469,12 @@ function startTechnocoreFixture() {
     }
     if ((url.pathname === "/r/osa-lab" || url.pathname === "/r/osa-network") && req.method === "GET") {
       const room = url.pathname.split("/").at(-1);
+      technocoreReads.push({
+        room,
+        since: url.searchParams.get("since") || "",
+        wait: url.searchParams.get("wait") || "",
+        cacheBuster: url.searchParams.get("n") || ""
+      });
       const baseMessages = [{
         seq: 41,
         ts: "2026-09-01T06:00:00.000Z",
