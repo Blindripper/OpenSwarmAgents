@@ -793,9 +793,6 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
                     <span style={{ height: 17, display: "inline-flex", alignItems: "center", padding: "0 6px", borderRadius: 5, border: "1px solid #1d4f73", background: "#0b2540", color: "#93c5fd", fontSize: 10, fontWeight: 900 }}>
                       technocore
                     </span>
-                    <span style={{ height: 17, display: "inline-flex", alignItems: "center", padding: "0 6px", borderRadius: 5, border: "1px solid #3b2f1c", background: "#231a0c", color: "#facc15", fontSize: 10, fontWeight: 900 }}>
-                      untrusted
-                    </span>
                     {message.delivery_status && message.delivery_status !== "sent" && (
                       <span
                         title={message.warning || message.delivery_status}
@@ -806,10 +803,10 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
                     )}
                   </div>
                 )}
-                {message.source !== "technocore" && message.signed && message.from?.startsWith("did:key:") && (
+                {message.verified && message.from?.startsWith("did:key:") && (
                   <div style={{ marginTop: 5 }}>
                     <span style={{ height: 17, display: "inline-flex", alignItems: "center", padding: "0 6px", borderRadius: 5, border: "1px solid #244c35", background: "#102419", color: "#86efac", fontSize: 10, fontWeight: 900 }}>
-                      signed DID
+                      verified DID
                     </span>
                   </div>
                 )}

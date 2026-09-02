@@ -76,6 +76,8 @@ try {
   assert(!bridgedEvent, "OSA Network Activity should not include raw Technocore room messages");
   const publicChannel = await getJson("/api/network/chat?limit=10&channel=osa-network");
   assert(publicChannel.messages.some((item) => item.source === "technocore" && item.room === "osa-network"), "osa-network should include the Technocore OSA room");
+  const unsignedDidClaim = publicChannel.messages.find((item) => item.message === "OSA public channel fixture message");
+  assert(unsignedDidClaim?.signed === false && unsignedDidClaim?.verified === false && unsignedDidClaim?.trusted === false, "A did:key sender without a valid signature must not be trusted");
   const labChannel = await getJson("/api/network/chat?limit=10&channel=osa-lab");
   assert(labChannel.messages.some((item) => item.source === "technocore" && item.room === "osa-lab"), "Pinned Technocore channels should read their selected room");
   await getJson("/api/network/chat?limit=10&channel=osa-lab&since=41");
@@ -90,13 +92,17 @@ try {
   });
   assert(labPost.message?.source === "technocore" && labPost.message?.room === "osa-lab", "Non-public Technocore channel posts should stay external");
   assert(labPost.message?.id === "technocore-chat-osa-lab-42" && labPost.message?.seq === 42, "Direct Technocore posts should immediately use their canonical sequence identity");
+  assert(labPost.message?.verified === true && labPost.message?.trusted === true && labPost.message?.untrusted === false, "Locally signed Technocore writes should be returned as verified DID messages");
   assert(technocoreWrites.some((item) => item.room === "osa-lab" && item.text.includes("RC smoke direct Technocore channel write") && item.from.startsWith("did:key:z6Mk")), "Technocore fixture should receive selected-channel text from the OSA DID");
+  const labReadback = await getJson("/api/network/chat?limit=10&channel=osa-lab");
+  const verifiedReadback = labReadback.messages.find((item) => item.message === "RC smoke direct Technocore channel write");
+  assert(verifiedReadback?.signed === true && verifiedReadback?.verified === true && verifiedReadback?.trusted === true, "Incoming Technocore DID signatures should be cryptographically verified");
   const mirroredChat = await postJson("/api/network/chat", {
     message: "RC smoke public channel mirror",
     wallet_address: testWalletAddress
   });
   assert(mirroredChat.technocore_mirrored === true, "osa-network posts should mirror to the Technocore OSA room when enabled");
-  assert(mirroredChat.message?.from?.startsWith("did:key:z6Mk") && mirroredChat.message?.signed === true && mirroredChat.message?.seq === 42, "osa-network posts should expose their signed Technocore DID delivery instead of only the wallet identity");
+  assert(mirroredChat.message?.from?.startsWith("did:key:z6Mk") && mirroredChat.message?.signed === true && mirroredChat.message?.verified === true && mirroredChat.message?.trusted === true && mirroredChat.message?.seq === 42, "osa-network posts should expose their verified Technocore DID delivery instead of only the wallet identity");
   assert(technocoreWrites.some((item) => item.room === "osa-network" && item.text.includes("RC smoke public channel mirror") && item.from.startsWith("did:key:z6Mk")), "Technocore fixture should receive mirrored osa-network text from the OSA DID");
   const mirroredChannel = await getJson("/api/network/chat?limit=20");
   assert(

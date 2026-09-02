@@ -165,10 +165,12 @@ export interface NetworkChatMessage {
   source?: "osa" | "technocore" | string;
   external?: boolean;
   untrusted?: boolean;
+  trusted?: boolean;
   room?: string;
   from?: string;
   seq?: number;
   signed?: boolean;
+  verified?: boolean;
   delivery_status?: "sent" | "pending" | "duplicate" | string;
   warning?: string | null;
 }

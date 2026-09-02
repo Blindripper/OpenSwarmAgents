@@ -112,6 +112,8 @@ describe("Technocore delivery reconciliation", () => {
       seq: 77,
       source: "osa",
       signed: true,
+      verified: true,
+      trusted: true,
       message: "Mirrored public message",
     };
     const external: NetworkChatMessage = {
@@ -119,7 +121,8 @@ describe("Technocore delivery reconciliation", () => {
       id: "technocore-chat-osa-network-77",
       source: "technocore",
       external: true,
-      untrusted: true,
+      untrusted: false,
+      trusted: true,
     };
     expect(mergeMessages([external], [local])).toEqual([local]);
   });

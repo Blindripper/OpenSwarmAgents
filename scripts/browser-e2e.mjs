@@ -127,10 +127,12 @@ try {
         source: "osa",
         external: false,
         untrusted: false,
+        trusted: true,
         room: "osa-network",
         from: testTechnocoreDid,
         seq: 9001,
         signed: true,
+        verified: true,
         delivery_status: "sent"
       };
       return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ok: true, technocore_mirrored: true, message: sentChatFixture }) });
@@ -145,7 +147,7 @@ try {
     const payload = await response.json();
     payload.messages = [
       ...(payload.messages || []),
-      { ...sentChatFixture, id: "technocore-chat-osa-network-9001", source: "technocore", external: true, untrusted: true },
+      { ...sentChatFixture, id: "technocore-chat-osa-network-9001", source: "technocore", external: true },
       sentChatFixture
     ];
     return route.fulfill({ response, json: payload });
@@ -235,7 +237,7 @@ try {
   assert(chatGetRequestCount > chatPollCountBeforeSend, "network chat should reconcile the sent record with a later room poll");
   assert(await chatMessages.getByText("Browser signed DID delivery", { exact: true }).count() === 1, "a signed osa-network message and its Technocore mirror should render only once");
   await expectText(page, '[data-testid="network-chat-messages"]', "z6MkvG23xu...");
-  await expectText(page, '[data-testid="network-chat-messages"]', "signed DID");
+  await expectText(page, '[data-testid="network-chat-messages"]', "verified DID");
   await page.getByRole("button", { name: "#" }).click();
   await expectText(page, "body", "Main channels");
   await expectText(page, "body", "Other channels");
