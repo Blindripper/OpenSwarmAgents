@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type NetworkEvent, type RuntimeStatus } from "./api/client";
-import { getWalletProvider, type WalletProvider } from "./api/wallet-provider";
+import { selectWallet, type WalletInfo, type WalletProvider } from "./api/wallet-provider";
+import { WalletSelectorModal } from "./components/WalletSelectorModal";
 import { Header } from "./components/Header";
 import type { ApiMode, ReasoningEffort } from "./types";
 import { Office } from "./components/Office";
@@ -1875,11 +1876,38 @@ export default function App() {
     federation: runtimeStatus,
   };
 
+  const [walletSelectorWallets, setWalletSelectorWallets] = useState<WalletInfo[] | null>(null);
+
   async function connectDashboardWallet() {
     setWalletConnectPending(true);
     setWalletConnectError(null);
     try {
-      const provider = await getWalletProvider();
+      let info: WalletInfo;
+      try {
+        info = await selectWallet();
+      } catch (err: any) {
+        if (err.code === "MULTIPLE_WALLETS") {
+          // Multiple wallets detected — show picker modal.
+          setWalletSelectorWallets(err.wallets);
+          setWalletConnectPending(false);
+          return;
+        }
+        throw err;
+      }
+      await connectWithProvider(info.provider);
+    } catch (error) {
+      console.error("connectDashboardWallet error:", error);
+      setWalletConnectError((error as Error).message || "Could not connect wallet.");
+      setWalletConnected(false);
+    } finally {
+      setWalletConnectPending(false);
+    }
+  }
+
+  async function connectWithProvider(provider: WalletProvider) {
+    setWalletConnectPending(true);
+    setWalletConnectError(null);
+    try {
       const accounts = await provider.request({ method: "eth_requestAccounts" });
       const address = Array.isArray(accounts) ? String(accounts[0] || "") : "";
       if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error("No wallet account selected.");
@@ -1906,7 +1934,7 @@ export default function App() {
       setWalletConnected(true);
       await refreshWalletBalance();
     } catch (error) {
-      console.error("connectDashboardWallet error:", error);
+      console.error("connectWithProvider error:", error);
       setWalletConnectError((error as Error).message || "Could not connect wallet.");
       setWalletConnected(false);
     } finally {
@@ -2344,6 +2372,16 @@ export default function App() {
           onPreview={handleFilePreview}
         />
       </div>
+      {walletSelectorWallets && (
+        <WalletSelectorModal
+          wallets={walletSelectorWallets}
+          onSelect={(provider) => {
+            setWalletSelectorWallets(null);
+            connectWithProvider(provider);
+          }}
+          onCancel={() => setWalletSelectorWallets(null)}
+        />
+      )}
       {onboardingOpen && (
         <OpenClawOnboarding
           status={openClawStatus}

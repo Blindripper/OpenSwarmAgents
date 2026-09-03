@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, type WalletSession } from "../api/client";
-import { getWalletProvider } from "../api/wallet-provider";
+import { selectWallet } from "../api/wallet-provider";
 import type { TopAgent } from "../types";
 
 interface Props {
@@ -66,7 +66,8 @@ export function TopAgentsPanel({
   async function connectWallet(): Promise<WalletSession | null> {
     setDonationError(null);
     try {
-      const provider = await getWalletProvider();
+      const info = await selectWallet();
+      const provider = info.provider;
       const accounts = await provider.request({ method: "eth_requestAccounts" }) as string[];
       const address = accounts[0];
       if (!address) throw new Error("No wallet account selected.");
