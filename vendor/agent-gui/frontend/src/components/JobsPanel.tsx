@@ -49,8 +49,18 @@ function formatDate(iso: string | null | undefined): string {
   return d.toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+interface TechnocoreJob {
+  room: string;
+  seq: number;
+  from: string;
+  text: string;
+  observed_at: string;
+  source: string;
+}
+
 export function JobsPanel() {
   const [localJobs, setLocalJobs] = useState<LocalJob[]>([]);
+  const [technocoreJobs, setTechnocoreJobs] = useState<TechnocoreJob[]>([]);
   const [claims, setClaims] = useState<JobClaim[]>([]);
   const [results, setResults] = useState<JobResult[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,6 +87,7 @@ export function JobsPanel() {
     try {
       const data = await fetch("/api/jobs").then((r) => r.json());
       setLocalJobs(data.local_jobs || []);
+      setTechnocoreJobs(data.technocore_jobs || []);
       setClaims(data.local_claims || []);
       setResults(data.local_results || []);
     } catch (cause) {
@@ -263,6 +274,49 @@ export function JobsPanel() {
           </div>
         )}
       </section>
+
+      {/* ── Technocore Jobs ── */}
+      {technocoreJobs.length > 0 && (
+        <section style={{ border: "1px solid #273453", borderRadius: 10, padding: 16, background: "#0b1525" }}>
+          <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 4 }}>🌐 Technocore Jobs</div>
+          <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 12 }}>Jobs discovered in Technocore rooms (<b>kibble</b>, <b>credence</b>).</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {technocoreJobs.map((job, idx) => {
+              const jobId = `${job.room}:${job.seq}`;
+              const isClaimed = claims.some((c) => c.job_id === jobId);
+              const title = extractTitle(job.text);
+              const rewardMatch = job.text.match(/Reward:\s*([^\n|]+)/i);
+              const reward = rewardMatch ? rewardMatch[1].trim() : null;
+              const roomBadge = job.room === "kibble" ? { label: "kibble", color: "#f59e0b", bg: "#1f1a0e" } : { label: "credence", color: "#a78bfa", bg: "#17132e" };
+              return (
+                <div key={idx} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", padding: "12px 14px", border: "1px solid #1e2a45", borderRadius: 8, background: "linear-gradient(90deg, rgba(139,92,246,0.05), rgba(15,23,42,0.4))" }}>
+                  <div style={{ display: "grid", gap: 4, minWidth: 0, flex: 1 }}>
+                    <div style={{ color: "#93c5fd", fontWeight: 800, fontSize: 14 }}>{title || "Untitled job"}</div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 12 }}>
+                      <span style={{ padding: "1px 6px", borderRadius: 4, background: roomBadge.bg, color: roomBadge.color, fontSize: 11, fontWeight: 700, border: `1px solid ${roomBadge.color}33` }}>{roomBadge.label}</span>
+                      <span style={{ color: "var(--text-dim)" }}>von <b style={{ color: "#94a3b8" }}>{job.from}</b></span>
+                      {reward && <span style={{ color: "#facc15", fontWeight: 700 }}>💰 {reward}</span>}
+                    </div>
+                    <div style={{ color: "#94a3b8", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", maxHeight: 44, lineHeight: 1.4 }}>{job.text.slice(0, 240)}</div>
+                  </div>
+                  {!isClaimed ? (
+                    <button
+                      type="button"
+                      disabled={claimBusy === jobId}
+                      onClick={() => void claimJob(jobId, job.text)}
+                      style={{ height: 32, padding: "0 16px", borderRadius: 6, border: "1px solid #2a8c72", background: claimBusy === jobId ? "#18251f" : "#16a37b", color: "white", fontSize: 13, fontWeight: 900, cursor: claimBusy === jobId ? "default" : "pointer", whiteSpace: "nowrap" }}
+                    >
+                      {claimBusy === jobId ? "⚙️ Claiming…" : "⚡ Claim"}
+                    </button>
+                  ) : (
+                    <span style={{ padding: "3px 10px", borderRadius: 999, background: "#10251f", color: "#7ee0c2", fontSize: 11, fontWeight: 800, border: "1px solid #2a8c72", whiteSpace: "nowrap" }}>✅ Claimed</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* ── Available Jobs (only claimable) ── */}
       <section style={{ border: "1px solid #273453", borderRadius: 10, padding: 16, background: "#0b1525" }}>

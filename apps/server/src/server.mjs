@@ -304,6 +304,7 @@ function normalizeStore(input) {
     jobClaims: normalizeJobClaims(input.jobClaims || []),
     jobResults: normalizeJobResults(input.jobResults || []),
     localJobs: Array.isArray(input.localJobs) ? input.localJobs.slice(0, 50) : [],
+    technocoreJobs: normalizeTechnocoreJobs(input.technocoreJobs || []),
     federationPeerAnnouncements: normalizeFederationPeerAnnouncements(input.federationPeerAnnouncements || []),
     publicRooms: normalizePublicCollections(input.publicRooms || [], "room"),
     publicProjects: normalizePublicCollections(input.publicProjects || [], "project"),
@@ -1307,6 +1308,21 @@ function normalizeJobClaims(records) {
     session_id: rec.session_id || null,
     task_id: rec.task_id || null
   }));
+}
+
+function normalizeTechnocoreJobs(jobs) {
+  return (Array.isArray(jobs) ? jobs : [])
+    .filter((j) => j && j.room && j.seq != null)
+    .slice(0, 200)
+    .map((j) => ({
+      room: String(j.room).slice(0, 80),
+      seq: j.seq,
+      from: String(j.from || "unknown").slice(0, 120),
+      text: String(j.text || "").slice(0, 4096),
+      observed_at: j.observed_at || now(),
+      source: String(j.source || "technocore").slice(0, 20)
+    }))
+    .sort((a, b) => String(b.observed_at).localeCompare(String(a.observed_at)));
 }
 
 function normalizeJobResults(records) {
@@ -7168,6 +7184,46 @@ function validIsoTimestamp(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+async function syncTechnocoreJobRooms() {
+  if (!technocoreEnabled) return [];
+  const rooms = ["kibble", "credence"];
+  const seenKeys = new Set();
+  const newJobs = [];
+
+  for (const room of rooms) {
+    try {
+      const projection = await syncTechnocoreProtocolRoom(room);
+      const records = projection.records || [];
+      for (const record of records) {
+        const key = `${room}:${record.sequence}`;
+        if (seenKeys.has(key)) continue;
+        seenKeys.add(key);
+        const text = String(record.text || "").trim();
+        // Detect JOB frames: "JOB v1:", "JOB:", etc.
+        if (/^JOB\s+(v\d+:\s?)?/i.test(text)) {
+          newJobs.push({
+            room,
+            seq: record.sequence,
+            from: record.from,
+            text,
+            observed_at: record.observedAt,
+            source: "technocore"
+          });
+        }
+      }
+    } catch (error) {
+      console.warn(`Job room sync failed for ${room}: ${error.message}`);
+    }
+  }
+
+  // Dedup: keep existing jobs that are NOT in the new batch, then prepend new
+  const existingKeys = new Set(newJobs.map((j) => `${j.room}:${j.seq}`));
+  const existing = (store.technocoreJobs || []).filter((j) => !existingKeys.has(`${j.room}:${j.seq}`));
+  store.technocoreJobs = normalizeTechnocoreJobs([...newJobs, ...existing]).slice(0, 200);
+  await saveStore();
+  return store.technocoreJobs;
+}
+
 function technocoreAnnouncementText(project) {
   const roomCount = Array.isArray(project.rooms) ? project.rooms.length : 0;
   const agentCount = Array.isArray(project.taskIds) ? project.taskIds.length : 0;
@@ -8789,7 +8845,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     const localClaims = normalizeJobClaims(store.jobClaims || []);
     const localResults = normalizeJobResults(store.jobResults || []);
     const localJobs = (store.localJobs || []).filter((j) => j.from === "local");
-    return sendJson(res, 200, { local_jobs: localJobs, local_claims: localClaims, local_results: localResults, generated_at: now() });
+    return sendJson(res, 200, { local_jobs: localJobs, local_claims: localClaims, local_results: localResults, technocore_jobs: store.technocoreJobs || [], generated_at: now() });
   }
 
   if (method === "POST" && path === "/api/jobs/claim") {
@@ -11047,6 +11103,9 @@ server.listen(port, host, () => {
   // Share local trust summary to Technocore for cross-node federation
   shareTrustToTechnocore().catch(() => {});
   setInterval(() => shareTrustToTechnocore().catch(() => {}), 60 * 60 * 1000).unref?.();
+  // Scan Technocore rooms for available JOB frames and bridge them into the Dashboard
+  syncTechnocoreJobRooms().catch(() => {});
+  setInterval(() => syncTechnocoreJobRooms().catch(() => {}), 60_000).unref?.();
 });
 
 function serveAgentGuiWebSocket(req, socket, url) {
