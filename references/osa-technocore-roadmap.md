@@ -9,12 +9,12 @@ Nächster Schritt: Phase 1.1 — Technocore-Job-Scanner
 
 | # | Schritt | Status | ET |
 |---|---------|--------|:--:|
-| 1.1 | **Technocore-Job-Scanner** — `kibble`+`credence` nach JOB-Frames scannen → `store.technocoreJobs` | 🔴 | ~3h |
-| 1.2 | **JOB-Frames erkennen** — `inspectProtocolTranscript()` um JOB/CLAIM/RESULT Frame-Typen erweitern | 🔴 | ~2h |
-| 1.3 | **Available Jobs Tab** (UI) — Neuer "Jobs" Tab zeigt lokale + Technocore-Jobs | 🔴 | ~3h |
-| 1.4 | **Claim → CLAIM-Frame zurück** — Claim postet signed CLAIM Frame in Room | 🔴 | ~4h |
-| 1.5 | **Result → ATTEST + RESULT** — Nach Agent-Fertigstellung Result Frame posten | 🔴 | ~4h |
-| 1.6 | **Job-Room Discovery** — Gepinnte Rooms zeigen "Jobs" Sub-View | 🔴 | ~2h |
+| 1.1 | **Technocore-Job-Scanner** — `kibble`+`credence` nach JOB-Frames scannen → `store.technocoreJobs` | ✅ `22e8b11` | ~3h |
+| 1.2 | **JOB/CLAIM/RESULT Frame-Typen** — `inspectJobFrame()` formelle Erkennung | ✅ `8904725` | ~2h |
+| 1.3 | **Available Jobs Tab** (UI) — Zeigt lokale + Technocore-Jobs mit Claim | ✅ (in 1.1) | ~3h |
+| 1.4 | **Claim → CLAIM-Frame zurück** — Claim postet signed CLAIM Frame in Room | ✅ `0fbeb19` | ~4h |
+| 1.5 | **Result → ATTEST + RESULT** — Nach Fertigstellung Result+Attest Frame | ✅ `a41cc0e` | ~4h |
+| 1.6 | **Job-Room Discovery** — Gepinnte Rooms zeigen "Jobs" Sub-View | 🔴 Optional | ~2h |
 
 ## Phase 2 💰 — Vollständiger TCLK-Offer Lifecycle
 

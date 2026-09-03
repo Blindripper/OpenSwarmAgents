@@ -137,12 +137,38 @@ function TimelineRecord({ record }: { record: ProtocolTimelineEntry }) {
 }
 
 
+async function apiProtocolAcceptOffer(offerId: string, agentId = "technocore-specialist"): Promise<any> {
+  const res = await fetch("/api/protocol/offers/accept", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ offer_id: offerId, agent_id: agentId })
+  });
+  const body = await res.json();
+  if (body.id) { return { ok: true, deal: body }; }
+  if (body.detail) { return { ok: false, detail: body.detail }; }
+  return { ok: false, detail: "Unexpected server response" };
+}
+
+async function apiProtocolClaimOffer(offerId: string): Promise<any> {
+  const res = await fetch("/api/protocol/offers/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ offer_id: offerId })
+  });
+  const body = await res.json();
+  if (body.id) { return { ok: true, deal: body }; }
+  if (body.detail) { return { ok: false, detail: body.detail }; }
+  return { ok: false, detail: "Unexpected server response" };
+}
+
 export function ProtocolOsPanel({ events, live, activityLoading = false, onRefreshActivity, onOpenProject }: Props) {
   const [view, setView] = useState<"protocols" | "activity">("protocols");
   const [overview, setOverview] = useState<ProtocolOverview | null>(null);
   const [protocolView, setProtocolView] = useState<"offers" | "timeline">("offers");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [acceptBusy, setAcceptBusy] = useState<string | null>(null);
+  const [claimBusy, setClaimBusy] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -155,6 +181,37 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
       setLoading(false);
     }
   }, []);
+
+  const handleAccept = useCallback(async (offer: TclkOfferProjection) => {
+    setAcceptBusy(offer.id);
+    setError(null);
+    try {
+      const data = await apiProtocolAcceptOffer(offer.id);
+      if (data.deal) {
+        window.dispatchEvent(new CustomEvent("osa:tclk-accepted", { detail: { dealId: data.deal.id, offerId: offer.id } }));
+      }
+      if (!data.ok) throw new Error(data.detail || "Accept failed");
+      setTimeout(() => void refresh(), 2000);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Accept failed");
+    } finally {
+      setAcceptBusy(null);
+    }
+  }, [refresh]);
+
+  const handleClaim = useCallback(async (offer: TclkOfferProjection) => {
+    setClaimBusy(offer.id);
+    setError(null);
+    try {
+      const data = await apiProtocolClaimOffer(offer.id);
+      if (!data.ok) throw new Error(data.detail || "Claim failed");
+      setTimeout(() => void refresh(), 2000);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Claim failed");
+    } finally {
+      setClaimBusy(null);
+    }
+  }, [refresh]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -232,7 +289,7 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
                 <div style={{ minHeight: 180, display: "grid", placeItems: "center", textAlign: "center", color: "var(--text-dim)", fontSize: 14 }}>
                   No verified TCLK offers are visible in the current room window.
                 </div>
-              ) : overview?.tclk.offers.map((offer) => <OfferCard key={`${offer.id}-${offer.sequence}`} offer={offer} busy={false} />)}
+              ) : overview?.tclk.offers.map((offer) => <OfferCard key={`${offer.id}-${offer.sequence}`} offer={offer} onAccept={handleAccept} onClaim={handleClaim} busy={acceptBusy === offer.id || claimBusy === offer.id} />)}
             </div>
           </div>
 

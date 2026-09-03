@@ -1864,12 +1864,13 @@ async function acceptTechnocoreOffer(body = {}) {
     agentId: requestedAgentId
   });
 
-  // If the offer has a job field, create a workspace task and start the agent
-  if (offerFrame.job) {
+  // Create a workspace task so the agent can work on this deal
+  {
     try {
-      const jobProto = String(offerFrame.job.proto || "tclk").slice(0, 20);
-      const jobId = String(offerFrame.job.id || "").slice(0, 100);
-      const jobContext = String(offerFrame.job.context || "").slice(0, 500);
+      const job = offerFrame.job || {};
+      const jobProto = String(job.proto || "tclk").slice(0, 20);
+      const jobId = String(job.id || "").slice(0, 100);
+      const jobContext = String(job.context || "").slice(0, 500);
       const startedAt = now();
       const goalId = `goal-tclk-${randomUUID()}`;
       const goal = {
@@ -1881,12 +1882,13 @@ async function acceptTechnocoreOffer(body = {}) {
       };
       store.goals.unshift(goal);
       const taskId = `task-${randomUUID()}`;
+      const contextBlock = jobId ? `\nJob ID: ${jobId}${jobContext ? `\n\nContext: ${jobContext}` : ""}` : `\nOffer from: ${offerFrame.from}`;
       const task = {
         id: taskId,
         goalId,
         type: "synthesis",
-        title: `TCLK job: ${offerFrame.amount} ${offerFrame.asset}`,
-        description: `Accepted TCLK offer ${offerId} from ${offerFrame.from}\nProto: ${jobProto}\nJob ID: ${jobId}${jobContext ? `\n\nContext: ${jobContext}` : ""}`,
+        title: `TCLK deal: ${offerFrame.amount} ${offerFrame.asset}`,
+        description: `Accepted TCLK offer ${offerId} from ${offerFrame.from}\nProto: ${jobProto}${contextBlock}`,
         requiredCapabilities: ["research", "review", "synthesis"],
         priority: 90,
         status: "open",
