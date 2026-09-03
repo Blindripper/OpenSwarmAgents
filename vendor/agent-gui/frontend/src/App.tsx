@@ -2131,6 +2131,49 @@ export default function App() {
         >
           + Workspace
         </button>
+        {/* Agent pills in the topbar — draggable to desks */}
+        {dashboardTab === "workbench" && agents.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              paddingLeft: 6,
+              minWidth: 0,
+              overflowX: "auto",
+              flexShrink: 0,
+            }}
+          >
+            <span style={{ fontSize: 10, fontWeight: 700, color: "var(--text-dim)", whiteSpace: "nowrap", paddingRight: 2 }}>Agents</span>
+            {agents.map((agent) => (
+              <button
+                key={agent.id}
+                type="button"
+                title={`Drag ${agent.name} onto a desk`}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  handleRosterAgentDragStart(e, agent.id, agent.color);
+                }}
+                style={{
+                  height: 26,
+                  padding: "0 8px",
+                  borderRadius: 5,
+                  border: `1px solid ${agent.color || "#2a3558"}44`,
+                  background: `${agent.color || "#121828"}22`,
+                  color: agent.color || "#cbd5e1",
+                  fontSize: 11,
+                  fontWeight: 800,
+                  cursor: "grab",
+                  whiteSpace: "nowrap",
+                  userSelect: "none",
+                  flexShrink: 0,
+                }}
+              >
+                {agent.name}
+              </button>
+            ))}
+          </div>
+        )}
         {savedProjectTabs.length > 0 && (
           <div
             style={{

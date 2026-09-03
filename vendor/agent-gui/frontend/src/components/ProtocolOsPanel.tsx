@@ -182,8 +182,8 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
       <div style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
         <header style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: 20, fontWeight: 950 }}>Technocore Protocol OS</div>
-            <div style={{ marginTop: 4, maxWidth: 760, color: "var(--text-dim)", fontSize: 11, lineHeight: 1.5 }}>
+            <div style={{ fontSize: 18, fontWeight: 950 }}>Technocore Protocol OS</div>
+            <div style={{ marginTop: 4, maxWidth: 760, color: "var(--text-dim)", fontSize: 13, lineHeight: 1.5 }}>
               Verified public TCLK protocol projection. Signed frames from Technocore rooms are observed and validated locally.
             </div>
           </div>
@@ -217,8 +217,8 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
           <div style={{ border: "1px solid #273453", borderRadius: 10, padding: 14, background: "rgba(12,20,34,.92)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 900 }}>TCLK Offer Observer</div>
-                <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 10 }}>Signed and structurally valid frames from #{overview?.tclk.offer_room || "tclk-offers"}</div>
+                <div style={{ fontSize: 17, fontWeight: 900 }}>TCLK Offer Observer</div>
+                <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 12 }}>Signed and structurally valid frames from #{overview?.tclk.offer_room || "tclk-offers"}</div>
               </div>
               <span style={{ border: "1px solid #854d0e", background: "#2b210c", color: "#fde047", borderRadius: 999, padding: "4px 9px", fontSize: 9, fontWeight: 950 }}>PAPER / NO VALUE</span>
             </div>
