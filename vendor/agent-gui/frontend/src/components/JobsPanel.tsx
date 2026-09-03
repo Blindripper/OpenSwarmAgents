@@ -68,7 +68,7 @@ export function JobsPanel() {
       const data = await fetch("/api/jobs/claim", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ job_id: jobId, room: "local", agent_id: "coder", job_text: jobText })
+        body: JSON.stringify({ job_id: jobId, room: "local", agent_id: "technocore-specialist", job_text: jobText })
       }).then((r) => r.json());
       if (data.session) {
         window.dispatchEvent(new CustomEvent("osa:claim-job", { detail: { sessionId: data.session.id, claim: data.claim } }));

@@ -142,7 +142,7 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
   const [overview, setOverview] = useState<ProtocolOverview | null>(null);
   const [protocolView, setProtocolView] = useState<"offers" | "timeline">("offers");
   // Paper rehearsal removed — only TCLK Observer remains
-  const [offerBusy, setOfferBusy] = useState<string | null>(null);
+  // TCLK Offer Observer — read-only, no accept/claim (pure observation)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -162,31 +162,7 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
 
   // Paper rehearsal actions removed — only TCLK Observer remains
 
-  const acceptOffer = useCallback(async (offer: TclkOfferProjection) => {
-    setOfferBusy(offer.id);
-    setError(null);
-    try {
-      await api.protocol.acceptOffer({ offer_id: offer.id });
-      await refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to accept offer");
-    } finally {
-      setOfferBusy(null);
-    }
-  }, [refresh]);
-
-  const claimOffer = useCallback(async (offer: TclkOfferProjection) => {
-    setOfferBusy(offer.id);
-    setError(null);
-    try {
-      await api.protocol.claimOffer({ deal_id: offer.id });
-      await refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to claim offer");
-    } finally {
-      setOfferBusy(null);
-    }
-  }, [refresh]);
+  // Accept/claim removed — TCLK offers are read-only observer for now
 
   if (view === "activity") {
     return (
@@ -264,7 +240,7 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
                 <div style={{ minHeight: 180, display: "grid", placeItems: "center", textAlign: "center", color: "var(--text-dim)", fontSize: 12 }}>
                   No verified TCLK offers are visible in the current room window.
                 </div>
-              ) : overview?.tclk.offers.map((offer) => <OfferCard key={`${offer.id}-${offer.sequence}`} offer={offer} onAccept={acceptOffer} onClaim={claimOffer} busy={offerBusy === offer.id} />)}
+              ) : overview?.tclk.offers.map((offer) => <OfferCard key={`${offer.id}-${offer.sequence}`} offer={offer} busy={false} />)}
             </div>
           </div>
 
