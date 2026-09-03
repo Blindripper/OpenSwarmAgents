@@ -7706,7 +7706,8 @@ async function technocoreSay(room, text) {
 }
 
 async function technocoreSayUnsigned(room, text) {
-  const path = `/r/${room}/say/${technocoreNick}/${encodeURIComponent(text)}`;
+  const singleLine = text.replace(/\r?\n/g, " ").slice(0, 4000);
+  const path = `/r/${room}/say/${technocoreNick}/${encodeURIComponent(singleLine)}`;
   const response = await fetchTechnocoreWrite(path, { headers: { accept: "text/plain" } });
   if (!response.ok) throw technocoreWriteHttpError(response.status);
   return { signed: false, from: technocoreNick };
