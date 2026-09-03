@@ -8092,6 +8092,27 @@ async function deleteAgentGuiSession(sessionId) {
     connectorId: task.agentGuiConnectorId || null
   });
   await saveStore();
+
+  // Clean up the OpenClaw session spawned for this desk's connector
+  const openclawSessionKey = task.agentGuiOpenClawSessionKey;
+  if (openclawSessionKey) {
+    const fullKey = `agent:main:${openclawSessionKey}`;
+    console.log(`Cleaning up OpenClaw session ${fullKey} for deleted desk ${sessionId}`);
+    import("child_process").then((cp) => {
+      const child = cp.spawn("openclaw", ["sessions", "delete", "--yes", "--agent", "main", fullKey], {
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 8000
+      });
+      const chunks = [];
+      child.stdout.on("data", (d) => chunks.push(d));
+      child.stderr.on("data", (d) => chunks.push(d));
+      child.on("exit", (code) => {
+        if (code !== 0) {
+          console.warn(`OpenClaw session cleanup (${fullKey}) exited code ${code}: ${Buffer.concat(chunks).toString("utf8").slice(0, 200)}`);
+        }
+      });
+    }).catch(() => {});
+  }
   return {
     ok: true,
     deleted: true,
