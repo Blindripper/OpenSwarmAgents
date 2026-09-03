@@ -10577,6 +10577,35 @@ function autoSubmitJobResultForTask(task, result) {
       agentId: claim.claimed_by,
       summary: summary.slice(0, 120)
     });
+
+    // Post RESULT + ATTEST frames back to Technocore if this was a Technocore job
+    if (technocoreEnabled && claim.room && claim.room !== "local" && /^[a-z][a-z0-9_-]{0,47}$/.test(claim.room)) {
+      (async () => {
+        try {
+          // If job_id contains a room prefix like "kibble:42", use that room;
+          // otherwise use the claim.room field
+          const parts = String(claim.job_id).split(":");
+          const targetRoom = parts.length >= 2 && /^[a-z][a-z0-9_-]{0,47}$/.test(parts[0]) ? parts[0] : claim.room;
+          const resultText = `RESULT v1: ${claim.job_id} summary: ${summary.replace(/\n/g, " ").slice(0, 200)}`;
+          await technocoreSay(targetRoom, resultText);
+          event("technocore_result_posted", "RESULT frame posted to Technocore room", {
+            jobId: claim.job_id,
+            room: targetRoom,
+            summary: summary.slice(0, 80)
+          });
+          // Post ATTEST frame confirming the result is verified
+          const attestText = `ATTEST v1: ${claim.job_id} verified by ${technocoreDid || technocoreNick} hash: ${jobResult.output_hash.slice(0, 16)}`;
+          await technocoreSay(targetRoom, attestText);
+          event("technocore_attest_posted", "ATTEST frame posted to Technocore room", {
+            jobId: claim.job_id,
+            room: targetRoom,
+            hash: jobResult.output_hash.slice(0, 16)
+          });
+        } catch (error) {
+          console.warn(`Post RESULT/ATTEST frames to Technocore failed: ${error.message}`);
+        }
+      })();
+    }
   } catch (error) {
     console.warn(`Auto-submit job result failed: ${error.message}`);
   }
