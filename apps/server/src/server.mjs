@@ -1092,7 +1092,10 @@ function normalizeProtocolPaperDeals(records) {
         ciphertext: String(record.encryptedSecret.ciphertext),
         tag: String(record.encryptedSecret.tag)
       } : null;
-      if (!encryptedSecret) continue;
+      // A proposed public offer from us (payer role) has no secret yet —
+      // the payee mints it at accept time. Allow those through without a secret.
+      const isOwnProposedOffer = offer.role === "payer" && status === "proposed" && !accept;
+      if (!encryptedSecret && !isOwnProposedOffer) continue;
       output.push({
         id,
         label: String(record?.label || "FLOP rehearsal deal").trim().slice(0, 100) || "FLOP rehearsal deal",
@@ -1750,6 +1753,79 @@ async function mutateProtocolPaperDeal(id, operation) {
   } finally {
     if (protocolPaperDealPromises.get(dealId) === promise) protocolPaperDealPromises.delete(dealId);
   }
+}
+
+async function createAndPublishTechnocoreOffer(body = {}) {
+  if (!technocoreDid) {
+    const error = new Error("A local DID is required to publish TCLK offers");
+    error.statusCode = 400;
+    throw error;
+  }
+  const amount = String(body.amount || "100").trim();
+  if (!/^[1-9][0-9]{0,31}$/.test(amount)) {
+    const error = new Error("FLOP amount must be a positive integer with at most 32 digits");
+    error.statusCode = 400;
+    throw error;
+  }
+  const label = String(body.label || "TCLK offer").trim().slice(0, 100) || "TCLK offer";
+  const jobId = String(body.job_id || "").trim().slice(0, 100);
+  const context = String(body.context || "").trim().slice(0, 500);
+  const expiresMinutes = Math.max(1, Math.min(1440, Number(body.expires_minutes || 15)));
+  const started = Date.now();
+  const offer = makeTclkOffer({
+    from: technocoreDid,
+    role: "payer",
+    amount,
+    asset: "FLOP",
+    lock: "hash",
+    rails: ["paper"],
+    expiresMs: started + expiresMinutes * 60_000,
+    claimByMs: started + expiresMinutes * 2 * 60_000,
+    refundAfterMs: started + expiresMinutes * 4 * 60_000,
+    ...(jobId ? { job: { proto: "job", id: jobId, context } } : {})
+  });
+
+  // Post the signed offer frame to the Technocore offer room
+  const offerText = encodeTclkFrame(offer);
+  let posted;
+  try {
+    posted = await technocoreSay(tclkOfferRoom, offerText);
+  } catch (error) {
+    const err = new Error(`Failed to post offer frame to Technocore: ${error.message}`);
+    err.statusCode = 502;
+    throw err;
+  }
+
+  // Start a local PaperRail deal so we can track accept/claim lifecycle
+  const createdAt = now();
+  const deal = {
+    id: offer.id,
+    label,
+    status: "proposed",
+    offer,
+    accept: null,
+    lockFrame: null,
+    statement: null,
+    counterpartyDid: null,
+    encryptedSecret: null,
+    railRef: null,
+    receiptRecorded: false,
+    createdAt,
+    updatedAt: createdAt,
+    timeline: [{ stage: "offer", actor: "osa", detail: `${amount} FLOP on paper rail (published to Technocore)`, at: createdAt }]
+  };
+  store.protocolPaperDeals = normalizeProtocolPaperDeals([deal, ...(store.protocolPaperDeals || [])]);
+  await saveStore();
+
+  event("tclk_offer_created", `Published TCLK offer ${offer.id} to ${tclkOfferRoom}`, {
+    offerId: offer.id,
+    amount,
+    asset: "FLOP",
+    room: tclkOfferRoom,
+    posted: Boolean(posted)
+  });
+
+  return { ok: true, offer_id: offer.id, deal: publicProtocolPaperDeal(store.protocolPaperDeals.find((item) => item.id === deal.id)), posted };
 }
 
 async function acceptTechnocoreOffer(body = {}) {
@@ -8688,6 +8764,16 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
 
   if (method === "GET" && path === "/api/protocol/overview") {
     return sendJson(res, 200, await technocoreProtocolOverview());
+  }
+
+  if (method === "POST" && path === "/api/protocol/offers/create") {
+    try {
+      const body = await readJson(req);
+      return sendJson(res, 201, await createAndPublishTechnocoreOffer(body));
+    } catch (error) {
+      console.error(`[offer/create] ${error?.stack || error?.message || error}`);
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to create TCLK offer" });
+    }
   }
 
   if (method === "POST" && path === "/api/protocol/offers/accept") {

@@ -137,6 +137,18 @@ function TimelineRecord({ record }: { record: ProtocolTimelineEntry }) {
 }
 
 
+async function apiProtocolCreateOffer(body: { amount: string; label?: string; job_id?: string; context?: string; expires_minutes?: number }): Promise<any> {
+  const res = await fetch("/api/protocol/offers/create", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const parsed = await res.json();
+  if (parsed.ok && parsed.offer_id) return { ok: true, offer_id: parsed.offer_id, deal: parsed.deal };
+  if (parsed.detail) return { ok: false, detail: parsed.detail };
+  return { ok: false, detail: "Unexpected server response" };
+}
+
 async function apiProtocolAcceptOffer(offerId: string, agentId = "technocore-specialist"): Promise<any> {
   const res = await fetch("/api/protocol/offers/accept", {
     method: "POST",
@@ -169,6 +181,8 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
   const [error, setError] = useState<string | null>(null);
   const [acceptBusy, setAcceptBusy] = useState<string | null>(null);
   const [claimBusy, setClaimBusy] = useState<string | null>(null);
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createStatus, setCreateStatus] = useState<{ ok: boolean; message: string } | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -196,6 +210,30 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
       setError(cause instanceof Error ? cause.message : "Accept failed");
     } finally {
       setAcceptBusy(null);
+    }
+  }, [refresh]);
+
+  const handleCreateOffer = useCallback(async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setCreateBusy(true);
+    setCreateStatus(null);
+    try {
+      const form = new FormData(event.currentTarget);
+      const body = {
+        amount: String(form.get("amount") || "100").trim() || "100",
+        label: String(form.get("label") || "").trim(),
+        job_id: String(form.get("job_id") || "").trim(),
+        context: String(form.get("context") || "").trim(),
+        expires_minutes: Number(form.get("expires_minutes") || 15)
+      };
+      const data = await apiProtocolCreateOffer(body);
+      if (!data.ok) throw new Error(data.detail || "Create failed");
+      setCreateStatus({ ok: true, message: `Offer ${data.offer_id.slice(0, 12)}… published to tclk-offers ✅` });
+      setTimeout(() => void refresh(), 2500);
+    } catch (cause) {
+      setCreateStatus({ ok: false, message: cause instanceof Error ? cause.message : "Create failed" });
+    } finally {
+      setCreateBusy(false);
     }
   }, [refresh]);
 
@@ -313,6 +351,22 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
             </div>
             <div style={{ border: "1px solid #854d0e", borderRadius: 10, padding: 14, background: "rgba(43,33,12,.9)", color: "#fde68a", fontSize: 13, lineHeight: 1.5 }}>
               {overview?.tclk.warning || "Observer mode only. No settlement actions are available."}
+            </div>
+            <div style={{ border: "1px solid #273453", borderRadius: 10, padding: 14, background: "rgba(12,20,34,.92)" }}>
+              <div style={{ fontSize: 14, fontWeight: 900 }}>📤 Publish TCLK Offer</div>
+              <div style={{ marginTop: 4, color: "var(--text-dim)", fontSize: 12, lineHeight: 1.4 }}>Posts a signed offer frame to #{overview?.tclk.offer_room || "tclk-offers"}. Paper rail — no real value moves.</div>
+              <form onSubmit={handleCreateOffer} style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 96px", gap: 8 }}>
+                  <input name="label" placeholder="Label (optional)" disabled={createBusy} style={{ height: 36, padding: "0 10px", borderRadius: 6, border: "1px solid #2a3558", background: "#121828", color: "#e2e8f0", fontSize: 13, outline: "none" }} />
+                  <input name="amount" defaultValue="100" placeholder="FLOP" disabled={createBusy} style={{ height: 36, padding: "0 10px", borderRadius: 6, border: "1px solid #2a3558", background: "#121828", color: "#e2e8f0", fontSize: 13, outline: "none" }} />
+                </div>
+                <input name="job_id" placeholder="A2A Job ID (optional)" disabled={createBusy} style={{ height: 36, padding: "0 10px", borderRadius: 6, border: "1px solid #2a3558", background: "#121828", color: "#e2e8f0", fontSize: 13, outline: "none" }} />
+                <textarea name="context" placeholder="Job context — what should the agent do?" disabled={createBusy} rows={3} style={{ width: "100%", boxSizing: "border-box", padding: "10px", borderRadius: 6, border: "1px solid #2a3558", background: "#121828", color: "#e2e8f0", fontSize: 13, resize: "vertical", outline: "none" }} />
+                <button type="submit" disabled={createBusy} style={{ height: 36, borderRadius: 6, border: "1px solid #2563eb", background: createBusy ? "#1a2640" : "#1e3a8a", color: "#93c5fd", fontSize: 14, fontWeight: 800, cursor: createBusy ? "default" : "pointer" }}>
+                  {createBusy ? "Publishing…" : "🚀 Publish Offer"}
+                </button>
+                {createStatus && <div style={{ fontSize: 12, color: createStatus.ok ? "#7ee0c2" : "#fca5a5", lineHeight: 1.4 }}>{createStatus.message}</div>}
+              </form>
             </div>
           </aside>
         </section>

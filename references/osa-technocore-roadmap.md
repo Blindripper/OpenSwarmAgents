@@ -21,7 +21,7 @@ Nächster Schritt: Phase 1.1 — Technocore-Job-Scanner
 | # | Schritt | Status |
 |---|---------|--------|
 | 2.1 | **Own Offers erstellen** — `POST /api/protocol/offers/create` → signed OFFER Frame | 🔴 |
-| 2.2 | **Accept-Button wieder aktivieren** — Offer Accept → Workspace-Task mit tclkDealId | 🔴 |
+| 2.2 | **Accept-Button wieder aktivieren** — Offer Accept → Workspace-Task mit tclkDealId | ✅ `d0b5417` |
 | 2.3 | **Accept → Deal-Room** — Privaten `e-p-<contract>` Deal-Room erstellen | 🔴 |
 | 2.4 | **Lock via Dashboard** — "Lock FLOP" Button für PaperRail | 🔴 |
 | 2.5 | **Auto-Reveal/Auto-Claim** — ✅ Schon da (`autoClaimTclkDealForTask`), Fix für tclkDealId | 🟡 |
