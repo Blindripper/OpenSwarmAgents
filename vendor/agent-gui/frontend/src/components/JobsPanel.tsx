@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+interface AgentProfile {
+  id: string;
+  name: string;
+  tagline?: string;
+  model?: string;
+  did?: string;
+  color?: string;
+  available?: boolean;
+}
+
 interface TechnocoreJob {
   room: string;
   seq: number;
@@ -40,6 +50,11 @@ export function JobsPanel() {
   const [submittingJobId, setSubmittingJobId] = useState<string | null>(null);
 
   // Post-job form state
+  // Agent selector state
+  const [agents, setAgents] = useState<AgentProfile[]>([]);
+  const [showAgentSelector, setShowAgentSelector] = useState<string | null>(null); // jobId when open
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("coder");
+
   const [showPostForm, setShowPostForm] = useState(false);
   const [postTitle, setPostTitle] = useState("");
   const [postDescription, setPostDescription] = useState("");
@@ -66,13 +81,30 @@ export function JobsPanel() {
     }
   }, []);
 
+  // Load agents on mount
+  useEffect(() => {
+    fetch("/api/agents").then((r) => r.json()).then((data) => {
+      setAgents((data.agents || []).filter((a: AgentProfile) => a.available !== false));
+    }).catch(() => {});
+  }, []);
+  
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const claimJob = useCallback(async (jobId: string, room: string) => {
+  const claimJob = useCallback(async (jobId: string, room: string, agentId: string, jobText: string) => {
     setClaimingJobId(jobId);
     setError(null);
+    setShowAgentSelector(null);
     try {
-      await fetch("/api/jobs/claim", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ job_id: jobId, room }) }).then((r) => r.json());
+      const data = await fetch("/api/jobs/claim", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ job_id: jobId, room, agent_id: agentId, job_text: jobText })
+      }).then((r) => r.json());
+      if (data.session) {
+        // Session created — switch to Workspaces/Projects view
+        // Dispatch a custom event so App.tsx can switch tabs
+        window.dispatchEvent(new CustomEvent("osa:claim-job", { detail: { sessionId: data.session.id, claim: data.claim } }));
+      }
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Claim failed");
@@ -262,9 +294,64 @@ export function JobsPanel() {
                     <div style={{ color: "#94a3b8", fontSize: 9, overflow: "hidden", textOverflow: "ellipsis", maxHeight: 40 }}>{job.text.slice(0, 180)}</div>
                   </div>
                   {!claimed ? (
-                    <button type="button" disabled={claimingJobId === jobId} onClick={() => void claimJob(jobId, job.room)} style={{ height: 26, padding: "0 8px", borderRadius: 5, border: "1px solid #2563eb", background: "#1e3a8a", color: "#93c5fd", fontSize: 9, fontWeight: 800, cursor: claimingJobId === jobId ? "default" : "pointer" }}>
-                    {claimingJobId === jobId ? "Claiming…" : "Claim"}
-                  </button>
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <button type="button" disabled={claimingJobId === jobId} onClick={() => { setShowAgentSelector(jobId); setSelectedAgentId("coder"); }} style={{ height: 26, padding: "0 8px", borderRadius: 5, border: "1px solid #2563eb", background: "#1e3a8a", color: "#93c5fd", fontSize: 9, fontWeight: 800, cursor: "pointer" }}>
+                      Claim
+                    </button>
+                    {showAgentSelector === jobId && (
+                      <div style={{ position: "relative", display: "inline-block" }}>
+                        <div style={{ position: "absolute", top: 30, right: 0, zIndex: 100, minWidth: 200, maxHeight: 280, overflowY: "auto", border: "1px solid #2a3558", borderRadius: 6, background: "#121828", padding: 6, boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}>
+                          <div style={{ fontSize: 10, color: "#94a3b8", padding: "4px 6px", marginBottom: 4 }}>Assign to agent:</div>
+                          {agents.length === 0 && <div style={{ fontSize: 9, color: "#6b7280", padding: 4 }}>No agents available</div>}
+                          {agents.map((agent) => (
+                            <button
+                              key={agent.id}
+                              type="button"
+                              onClick={() => { setSelectedAgentId(agent.id); void claimJob(jobId, job.room, agent.id, job.text); }}
+                              disabled={claimingJobId === jobId}
+                              style={{
+                                display: "block",
+                                width: "100%",
+                                textAlign: "left",
+                                padding: "6px 8px",
+                                borderRadius: 4,
+                                border: "none",
+                                background: selectedAgentId === agent.id ? "#1e3a8a" : "transparent",
+                                color: "#e2e8f0",
+                                fontSize: 11,
+                                cursor: "pointer",
+                                marginBottom: 2
+                              }}
+                              onMouseEnter={(e) => { (e.target as HTMLElement).style.background = "#1a2640"; }}
+                              onMouseLeave={(e) => { (e.target as HTMLElement).style.background = selectedAgentId === agent.id ? "#1e3a8a" : "transparent"; }}
+                            >
+                              <div style={{ fontWeight: 800, fontSize: 11 }}>{agent.name}</div>
+                              {agent.tagline && <div style={{ fontSize: 9, color: "#94a3b8" }}>{agent.tagline}</div>}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => setShowAgentSelector(null)}
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              textAlign: "center",
+                              padding: "4px 8px",
+                              borderRadius: 4,
+                              border: "1px solid #2a3558",
+                              background: "transparent",
+                              color: "#94a3b8",
+                              fontSize: 10,
+                              cursor: "pointer",
+                              marginTop: 4
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    </div>
                   ) : (
                     <span style={{ padding: "2px 6px", borderRadius: 999, background: "#1a3a2a", color: "#7ee0c2", fontSize: 8, fontWeight: 800 }}>{claimed.status}</span>
                   )}

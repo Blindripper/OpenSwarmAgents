@@ -10,7 +10,6 @@ import { AgentAssignModal } from "./components/AgentAssignModal";
 import { DeskAgentPicker } from "./components/DeskAgentPicker";
 import { GlobalDefaultPersonaEditor } from "./components/GlobalDefaultPersonaEditor";
 import { OpenClawOnboarding } from "./components/OpenClawOnboarding";
-import { TopAgentsPanel } from "./components/TopAgentsPanel";
 import { ProtocolOsPanel } from "./components/ProtocolOsPanel";
 import { VaultPanel } from "./components/VaultPanel";
 import { JobsPanel } from "./components/JobsPanel";
@@ -94,7 +93,7 @@ const WORKBENCH_LEGACY_KEY_V1 = legacyStorageKey("workbench-v1");
 const ONBOARDING_DISMISSED_KEY = "osa-openclaw-onboarding-dismissed";
 const WALLET_STORAGE_KEY = "osa-wallet-session";
 const RESULT_CANVAS_OPEN_KEY = "osa-result-canvas-open";
-type DashboardTab = "workbench" | "top-projects" | "work" | "market" | "trust" | "vault";
+type DashboardTab = "workbench" | "work" | "market" | "trust" | "vault";
 interface WalletSession {
   address: string;
   chain_id?: string | null;
@@ -356,21 +355,16 @@ function mergeServerTeams(
     }
   }
 
-  const publicProjectDesks = sessions.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID);
   const orderedPrivate = [
     ...privateTeams.filter((team) => team.id === HOME_TEAM_ID),
     ...privateTeams.filter((team) => team.id !== HOME_TEAM_ID),
   ];
-  return [
-    ...orderedPrivate,
-    makePublicProjectsTeam(publicProjectDesks),
-  ];
+  return orderedPrivate;
 }
 
 function serverTeamName(teamId: string, sessions: Session[]): string {
   if (teamId === HOME_TEAM_ID) return "Home";
-  if (teamId === PUBLIC_PROJECTS_TEAM_ID) return "Latest Projects";
-  if (PUBLIC_TEAM_IDS.has(teamId)) return "Latest Projects";
+  if (PUBLIC_TEAM_IDS.has(teamId)) return "Public";
   const session = sessions.find((item) => item.team_id === teamId);
   return session?.team_name?.trim() || "Home";
 }
@@ -468,14 +462,12 @@ function WalletGate({
 }
 
 export default function App() {
-  const [teams, setTeams] = useState<Team[]>([makeHomeTeam(), makePublicProjectsTeam()]);
+  const [teams, setTeams] = useState<Team[]>([makeHomeTeam()]);
   const [pendingTexts, setPendingTexts] = useState<Record<string, string>>({});
   const [justStartedId, setJustStartedId] = useState<string | null>(null);
   const [justStartedAnchor, setJustStartedAnchor] = useState<{ top: number; left: number } | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>("workbench");
-  const [topProjects, setTopProjects] = useState<TopAgent[]>([]);
-  const [topProjectsLoading, setTopProjectsLoading] = useState(false);
   const [networkLive, setNetworkLive] = useState(false);
   const [networkNotice, setNetworkNotice] = useState<string | null>(null);
   const [networkEvents, setNetworkEvents] = useState<NetworkEvent[]>([]);
@@ -710,18 +702,6 @@ export default function App() {
     } catch { /* ignore */ }
   }, []);
 
-  const refreshTopProjects = useCallback(async () => {
-    setTopProjectsLoading(true);
-    try {
-      const r = await api.topProjects(100);
-      setTopProjects(r.agents ?? []);
-    } catch {
-      setTopProjects([]);
-    } finally {
-      setTopProjectsLoading(false);
-    }
-  }, []);
-
   const refreshNetworkActivity = useCallback(async () => {
     setNetworkEventsLoading(true);
     try {
@@ -760,13 +740,12 @@ export default function App() {
 
   const refreshNetworkViews = useCallback(() => {
     void loadSessions();
-    void refreshTopProjects();
     void refreshNetworkActivity();
     void refreshRuntimeStatus();
     const connected = readWalletConnected();
     setWalletConnected(connected);
     void refreshWalletBalance();
-  }, [loadSessions, refreshNetworkActivity, refreshRuntimeStatus, refreshTopProjects, refreshWalletBalance]);
+  }, [loadSessions, refreshNetworkActivity, refreshRuntimeStatus, refreshWalletBalance]);
 
   useEffect(() => {
     loadSessions();
@@ -785,21 +764,19 @@ export default function App() {
     api.toolsets().then((r) => { setToolsets(r.toolsets); setToolPresets(r.presets); setToolDefault(r.default); }).catch(() => {});
     // Also re-pull the roster: profiles installed/changed on disk while the GUI
     // is open (e.g. install_profiles.sh) otherwise never appear until a reload.
-    refreshTopProjects();
     refreshNetworkActivity();
     refreshRuntimeStatus();
     refreshWalletBalance();
     const poll = setInterval(() => {
       loadSessions();
       refreshAgents();
-      refreshTopProjects();
       refreshNetworkActivity();
       refreshRuntimeStatus();
       setWalletConnected(readWalletConnected());
       refreshWalletBalance();
     }, POLL_INTERVAL);
     return () => clearInterval(poll);
-  }, [loadSessions, refreshAgents, refreshNetworkActivity, refreshRuntimeStatus, refreshTopProjects, refreshWalletBalance]);
+  }, [loadSessions, refreshAgents, refreshNetworkActivity, refreshRuntimeStatus, refreshWalletBalance]);
 
   useEffect(() => {
     const source = api.networkStream((event) => {
@@ -817,6 +794,16 @@ export default function App() {
     source.onopen = () => setNetworkLive(true);
     return () => source.close();
   }, [bellSound, refreshNetworkViews]);
+
+  // Listen for claim-job events from JobsPanel — switch to Workspaces/Projects
+  useEffect(() => {
+    const handler = () => {
+      setDashboardTab("workbench");
+      void loadSessions();
+    };
+    window.addEventListener("osa:claim-job", handler);
+    return () => window.removeEventListener("osa:claim-job", handler);
+  }, [loadSessions]);
 
   // Persist workbench to localStorage on every change
   useEffect(() => {
@@ -1461,7 +1448,6 @@ export default function App() {
         includeUnplacedPrivate: !projectScopedRef.current,
       }));
       setDashboardTab("workbench");
-      void refreshTopProjects();
     } catch (e) {
       window.alert((e as Error).message || "Couldn't copy this project into Home.");
     }
@@ -1527,7 +1513,6 @@ export default function App() {
       setTeams((prev) => mergeServerTeams(prev, latest, {
         includeUnplacedPrivate: !projectScopedRef.current,
       }));
-      await refreshTopProjects();
       setShareDialog(null);
     } catch (e) {
       setShareDialog((prev) => prev ? { ...prev, submitting: false, error: (e as Error).message || "Couldn't share this project." } : prev);
@@ -1541,7 +1526,6 @@ export default function App() {
     setTeams((prev) => mergeServerTeams(prev, latest, {
       includeUnplacedPrivate: !projectScopedRef.current,
     }));
-    await refreshTopProjects();
   }
 
   function canDeletePublicProject(session: Session): boolean {
@@ -1567,7 +1551,7 @@ export default function App() {
       setWalletConnectError("Connect the owner wallet before deleting a shared project.");
       return false;
     }
-    if (confirmDelete && !window.confirm(`Delete shared project "${title}" from Latest Projects and Top100? Reviews, copy stats, and donation records for this public listing will be removed.`)) {
+    if (confirmDelete && !window.confirm(`Delete shared project "${title}"? Reviews, copy stats, and donation records for this public listing will be removed.`)) {
       return false;
     }
     await api.publicProjects.delete(stripPublicProjectSessionId(projectId), { owner_wallet_address: wallet.address });
@@ -1615,7 +1599,7 @@ export default function App() {
       ? `\n\nThis will cancel ${runningCount} running agent ${runningCount === 1 ? "task" : "tasks"}.`
       : "";
     const sharedWarning = sharedProject
-      ? `\n\nIt will also unshare "${sharedProject.title || "Public Project"}" from Latest Projects and Top100.`
+      ? `\n\nIt will also unshare "${sharedProject.title || "Public Project"}" from the public network.`
       : "";
     if (!window.confirm(`Delete the current project completely?${warning}${sharedWarning}\n\nPrivate desks, rooms, pending prompts, local workbench state, and the active saved project tab will be removed.`)) return;
 
@@ -1634,11 +1618,9 @@ export default function App() {
       setActiveSavedProject(null);
       clearActiveProjectUiState();
       const latest = await api.sessions.list(50);
-      const publicOnly = latest.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID);
       sessionsRef.current = latest.filter((session) => !privateSessionIds.includes(session.id));
       setSessions(sessionsRef.current);
-      setTeams([makeHomeTeam(), makePublicProjectsTeam(publicOnly)]);
-      await refreshTopProjects();
+      setTeams([makeHomeTeam()]);
       setDashboardTab("workbench");
     } catch (e) {
       window.alert((e as Error).message || "Couldn't delete the current project.");
@@ -1779,7 +1761,7 @@ export default function App() {
     projectScopedRef.current = true;
     setActiveSavedProject(null);
     clearActiveProjectUiState();
-    setTeams([makeHomeTeam(), makePublicProjectsTeam(sessionsRef.current.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID))]);
+    setTeams([makeHomeTeam()]);
     setDashboardTab("workbench");
   }
 
@@ -1826,7 +1808,7 @@ export default function App() {
     const warning = runningCount > 0
       ? `\n\nThis will cancel ${runningCount} running agent ${runningCount === 1 ? "task" : "tasks"} before wiping the dashboard.`
       : "";
-    if (!window.confirm(`Reset OSA and start fresh?${warning}\n\nThis removes private desks, rooms, pending prompts, desk settings, and local workbench state. Latest Projects stays as the public network feed.`)) return;
+    if (!window.confirm(`Reset OSA and start fresh?${warning}\n\nThis removes private desks, rooms, pending prompts, desk settings, and local workbench state.`)) return;
     removeStoredItems(WORKBENCH_KEY_V2, [WORKBENCH_LEGACY_KEY_V2]);
     removeStoredItems(WORKBENCH_KEY_V1, [WORKBENCH_LEGACY_KEY_V1]);
     setPendingTexts({});
@@ -1866,9 +1848,6 @@ export default function App() {
   const activeCount = realDesks.filter((s) => s.is_running === true).length;
   const deskCount = realDesks.length;
   const networkStats = {
-    publicProjects: sessions.filter((session) => session.team_id === PUBLIC_PROJECTS_TEAM_ID).length,
-    copies: topProjects.reduce((sum, item) => sum + Number(item.copy_count || 0), 0),
-    donationsFlop: topProjects.reduce((sum, item) => sum + Number(item.donation_total_flop || 0), 0),
     flopStatusLabel,
     onlineAgents: activeCount,
     walletConnected,
@@ -2092,7 +2071,6 @@ export default function App() {
       }}>
         {([
           ["workbench", "Workspaces / Projects"],
-          ["top-projects", "Project Discovery"],
           ["work", "Work"],
           ["market", "Market & Deals"],
           ["trust", "Trust"],
@@ -2103,7 +2081,6 @@ export default function App() {
             type="button"
             onClick={() => {
               setDashboardTab(id);
-              if (id === "top-projects") void refreshTopProjects();
               if (id === "market") void refreshNetworkActivity();
             }}
             style={{
@@ -2202,24 +2179,10 @@ export default function App() {
             background: "#7ee0c2",
             boxShadow: "0 0 10px rgba(126, 224, 194, 0.8)",
           }} />
-          <span>{networkNotice} Latest and Top100 refreshed.</span>
+          <span>{networkNotice}</span>
         </div>
       )}
-      {dashboardTab === "top-projects" ? (
-        <TopAgentsPanel
-          agents={topProjects}
-          title="Top100 Projects"
-          subtitle="Projects ranked by copies. Copy a project, record a prelaunch FLOP pledge for its builder, or leave a review."
-          emptyText="Share a project to start the chart."
-          entityLabel="project"
-          loading={topProjectsLoading}
-          onRefresh={refreshTopProjects}
-          onCopy={copyDeskToHome}
-          onDonateRecorded={refreshTopProjects}
-          onDetails={openProjectDetails}
-          onDelete={deletePublicProjectFromTop}
-        />
-      ) : dashboardTab === "work" ? (
+      {dashboardTab === "work" ? (
         <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13 }}>
           <JobsPanel />
         </div>

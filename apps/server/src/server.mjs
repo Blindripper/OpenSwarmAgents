@@ -8363,18 +8363,79 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     const jobId = String(body.job_id || "").slice(0, 140);
     const room = String(body.room || "").slice(0, 80);
     const agentId = String(body.agent_id || "coder").slice(0, 80);
+    const jobText = String(body.job_text || "").slice(0, 500);
     if (!jobId || !room) return sendJson(res, 400, { detail: "job_id and room are required" });
+    
+    // Create the claim record
     const claim = {
       job_id: jobId,
       room,
       claimed_by: agentId,
       claimed_at: now(),
       status: "accepted",
-      updated_at: now()
+      updated_at: now(),
+      session_id: null  // filled after session creation
     };
+    
+    // Create a workspace session (task + desk) so it appears in Workspaces/Projects
+    let session = null;
+    let taskId = null;
+    if (jobText) {
+      try {
+        const agent = findAgent(agentId) || store.agentProfiles.find((p) => p.id === agentId);
+        const titleLine = jobText.split(/\n/)[0].replace(/^JOB v\d+:\s*/i, "").trim();
+        const title = (titleLine || `Claim: ${jobId}`).slice(0, 80);
+        const content = jobText;
+        const startedAt = now();
+        const goalId = `goal-claim-${randomUUID()}`;
+        const goalTitle = `Claimed Job: ${title}`;
+        const goal = {
+          id: goalId,
+          title: goalTitle,
+          status: "active",
+          createdAt: startedAt,
+          updatedAt: startedAt
+        };
+        store.goals.unshift(goal);
+        
+        taskId = `task-${randomUUID()}`;
+        const task = {
+          id: taskId,
+          goalId,
+          type: "synthesis",
+          title,
+          description: content,
+          requiredCapabilities: ["research", "review", "synthesis"],
+          priority: 90,
+          status: "open",
+          createdAt: startedAt,
+          updatedAt: startedAt,
+          source: "agent-gui-claim",
+          agentGuiRoom: "home",
+          agentGuiTeamId: "home-room",
+          agentGuiAgent: agentId,
+          agentGuiModel: agent?.model || "OpenClaw local agent",
+          ownerWalletAddress: null
+        };
+        store.tasks.unshift(task);
+        
+        session = agentGuiTaskSession(task);
+        claim.session_id = session.id;
+        claim.task_id = taskId;
+        event("agentgui_session_started", `Job workspace created from Work claim`, {
+          taskId,
+          goalId,
+          jobId,
+          agentId
+        });
+      } catch (error) {
+        console.warn(`Job claim: workspace session creation failed: ${error.message}`);
+      }
+    }
+    
     store.jobClaims = normalizeJobClaims([claim, ...(store.jobClaims || [])]);
     await saveStore();
-    return sendJson(res, 201, { ok: true, claim: store.jobClaims[0] });
+    return sendJson(res, 201, { ok: true, claim: store.jobClaims[0], session });
   }
 
   if (method === "POST" && path === "/api/jobs/create") {
@@ -8621,8 +8682,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       global: { base_url: "", model: "OpenClaw local agent" },
       manager: { base_url: "", model: "OSA manager", uses_effective_agent_model: true },
       rooms: [
-        { id: agentGuiHomeTeamId, name: "Home" },
-        { id: agentGuiPublicProjectsTeamId, name: "Latest Projects" }
+        { id: agentGuiHomeTeamId, name: "Home" }
       ]
     });
   }
@@ -9912,6 +9972,39 @@ function finalizeAcceptedResult(result, review) {
   publishResultPoolEntry(result, review);
   closeReviewTasks(result.id);
   if (task) completeGoalIfDone(task.goalId, result);
+  
+  // Auto-submit job result if this task was created from a Work claim
+  autoSubmitJobResultForTask(task, result);
+}
+
+function autoSubmitJobResultForTask(task, result) {
+  if (!task || !store.jobClaims) return;
+  const claim = store.jobClaims.find((c) => c.task_id === task.id && c.status === "accepted");
+  if (!claim) return;
+  
+  try {
+    const summary = (result?.summary || result?.content || "").slice(0, 300);
+    const jobResult = {
+      job_id: claim.job_id,
+      claim_id: claim.id || claim.job_id,
+      agent_id: claim.claimed_by || result.agentId || "unknown",
+      summary,
+      output_hash: createHash("sha256").update(summary + claim.job_id + (claim.id || claim.job_id), "utf8").digest("hex").slice(0, 64),
+      submitted_at: now(),
+      verified: true
+    };
+    store.jobResults = normalizeJobResults([jobResult, ...(store.jobResults || [])]);
+    claim.status = "completed";
+    claim.updated_at = now();
+    event("job_result_auto_submitted", `Auto-submitted result for claimed job ${claim.job_id}`, {
+      jobId: claim.job_id,
+      taskId: task.id,
+      agentId: claim.claimed_by,
+      summary: summary.slice(0, 120)
+    });
+  } catch (error) {
+    console.warn(`Auto-submit job result failed: ${error.message}`);
+  }
 }
 
 function reconcileConsensusAfterAgentDisconnect(agentId) {

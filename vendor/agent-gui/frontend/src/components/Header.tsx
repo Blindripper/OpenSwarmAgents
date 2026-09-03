@@ -18,9 +18,6 @@ interface Props {
   sessionCount: number;
   activeCount: number;
   networkStats?: {
-    publicProjects: number;
-    copies: number;
-    donationsFlop: number;
     flopStatusLabel: string;
     onlineAgents: number;
     walletConnected: boolean;
@@ -148,13 +145,11 @@ export function Header({
     deskConfig && !reasoningDisabled && reasoningOptions.length > 0,
   );
   const stats = networkStats ?? {
-    publicProjects: 0,
-    copies: 0,
-    donationsFlop: 0,
     flopStatusLabel: "Prelaunch",
     onlineAgents: activeCount,
     walletConnected: false,
     live: false,
+    federation: undefined,
   };
   const walletButtonLabel = stats.walletConnected
     ? `Disconnect ${walletAddress ? shortAddress(walletAddress) : "Wallet"}`
