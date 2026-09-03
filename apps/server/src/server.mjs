@@ -8655,6 +8655,13 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
         };
         store.tasks.unshift(task);
         
+        // Start the agent connector so the agent actually works on the task
+        try {
+          startAgentGuiTaskConnector(req, task, agentId);
+        } catch (connectorError) {
+          console.warn(`Job claim: connector start failed (task will appear in Workspaces, but agent needs manual start): ${connectorError.message}`);
+        }
+        
         session = agentGuiTaskSession(task);
         claim.session_id = session.id;
         claim.task_id = taskId;
