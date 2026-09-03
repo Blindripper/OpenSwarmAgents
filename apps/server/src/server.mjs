@@ -1404,9 +1404,71 @@ function signingPolicyForAgent(agentId, action) {
   return "signature-only";
 }
 
+function inspectJobFrame(text, verified) {
+  const trimmed = String(text || "").trim();
+  // Match JOB v1: <title> ...  or  JOB: <title> ...
+  const jobMatch = trimmed.match(/^JOB\s+(v\d+:?\s?)?(.+)$/i);
+  if (jobMatch) {
+    const title = jobMatch[2].trim().slice(0, 200);
+    const rewardMatch = trimmed.match(/Reward:\s*([^\n]+)/i);
+    return {
+      protocol: "job",
+      frameType: "job",
+      objectId: title.replace(/[^a-z0-9]/gi, "-").toLowerCase().slice(0, 60) || null,
+      verified,
+      valid: verified,
+      rejection: verified ? null : "signature_unverified",
+      frame: { type: "job", title, reward: rewardMatch ? rewardMatch[1].trim() : null, raw: trimmed.slice(0, 500) }
+    };
+  }
+  // Match CLAIM v1: <job_id> ... claimed by <agent>
+  const claimMatch = trimmed.match(/^CLAIM\s+(v\d+:?\s?)?(.+)$/i);
+  if (claimMatch) {
+    return {
+      protocol: "job",
+      frameType: "claim",
+      objectId: claimMatch[2].trim().split(/\s/)[0].slice(0, 100) || null,
+      verified,
+      valid: verified,
+      rejection: verified ? null : "signature_unverified",
+      frame: { type: "claim", detail: claimMatch[2].trim().slice(0, 300) }
+    };
+  }
+  // Match RESULT v1: <job_id> ... <summary>
+  const resultMatch = trimmed.match(/^RESULT\s+(v\d+:?\s?)?(.+)$/i);
+  if (resultMatch) {
+    return {
+      protocol: "job",
+      frameType: "result",
+      objectId: resultMatch[2].trim().split(/\s/)[0].slice(0, 100) || null,
+      verified,
+      valid: verified,
+      rejection: verified ? null : "signature_unverified",
+      frame: { type: "result", detail: resultMatch[2].trim().slice(0, 300) }
+    };
+  }
+  // Match ATTEST v1: <job_id> ...
+  const attestMatch = trimmed.match(/^ATTEST\s+(v\d+:?\s?)?(.+)$/i);
+  if (attestMatch) {
+    return {
+      protocol: "job",
+      frameType: "attest",
+      objectId: attestMatch[2].trim().split(/\s/)[0].slice(0, 100) || null,
+      verified,
+      valid: verified,
+      rejection: verified ? null : "signature_unverified",
+      frame: { type: "attest", detail: attestMatch[2].trim().slice(0, 300) }
+    };
+  }
+  return null;
+}
+
 function inspectProtocolTranscript(room, message) {
   const text = String(message?.text || "");
   const verified = verifyTechnocoreDidMessage(room, message);
+  // Try job protocol frames (JOB, CLAIM, RESULT, ATTEST)
+  const jobFrame = inspectJobFrame(text, verified);
+  if (jobFrame) return jobFrame;
   if (!text.startsWith("tclk1 ")) {
     return { protocol: null, frameType: null, objectId: null, verified, valid: false, rejection: "not_tclk_frame", frame: null };
   }
@@ -7199,8 +7261,10 @@ async function syncTechnocoreJobRooms() {
         if (seenKeys.has(key)) continue;
         seenKeys.add(key);
         const text = String(record.text || "").trim();
-        // Detect JOB frames: "JOB v1:", "JOB:", etc.
-        if (/^JOB\s+(v\d+:\s?)?/i.test(text)) {
+        // Use formal frame inspection (JOB v1, CLAIM v1, RESULT v1, ATTEST v1)
+        const verified = Boolean(record.from && record.nonce && record.signature);
+        const inspected = inspectJobFrame(text, verified);
+        if (inspected && inspected.frameType === "job") {
           newJobs.push({
             room,
             seq: record.sequence,
