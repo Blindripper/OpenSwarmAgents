@@ -252,6 +252,7 @@ async function loadStore() {
       delegations: [],
       jobClaims: [],
       jobResults: [],
+      localJobs: [],
       federationPeerAnnouncements: [],
       publicRooms: [],
       publicProjects: [],
@@ -301,6 +302,7 @@ function normalizeStore(input) {
     delegations: normalizeDelegations(input.delegations || []),
     jobClaims: normalizeJobClaims(input.jobClaims || []),
     jobResults: normalizeJobResults(input.jobResults || []),
+    localJobs: Array.isArray(input.localJobs) ? input.localJobs.slice(0, 50) : [],
     federationPeerAnnouncements: normalizeFederationPeerAnnouncements(input.federationPeerAnnouncements || []),
     publicRooms: normalizePublicCollections(input.publicRooms || [], "room"),
     publicProjects: normalizePublicCollections(input.publicProjects || [], "project"),
@@ -1327,7 +1329,8 @@ async function discoverTechnocoreJobs(limit) {
       const messages = await technocorePublicChatMessages(Math.max(1, Math.min(100, limit || 20)), room, 0);
       for (const msg of messages) {
         const text = msg.text || msg.message || "";
-        if (text.includes("JOB:") || text.includes("kibble:") || text.includes("ACP:") || text.includes("a2a:")) {
+        // Accept any text that looks like a job announcement
+        if (text.includes("JOB:") || text.includes("JOB v") || text.includes("kibble:") || text.includes("ACP:") || text.includes("a2a:") || text.includes("Task:") || text.includes("task:") || text.includes("Reward:") || text.includes("reward:")) {
           jobs.push({
             room,
             seq: msg.seq || 0,
@@ -8318,7 +8321,8 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     const technocoreJobs = await discoverTechnocoreJobs(limit);
     const localClaims = normalizeJobClaims(store.jobClaims || []);
     const localResults = normalizeJobResults(store.jobResults || []);
-    return sendJson(res, 200, { technocore_jobs: technocoreJobs, local_claims: localClaims, local_results: localResults, generated_at: now() });
+    const localJobs = (store.localJobs || []).filter((j) => j.from === "local");
+    return sendJson(res, 200, { technocore_jobs: technocoreJobs, local_jobs: localJobs, local_claims: localClaims, local_results: localResults, generated_at: now() });
   }
 
   if (method === "POST" && path === "/api/jobs/claim") {
@@ -8338,6 +8342,37 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     store.jobClaims = normalizeJobClaims([claim, ...(store.jobClaims || [])]);
     await saveStore();
     return sendJson(res, 201, { ok: true, claim: store.jobClaims[0] });
+  }
+
+  if (method === "POST" && path === "/api/jobs/create") {
+    const body = await readJson(req);
+    const title = String(body.title || "").slice(0, 200);
+    const description = String(body.description || "").slice(0, 2000);
+    const reward = String(body.reward || "").slice(0, 80);
+    const room = String(body.room || "kibble").slice(0, 80);
+    if (!title) return sendJson(res, 400, { detail: "title is required" });
+    const jobText = `JOB v1: ${title}${reward ? `, Reward: ${reward}` : ""}${description ? `\n\n${description}` : ""}`;
+    // Store locally first
+    const localJob = {
+      room,
+      seq: "local-" + Date.now(),
+      from: "local",
+      text: jobText.slice(0, 500),
+      observed_at: now()
+    };
+    store.localJobs = [localJob, ...(Array.isArray(store.localJobs) ? store.localJobs : [])].slice(0, 50);
+    await saveStore();
+    // Try to publish to Technocore
+    let publishedToTechnocore = false;
+    if (technocoreEnabled) {
+      try {
+        await technocoreSay(room, jobText);
+        publishedToTechnocore = true;
+      } catch (e) {
+        console.warn(`Job create: could not publish to Technocore room ${room}: ${e.message}`);
+      }
+    }
+    return sendJson(res, 201, { ok: true, job: localJob, published_to_technocore: publishedToTechnocore });
   }
 
   if (method === "POST" && path === "/api/jobs/result") {

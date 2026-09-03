@@ -92,7 +92,7 @@ const WORKBENCH_LEGACY_KEY_V1 = legacyStorageKey("workbench-v1");
 const ONBOARDING_DISMISSED_KEY = "osa-openclaw-onboarding-dismissed";
 const WALLET_STORAGE_KEY = "osa-wallet-session";
 const RESULT_CANVAS_OPEN_KEY = "osa-result-canvas-open";
-type DashboardTab = "workbench" | "top-projects" | "network" | "work" | "market" | "trust" | "vault";
+type DashboardTab = "workbench" | "top-projects" | "work" | "market" | "trust" | "vault";
 interface WalletSession {
   address: string;
   chain_id?: string | null;
@@ -2064,7 +2064,6 @@ export default function App() {
         {([
           ["workbench", "Workspaces / Projects"],
           ["top-projects", "Project Discovery"],
-          ["network", "Protocol Network"],
           ["work", "Work"],
           ["market", "Market & Deals"],
           ["trust", "Trust"],
@@ -2076,7 +2075,7 @@ export default function App() {
             onClick={() => {
               setDashboardTab(id);
               if (id === "top-projects") void refreshTopProjects();
-              if (id === "network") void refreshNetworkActivity();
+              if (id === "market") void refreshNetworkActivity();
             }}
             style={{
               height: 30,
@@ -2244,14 +2243,6 @@ export default function App() {
           onDonateRecorded={refreshTopProjects}
           onDetails={openProjectDetails}
           onDelete={deletePublicProjectFromTop}
-        />
-      ) : dashboardTab === "network" ? (
-        <ProtocolOsPanel
-          events={networkEvents}
-          live={networkLive}
-          activityLoading={networkEventsLoading}
-          onRefreshActivity={refreshNetworkActivity}
-          onOpenProject={(projectId) => setProjectDetails({ projectId })}
         />
       ) : dashboardTab === "work" ? (
         <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13 }}>
