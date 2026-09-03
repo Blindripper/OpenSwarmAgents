@@ -6696,6 +6696,34 @@ async function ensureTechnocoreDidProfile() {
   }
 }
 
+async function ensureAgentDidsOnTechnocore() {
+  if (!technocoreEnabled || !technocoreProfileEnabled || !technocoreSignedMessages || !technocoreDid) return 0;
+  const agents = agentGuiAgents();
+  let registered = 0;
+  for (const agent of agents) {
+    const agentDid = agent.did || agentDidForProfile(agent.id);
+    if (!agentDid || !agentDid.startsWith("did:key:")) continue;
+    const fingerprint = createHash("sha256").update(agentDid).digest("hex").slice(0, 16);
+    const ns = `did-${fingerprint.slice(0, 2)}`;
+    const key = fingerprint.slice(2);
+    const profile = `${agentDid} name:${agent.name} role:agent node:${nodeIdentity.nodeId}`;
+    try {
+      const existing = await fetchTechnocoreText(`/kv/${ns}/${key}`, technocoreTimeoutMs);
+      const existingProfile = existing.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) || "";
+      if (existingProfile === profile) continue;
+    } catch {
+      /* Missing or stale: write it below. */
+    }
+    try {
+      await writeTechnocoreNote(ns, key, profile);
+      registered++;
+    } catch (error) {
+      console.warn(`Technocore DID profile for ${agent.id} failed: ${error.message}`);
+    }
+  }
+  return registered;
+}
+
 async function writeTechnocoreNote(namespace, key, value) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), technocoreMetadataTimeoutMs);
@@ -8734,6 +8762,8 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       const body = await readJson(req);
       const profile = createAgentGuiProfile(body);
       await saveStore();
+      // Register the new agent DID on Technocore in the background.
+      ensureAgentDidsOnTechnocore().catch(() => {});
       return sendJson(res, 201, { ok: true, agent: publicAgentGuiProfile(profile) });
     } catch (error) {
       return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to create OpenClaw profile" });
@@ -10406,6 +10436,11 @@ server.listen(port, host, () => {
   });
   ensureTechnocoreDidProfile().catch((error) => {
     console.warn(`Technocore DID profile ensure failed: ${error.message}`);
+  });
+  ensureAgentDidsOnTechnocore().then((count) => {
+    if (count > 0) console.log(`Registered ${count} agent DID(s) on Technocore`);
+  }).catch((error) => {
+    console.warn(`Technocore agent DIDs ensure failed: ${error.message}`);
   });
 });
 
