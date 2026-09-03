@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type NetworkEvent, type RuntimeStatus } from "./api/client";
+import { getWalletProvider, type WalletProvider } from "./api/wallet-provider";
 import { Header } from "./components/Header";
 import type { ApiMode, ReasoningEffort } from "./types";
 import { Office } from "./components/Office";
@@ -99,9 +100,6 @@ interface WalletSession {
   connected_at?: string;
   last_seen_at?: string;
   verified?: boolean;
-}
-interface WalletProvider {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
 }
 interface ShareChannelDraft {
   id: string;
@@ -217,33 +215,7 @@ function readWalletConnected(): boolean {
 }
 
 // EIP-6963: find MetaMask provider directly (bypasses selectExtension bug)
-async function getMetaMaskProvider(): Promise<WalletProvider> {
-  // Fast path: legacy window.ethereum is still set by MetaMask and similar wallets.
-  const eth = (window as unknown as { ethereum?: WalletProvider }).ethereum;
-  if (eth?.request) return eth;
-  // EIP-6963 fallback: some wallets only announce via the provider-discovery event.
-  return new Promise((resolve, reject) => {
-    let resolved = false;
-    let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
-    const fallback = () => {
-      if (resolved) return;
-      reject(new Error("No EVM wallet found. Install MetaMask or open this page with MetaMask enabled."));
-    };
-    const handler = (e: Event) => {
-      if (resolved) return;
-      const detail = (e as CustomEvent).detail as any;
-      if (detail?.provider?.request) {
-        resolved = true;
-        window.removeEventListener("eip6963:announceProvider", handler as any);
-        clearTimeout(fallbackTimer);
-        resolve(detail.provider);
-      }
-    };
-    window.addEventListener("eip6963:announceProvider", handler as any);
-    window.dispatchEvent(new Event("eip6963:requestProvider"));
-    fallbackTimer = setTimeout(fallback, 3000);
-  });
-}
+// getMetaMaskProvider is now imported from ./api/wallet-provider as getWalletProvider
 
 function stripPublicProjectSessionId(id: string): string {
   return id.replace(/^public-project-/, "");
@@ -1907,7 +1879,7 @@ export default function App() {
     setWalletConnectPending(true);
     setWalletConnectError(null);
     try {
-      const provider = await getMetaMaskProvider();
+      const provider = await getWalletProvider();
       const accounts = await provider.request({ method: "eth_requestAccounts" });
       const address = Array.isArray(accounts) ? String(accounts[0] || "") : "";
       if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error("No wallet account selected.");

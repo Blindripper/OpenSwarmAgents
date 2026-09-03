@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, type WalletSession } from "../api/client";
+import { getWalletProvider } from "../api/wallet-provider";
 import type { TopAgent } from "../types";
 
 interface Props {
@@ -15,10 +16,6 @@ interface Props {
   onDetails?: (project: TopAgent) => void;
   onDelete?: (project: TopAgent) => void;
 }
-
-type WalletProvider = {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-};
 
 const WALLET_STORAGE_KEY = "osa-wallet-session";
 
@@ -68,12 +65,8 @@ export function TopAgentsPanel({
 
   async function connectWallet(): Promise<WalletSession | null> {
     setDonationError(null);
-    const provider = (window as typeof window & { ethereum?: WalletProvider }).ethereum;
-    if (!provider) {
-      setDonationError("No wallet found. Open OSA with MetaMask or another EVM wallet.");
-      return null;
-    }
     try {
+      const provider = await getWalletProvider();
       const accounts = await provider.request({ method: "eth_requestAccounts" }) as string[];
       const address = accounts[0];
       if (!address) throw new Error("No wallet account selected.");
