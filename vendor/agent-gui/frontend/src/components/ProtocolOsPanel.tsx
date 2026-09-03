@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { NetworkEvent } from "../api/client";
 import { api } from "../api/client";
-import type { ProtocolLayerStatus, ProtocolOverview, ProtocolPaperDeal, ProtocolTimelineEntry, TclkOfferProjection } from "../types";
+import type { ProtocolLayerStatus, ProtocolOverview, ProtocolTimelineEntry, TclkOfferProjection } from "../types";
 import { NetworkActivityPanel } from "./NetworkActivityPanel";
 
 interface Props {
@@ -136,41 +136,12 @@ function TimelineRecord({ record }: { record: ProtocolTimelineEntry }) {
   );
 }
 
-function PaperDealCard({ deal, busy, onAction }: { deal: ProtocolPaperDeal; busy: boolean; onAction: (deal: ProtocolPaperDeal, action: "advance" | "refund" | "cancel") => void }) {
-  return (
-    <article style={{ border: "1px solid #5b4a16", borderRadius: 9, padding: 11, background: "rgba(35,29,12,.82)", display: "grid", gap: 8 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
-        <div>
-          <strong style={{ fontSize: 12 }}>{deal.label}</strong>
-          <div style={{ color: "#fde68a", fontSize: 10, marginTop: 3 }}>{deal.amount} {deal.asset} · {deal.status}</div>
-        </div>
-        <span style={{ color: "#facc15", fontSize: 9, fontWeight: 900 }}>PAPER · NO VALUE</span>
-      </div>
-      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-        {(["offer", "accept", "lock", "claim", "receipt"] as const).map((stage) => {
-          const complete = deal.timeline.some((entry) => entry.stage === stage);
-          return <span key={stage} style={{ padding: "3px 7px", borderRadius: 999, border: `1px solid ${complete ? "#a16207" : "#3f3f46"}`, color: complete ? "#fde68a" : "#71717a", fontSize: 9, fontWeight: 800 }}>{stage}</span>;
-        })}
-      </div>
-      <div style={{ color: "var(--text-dim)", fontSize: 9 }}>
-        Contract: {deal.contract_id ? shortIdentity(deal.contract_id) : "created after accept"}
-      </div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {deal.next_action && <button type="button" disabled={busy} onClick={() => onAction(deal, "advance")} style={{ height: 28, padding: "0 10px", borderRadius: 6, border: "1px solid #a16207", background: "#3b2b0d", color: "#fde68a", fontWeight: 900, fontSize: 10, cursor: busy ? "default" : "pointer" }}>Run {deal.next_action}</button>}
-        {deal.status === "locked" && <button type="button" disabled={busy} onClick={() => onAction(deal, "refund")} style={{ height: 28, padding: "0 10px", borderRadius: 6, border: "1px solid #475569", background: "#172033", color: "#cbd5e1", fontSize: 10, cursor: busy ? "default" : "pointer" }}>Simulate refund</button>}
-        {["proposed", "accepted"].includes(deal.status) && <button type="button" disabled={busy} onClick={() => onAction(deal, "cancel")} style={{ height: 28, padding: "0 10px", borderRadius: 6, border: "1px solid #475569", background: "#172033", color: "#cbd5e1", fontSize: 10, cursor: busy ? "default" : "pointer" }}>Cancel</button>}
-      </div>
-    </article>
-  );
-}
 
 export function ProtocolOsPanel({ events, live, activityLoading = false, onRefreshActivity, onOpenProject }: Props) {
   const [view, setView] = useState<"protocols" | "activity">("protocols");
   const [overview, setOverview] = useState<ProtocolOverview | null>(null);
   const [protocolView, setProtocolView] = useState<"offers" | "timeline">("offers");
-  const [paperAmount, setPaperAmount] = useState("100");
-  const [paperLabel, setPaperLabel] = useState("FLOP end-to-end rehearsal");
-  const [paperBusy, setPaperBusy] = useState<string | null>(null);
+  // Paper rehearsal removed — only TCLK Observer remains
   const [offerBusy, setOfferBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -189,33 +160,7 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const createPaperDeal = useCallback(async () => {
-    setPaperBusy("create");
-    setError(null);
-    try {
-      await api.protocol.createPaperDeal({ amount: paperAmount, label: paperLabel });
-      await refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to create PaperRail rehearsal");
-    } finally {
-      setPaperBusy(null);
-    }
-  }, [paperAmount, paperLabel, refresh]);
-
-  const mutatePaperDeal = useCallback(async (deal: ProtocolPaperDeal, action: "advance" | "refund" | "cancel") => {
-    setPaperBusy(deal.id);
-    setError(null);
-    try {
-      if (action === "advance") await api.protocol.advancePaperDeal(deal.id);
-      else if (action === "refund") await api.protocol.refundPaperDeal(deal.id);
-      else await api.protocol.cancelPaperDeal(deal.id);
-      await refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to update PaperRail rehearsal");
-    } finally {
-      setPaperBusy(null);
-    }
-  }, [refresh]);
+  // Paper rehearsal actions removed — only TCLK Observer remains
 
   const acceptOffer = useCallback(async (offer: TclkOfferProjection) => {
     setOfferBusy(offer.id);
@@ -263,7 +208,7 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
           <div>
             <div style={{ fontSize: 20, fontWeight: 950 }}>Technocore Protocol OS</div>
             <div style={{ marginTop: 4, maxWidth: 760, color: "var(--text-dim)", fontSize: 11, lineHeight: 1.5 }}>
-              Verified public protocol projection plus a complete local PaperRail rehearsal. Technocore transports signed events; OSA keeps execution, policies, artifacts, keys, and encrypted rehearsal secrets private.
+              Verified public TCLK protocol projection. Signed frames from Technocore rooms are observed and validated locally.
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -290,27 +235,7 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
           ))}
         </section>
 
-        <section style={{ border: "1px solid #5b4a16", borderRadius: 10, padding: 14, background: "rgba(27,24,15,.94)", display: "grid", gap: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 900 }}>FLOP Deal Rehearsal</div>
-              <div style={{ marginTop: 3, maxWidth: 760, color: "#d6c88b", fontSize: 10, lineHeight: 1.45 }}>Run Offer → Accept → Lock → Claim → Receipt now, using the official TCLK state machine and PaperRail. The workflow is production-shaped; the current rail holds no FLOP and transfers no value.</div>
-            </div>
-            <span style={{ border: "1px solid #a16207", borderRadius: 999, padding: "4px 9px", color: "#fde047", fontSize: 9, fontWeight: 950 }}>FULL FLOW · PAPER RAIL</span>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(160px, 1fr) minmax(100px, 160px) auto", gap: 7 }}>
-            <input aria-label="Paper deal label" value={paperLabel} onChange={(event) => setPaperLabel(event.target.value)} maxLength={100} style={{ height: 32, borderRadius: 6, border: "1px solid #5b4a16", background: "#111827", color: "#e5e7eb", padding: "0 9px", boxSizing: "border-box" }} />
-            <input aria-label="Paper FLOP amount" value={paperAmount} onChange={(event) => setPaperAmount(event.target.value.replace(/\D/g, "").slice(0, 32))} inputMode="numeric" style={{ height: 32, borderRadius: 6, border: "1px solid #5b4a16", background: "#111827", color: "#e5e7eb", padding: "0 9px", boxSizing: "border-box" }} />
-            <button type="button" onClick={() => void createPaperDeal()} disabled={paperBusy !== null || !paperAmount} style={{ height: 32, padding: "0 12px", borderRadius: 6, border: "1px solid #a16207", background: "#3b2b0d", color: "#fde68a", fontWeight: 900, fontSize: 10, cursor: paperBusy ? "default" : "pointer" }}>{paperBusy === "create" ? "Creating…" : "Create rehearsal"}</button>
-          </div>
-          {(overview?.paper?.deals.length || 0) === 0 ? (
-            <div style={{ color: "var(--text-dim)", fontSize: 10 }}>No PaperRail rehearsals yet.</div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 8 }}>
-              {overview?.paper?.deals.map((deal) => <PaperDealCard key={deal.id} deal={deal} busy={paperBusy === deal.id} onAction={(item, action) => void mutatePaperDeal(item, action)} />)}
-            </div>
-          )}
-        </section>
+
 
         <section style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(230px, 320px)", gap: 12 }}>
           <div style={{ border: "1px solid #273453", borderRadius: 10, padding: 14, background: "rgba(12,20,34,.92)" }}>
