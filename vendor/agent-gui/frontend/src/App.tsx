@@ -216,6 +216,38 @@ function readWalletConnected(): boolean {
   return Boolean(readWalletSession());
 }
 
+// EIP-6963: find MetaMask provider directly (bypasses selectExtension bug)
+function getMetaMaskProvider(): Promise<WalletProvider> {
+  return new Promise((resolve, reject) => {
+    let resolved = false;
+    let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+    const fallback = () => {
+      if (resolved) return;
+      const eth = (window as unknown as { ethereum?: WalletProvider }).ethereum;
+      if (eth?.request) {
+        resolved = true;
+        clearTimeout(fallbackTimer);
+        resolve(eth);
+      } else {
+        reject(new Error("No EVM wallet found. Install MetaMask or open this page with MetaMask enabled."));
+      }
+    };
+    const handler = (e: Event) => {
+      if (resolved) return;
+      const detail = (e as CustomEvent).detail as any;
+      if (detail?.provider?.request) {
+        resolved = true;
+        window.removeEventListener("eip6963:announceProvider", handler as any);
+        clearTimeout(fallbackTimer);
+        resolve(detail.provider);
+      }
+    };
+    window.addEventListener("eip6963:announceProvider", handler as any);
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+    fallbackTimer = setTimeout(fallback, 3000);
+  });
+}
+
 function stripPublicProjectSessionId(id: string): string {
   return id.replace(/^public-project-/, "");
 }
@@ -1878,8 +1910,7 @@ export default function App() {
     setWalletConnectPending(true);
     setWalletConnectError(null);
     try {
-      const provider = (window as unknown as { ethereum?: WalletProvider }).ethereum;
-      if (!provider?.request) throw new Error("No EVM wallet found. Install MetaMask or open OSA in a wallet-enabled browser.");
+      const provider = await getMetaMaskProvider();
       const accounts = await provider.request({ method: "eth_requestAccounts" });
       const address = Array.isArray(accounts) ? String(accounts[0] || "") : "";
       if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error("No wallet account selected.");
