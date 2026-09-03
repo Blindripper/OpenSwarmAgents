@@ -261,6 +261,7 @@ async function loadStore() {
       proposalVotes: [],
       trustLedger: [],
       federationPeerHeads: {},
+      signingPolicyOverrides: {},
       events: []
     });
     ensureAgentGuiExampleProject(initial);
@@ -314,6 +315,7 @@ function normalizeStore(input) {
     proposals: (input.proposals || []).map(normalizeProposal),
     proposalVotes: input.proposalVotes || [],
     oauthStates: input.oauthStates || [],
+    signingPolicyOverrides: input.signingPolicyOverrides || {},
     events: input.events || []
   };
 }
@@ -1370,6 +1372,9 @@ function normalizeDelegations(records) {
 }
 
 function signingPolicyForAgent(agentId, action) {
+  // Check for explicit override first
+  const override = store.signingPolicyOverrides?.[`${agentId}:${action}`];
+  if (override === "signature-only" || override === "require-human") return override;
   const policy = (store.agentCapabilities || []).find((c) => c.agent_id === agentId);
   if (!policy) {
     // Default policy: critical actions require human approval
@@ -6997,15 +7002,49 @@ async function ensureAgentDidsOnTechnocore() {
 /** Ensure every default agent has a local capability record so Vault shows them as published. */
 function ensureAgentCapabilitiesPublished() {
   const defaultAgents = ["technocore-specialist", "coder", "bugfixer", "info-guy", "coinexpert", "graphicsexpert", "moneymaker", "security-expert", "explorer"];
+  // Conservative default capabilities: critical actions (lock/claim/settle/refund)
+  // stay require-human unless the user explicitly grants them via the Vault UI.
+  const defaultCapabilities = ["sign_text", "create_deal"];
   const existing = store.agentCapabilities || [];
   for (const agentId of defaultAgents) {
-    if (existing.some((p) => p.agent_id === agentId)) continue;
+    const record = existing.find((p) => p.agent_id === agentId);
+    if (record) {
+      // Migration: records minted with the old full list are downgraded so
+      // critical actions require human approval again.
+      const caps = record.capabilities || [];
+      const hadFullDefaults = ["sign_text", "create_deal", "lock", "claim", "settle"].every((c) => caps.includes(c));
+      if (hadFullDefaults && caps.length <= 5) {
+        record.capabilities = defaultCapabilities;
+        record.updated_at = now();
+      }
+      continue;
+    }
     const did = agentDidForProfile(agentId);
     store.agentCapabilities = normalizeAgentCapabilities([
-      { agent_id: agentId, did, capabilities: ["sign_text", "create_deal", "lock", "claim", "settle"], published_at: now(), updated_at: now() },
+      { agent_id: agentId, did, capabilities: [...defaultCapabilities], published_at: now(), updated_at: now() },
       ...(store.agentCapabilities || [])
     ]);
   }
+}
+
+/** Share local trust summary to Technocore osa-network for cross-node federation. */
+async function shareTrustToTechnocore() {
+  if (!technocoreEnabled || !technocorePublicRoom || !technocoreSignedMessages || !technocoreDid) return;
+  const results = normalizeJobResults(store.jobResults || []);
+  const agentCounts = {};
+  for (const r of results) {
+    if (r.verified) agentCounts[r.agent_id] = (agentCounts[r.agent_id] || 0) + 1;
+  }
+  const top = Object.entries(agentCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([agent_id, verified_results]) => ({ agent_id, verified_results }));
+  if (top.length === 0) return;
+  const trustSummary = { total_results: results.length, top };
+  const text = `OSA TRUST v1: ${JSON.stringify(trustSummary)}`;
+  try {
+    await technocoreWriteWithRetry(() => technocoreSaySigned(technocorePublicRoom, text), {});
+  } catch { /* best effort */ }
 }
 
 async function writeTechnocoreNote(namespace, key, value) {
@@ -8610,6 +8649,26 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     return sendJson(res, 200, { agent_id: agentId || "default", action, policy, generated_at: now() });
   }
 
+  if (method === "POST" && path === "/api/signing-policy") {
+    try {
+      const body = await readJson(req);
+      const agentId = String(body.agent_id || defaultAgentGuiAgentId).slice(0, 80);
+      const action = String(body.action || "sign_text").slice(0, 40);
+      const policy = String(body.policy || "").slice(0, 40);
+      if (!["signature-only", "require-human"].includes(policy)) {
+        return sendJson(res, 400, { detail: "policy must be 'signature-only' or 'require-human'" });
+      }
+      store.signingPolicyOverrides = store.signingPolicyOverrides || {};
+      store.signingPolicyOverrides[`${agentId}:${action}`] = policy;
+      // Prune stale overrides for the same agent/action pair across other actions is not needed.
+      await saveStore();
+      event("signing_policy_updated", `Signing policy for ${agentId}:${action} set to ${policy}`, { agentId, action, policy });
+      return sendJson(res, 200, { ok: true, agent_id: agentId, action, policy, updated_at: now() });
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to update signing policy" });
+    }
+  }
+
   if (method === "GET" && path === "/api/work-bindings") {
     const jobs = normalizeJobClaims(store.jobClaims || []);
     const results = normalizeJobResults(store.jobResults || []);
@@ -8654,6 +8713,61 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     const completedResults = results.filter((r) => r.verified);
     const completedDeals = deals.filter((d) => d.status === "claimed" || d.status === "refunded");
     const refundedDeals = deals.filter((d) => d.status === "refunded");
+
+    // Local top builders
+    const localAgentCounts = {};
+    for (const r of results) {
+      localAgentCounts[r.agent_id] = (localAgentCounts[r.agent_id] || 0) + 1;
+    }
+    const localBuilders = Object.entries(localAgentCounts).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([agent_id, count]) => ({ agent_id, verified_results: count, source: "local" }));
+
+    // (Cross-Node) Read osa-network room for trust data from other OSA nodes
+    let federatedBuilders = [];
+    if (technocoreEnabled && technocorePublicRoom) {
+      try {
+        const room = technocorePublicRoom;
+        const query = { format: "json", limit: 30 };
+        const view = await fetchTechnocoreRoomJson(`/r/${room}`, query);
+        const messages = Array.isArray(view?.messages) ? view.messages : [];
+        const selfDid = technocoreDid || "";
+        const federatedAgentCounts = {};
+        for (const msg of messages) {
+          const text = String(msg.text || "").trim();
+          const from = String(msg.from || "").trim();
+          // Skip our own messages and unsigned messages
+          if (from === selfDid || from === technocoreNick) continue;
+          // Look for OSA TRUST summary format: OSA TRUST v1: { ... }
+          const trustMatch = text.match(/^OSA\s+TRUST\s+v\d+:\s*(\{.+?\})/i);
+          if (!trustMatch) continue;
+          try {
+            const trustData = JSON.parse(trustMatch[1]);
+            if (trustData.top && Array.isArray(trustData.top)) {
+              for (const b of trustData.top) {
+                const key = `${b.agent_id}:${from}`;
+                federatedAgentCounts[key] = (federatedAgentCounts[key] || 0) + (b.verified_results || 0);
+              }
+            }
+          } catch { /* skip malformed */ }
+        }
+        federatedBuilders = Object.entries(federatedAgentCounts).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([key, count]) => {
+          const parts = key.split(":");
+          return { agent_id: parts[0], verified_results: count, source: "federated" };
+        });
+      } catch {
+        /* Technocore read failed; return local only */
+      }
+    }
+
+    // Merge: local first, then federated (append unique)
+    const merged = [...localBuilders];
+    const localIds = new Set(localBuilders.map((b) => b.agent_id));
+    for (const fb of federatedBuilders) {
+      if (!localIds.has(fb.agent_id)) {
+        merged.push(fb);
+        localIds.add(fb.agent_id);
+      }
+    }
+
     return sendJson(res, 200, {
       summary: {
         total_jobs: jobs.length,
@@ -8665,13 +8779,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
         refunded_deals: refundedDeals.length,
         completion_rate: deals.length > 0 ? ((completedDeals.length / deals.length) * 100).toFixed(1) + "%" : "0%"
       },
-      top_builders: (function() {
-        const agentCounts = {};
-        for (const r of results) {
-          agentCounts[r.agent_id] = (agentCounts[r.agent_id] || 0) + 1;
-        }
-        return Object.entries(agentCounts).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([agent_id, count]) => ({ agent_id, verified_results: count }));
-      })(),
+      top_builders: merged,
       generated_at: now()
     });
   }
@@ -10936,6 +11044,9 @@ server.listen(port, host, () => {
   }).catch((error) => {
     console.warn(`Technocore agent DIDs ensure failed: ${error.message}`);
   });
+  // Share local trust summary to Technocore for cross-node federation
+  shareTrustToTechnocore().catch(() => {});
+  setInterval(() => shareTrustToTechnocore().catch(() => {}), 60 * 60 * 1000).unref?.();
 });
 
 function serveAgentGuiWebSocket(req, socket, url) {

@@ -14,6 +14,7 @@ interface TrustSummary {
 interface TopBuilder {
   agent_id: string;
   verified_results: number;
+  source?: string;
 }
 
 export function TrustPanel() {
@@ -39,6 +40,8 @@ export function TrustPanel() {
   useEffect(() => { void refresh(); }, [refresh]);
 
   if (loading) return <div style={{ color: "var(--text-dim)", fontSize: 12 }}>Loading trust data…</div>;
+
+  const federatedCount = topBuilders.filter((b) => b.source === "federated").length;
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -68,14 +71,20 @@ export function TrustPanel() {
       </section>
 
       <section style={{ border: "1px solid #273453", borderRadius: 9, padding: 12, background: "#0b1525" }}>
-        <div style={{ fontSize: 15, fontWeight: 900, marginBottom: 8 }}>Top Builders</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <div style={{ fontSize: 15, fontWeight: 900 }}>Top Builders</div>
+          {federatedCount > 0 && <span style={{ padding: "2px 8px", borderRadius: 999, background: "#1a1e3a", color: "#a5b4fc", fontSize: 9, fontWeight: 800 }}>🌐 {federatedCount} federated</span>}
+        </div>
         {topBuilders.length === 0 ? (
           <div style={{ color: "var(--text-dim)", fontSize: 10 }}>No verified result submissions yet.</div>
         ) : (
           <div style={{ display: "grid", gap: 4, fontSize: 11 }}>
             {topBuilders.map((builder, idx) => (
-              <div key={builder.agent_id} style={{ display: "flex", justifyContent: "space-between", padding: "5px 8px", border: "1px solid #1e2a45", borderRadius: 6 }}>
-                <span><strong style={{ color: "#93c5fd" }}>#{idx + 1}</strong> {builder.agent_id}</span>
+              <div key={`${builder.agent_id}-${builder.source || "local"}`} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", padding: "5px 8px", border: "1px solid #1e2a45", borderRadius: 6 }}>
+                <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <strong style={{ color: "#93c5fd" }}>#{idx + 1}</strong> {builder.agent_id}
+                  {builder.source === "federated" && <span title="Shared by another OSA node via osa-network" style={{ color: "#a5b4fc", fontSize: 8, fontWeight: 800 }}>🌐</span>}
+                </span>
                 <span style={{ color: "#7ee0c2", fontWeight: 800 }}>{builder.verified_results} verified</span>
               </div>
             ))}
