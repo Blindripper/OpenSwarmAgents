@@ -4,22 +4,26 @@ set -euo pipefail
 REPO_URL="${OSA_REPO_URL:-https://github.com/Blindripper/OpenSwarmAgents.git}"
 INSTALL_DIR="${OSA_INSTALL_DIR:-$HOME/.local/share/openswarmagents}"
 RUN_AFTER_INSTALL=0
+INSTALL_SYSTEMD=-1  # -1 = auto-detect, 0 = no, 1 = yes
 
 usage() {
   cat <<'USAGE'
 OpenSwarmAgents local node installer
 
 Usage:
-  install-node.sh [--dir PATH] [--run]
+  install-node.sh [--dir PATH] [--run] [--systemd] [--no-systemd]
 
 Options:
-  --dir PATH  Install or update OSA in PATH.
-  --run       Start the local node after installing.
-  --help      Show this help.
+  --dir PATH   Install or update OSA in PATH.
+  --run        Start the local node after installing.
+  --systemd    Install as a systemd service (auto-detected by default).
+  --no-systemd Skip systemd service setup.
+  --help       Show this help.
 
 Environment:
-  OSA_INSTALL_DIR  Default install directory.
-  OSA_REPO_URL     Git repository URL.
+  OSA_INSTALL_DIR       Default install directory.
+  OSA_REPO_URL          Git repository URL.
+  OSA_SYSTEMD_USER      System user for the service (default: $USER).
 USAGE
 }
 
@@ -35,6 +39,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --run)
       RUN_AFTER_INSTALL=1
+      shift
+      ;;
+    --systemd)
+      INSTALL_SYSTEMD=1
+      shift
+      ;;
+    --no-systemd)
+      INSTALL_SYSTEMD=0
       shift
       ;;
     --help|-h)
@@ -85,6 +97,63 @@ npm run build:agent-gui
 if [ ! -f .env ] && [ -f .env.example ]; then
   cp .env.example .env
   chmod 600 .env
+fi
+
+# ---- Systemd service setup ----
+if [ "$INSTALL_SYSTEMD" -eq -1 ]; then
+  # Auto-detect: available and running
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
+    INSTALL_SYSTEMD=1
+  else
+    INSTALL_SYSTEMD=0
+  fi
+fi
+
+if [ "$INSTALL_SYSTEMD" -eq 1 ]; then
+  OSA_SERVICE_USER="${OSA_SYSTEMD_USER:-$USER}"
+  SERVICE_FILE="/etc/systemd/system/osa-dashboard.service"
+
+  echo "Installing systemd service as ${SERVICE_FILE} (user=${OSA_SERVICE_USER})..."
+
+  sudo tee "$SERVICE_FILE" > /dev/null << SYSTEMDEOF
+[Unit]
+Description=OpenSwarmAgents (OSA) Dashboard Node
+Documentation=https://github.com/Blindripper/OpenSwarmAgents
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${OSA_SERVICE_USER}
+Group=${OSA_SERVICE_USER}
+WorkingDirectory=${INSTALL_DIR}
+ExecStart=$(command -v node) apps/server/src/server.mjs
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=${INSTALL_DIR}/data
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
+SYSTEMDEOF
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable osa-dashboard.service
+  sudo systemctl restart osa-dashboard.service 2>/dev/null || sudo systemctl start osa-dashboard.service
+
+  echo "  ✓ systemd service 'osa-dashboard' is active and enabled on boot."
+
+  # Verify reachability
+  sleep 2
+  if curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8789/osa-network/ | grep -q 200; then
+    echo "  ✓ Dashboard responds at http://127.0.0.1:8789/osa-network/"
+  else
+    echo "  ⚠ Service started but dashboard not yet responding. Check: sudo journalctl -u osa-dashboard -n 50"
+  fi
 fi
 
 cat <<EOF

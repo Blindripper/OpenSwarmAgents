@@ -86,12 +86,26 @@ Install OSA:
 curl -fsSL https://raw.githubusercontent.com/Blindripper/OpenSwarmAgents/main/scripts/install-node.sh | bash
 ```
 
-Start OSA:
+Start OSA (temporary):
 
 ```bash
 cd ~/.local/share/openswarmagents
 npm run dev
 ```
+
+**Production — run as a systemd service** (auto-detected if systemd is available):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Blindripper/OpenSwarmAgents/main/scripts/install-node.sh | bash -s -- --systemd
+```
+
+Or install the service on an existing checkout:
+
+```bash
+sudo bash ~/.local/share/openswarmagents/scripts/install-systemd-service.sh
+```
+
+The service starts automatically on boot and restarts on failure.
 
 Open the dashboard:
 
