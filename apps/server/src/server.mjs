@@ -1779,6 +1779,55 @@ async function acceptTechnocoreOffer(body = {}) {
     agentId: requestedAgentId
   });
 
+  // If the offer has a job field, create a workspace task and start the agent
+  if (offerFrame.job) {
+    try {
+      const jobProto = String(offerFrame.job.proto || "tclk").slice(0, 20);
+      const jobId = String(offerFrame.job.id || "").slice(0, 100);
+      const jobContext = String(offerFrame.job.context || "").slice(0, 500);
+      const startedAt = now();
+      const goalId = `goal-tclk-${randomUUID()}`;
+      const goal = {
+        id: goalId,
+        title: `TCLK: ${offerFrame.amount} ${offerFrame.asset}`,
+        status: "active",
+        createdAt: startedAt,
+        updatedAt: startedAt
+      };
+      store.goals.unshift(goal);
+      const taskId = `task-${randomUUID()}`;
+      const task = {
+        id: taskId,
+        goalId,
+        type: "synthesis",
+        title: `TCLK job: ${offerFrame.amount} ${offerFrame.asset}`,
+        description: `Accepted TCLK offer ${offerId} from ${offerFrame.from}\nProto: ${jobProto}\nJob ID: ${jobId}${jobContext ? `\n\nContext: ${jobContext}` : ""}`,
+        requiredCapabilities: ["research", "review", "synthesis"],
+        priority: 90,
+        status: "open",
+        createdAt: startedAt,
+        updatedAt: startedAt,
+        source: "agent-gui-claim",
+        agentGuiRoom: "home",
+        agentGuiTeamId: "home-room",
+        agentGuiAgent: requestedAgentId,
+        agentGuiModel: "OpenClaw local agent",
+        ownerWalletAddress: null,
+        tclkDealId: deal.id
+      };
+      store.tasks.unshift(task);
+      startAgentGuiTaskConnector({}, task, requestedAgentId);
+      event("tclk_offer_workspace_created", `Workspace task created for TCLK offer ${offerId}`, {
+        taskId,
+        goalId,
+        offerId,
+        agentId: requestedAgentId
+      });
+    } catch (workspaceError) {
+      console.warn(`TCLK offer: workspace task creation failed: ${workspaceError.message}`);
+    }
+  }
+
   return publicProtocolPaperDeal(store.protocolPaperDeals.find((item) => item.id === deal.id));
 }
 
@@ -8587,12 +8636,10 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
 
   // Phase 5: Kibble / A2A job bridge
   if (method === "GET" && path === "/api/jobs") {
-    const limit = Number(url.searchParams.get("limit") || 50);
-    const technocoreJobs = await discoverTechnocoreJobs(limit);
     const localClaims = normalizeJobClaims(store.jobClaims || []);
     const localResults = normalizeJobResults(store.jobResults || []);
     const localJobs = (store.localJobs || []).filter((j) => j.from === "local");
-    return sendJson(res, 200, { technocore_jobs: technocoreJobs, local_jobs: localJobs, local_claims: localClaims, local_results: localResults, generated_at: now() });
+    return sendJson(res, 200, { local_jobs: localJobs, local_claims: localClaims, local_results: localResults, generated_at: now() });
   }
 
   if (method === "POST" && path === "/api/jobs/claim") {
@@ -8601,7 +8648,8 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     const room = String(body.room || "").slice(0, 80);
     const agentId = String(body.agent_id || "coder").slice(0, 80);
     const jobText = String(body.job_text || "").slice(0, 500);
-    if (!jobId || !room) return sendJson(res, 400, { detail: "job_id and room are required" });
+    const title = String(body.title || jobText.split(/\n/)[0].replace(/^JOB v\d+:\s*/i, "").trim() || `Claim: ${jobId}`).slice(0, 80);
+    if (!jobId) return sendJson(res, 400, { detail: "job_id is required" });
     
     // Create the claim record
     const claim = {
@@ -8611,70 +8659,65 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       claimed_at: now(),
       status: "accepted",
       updated_at: now(),
-      session_id: null  // filled after session creation
+      session_id: null,
+      task_id: null
     };
     
     // Create a workspace session (task + desk) so it appears in Workspaces/Projects
     let session = null;
     let taskId = null;
-    if (jobText) {
+    try {
+      const agent = findAgent(agentId) || store.agentProfiles.find((p) => p.id === agentId);
+      const content = jobText || title;
+      const startedAt = now();
+      const goalId = `goal-claim-${randomUUID()}`;
+      const goal = {
+        id: goalId,
+        title: `Claimed Job: ${title}`,
+        status: "active",
+        createdAt: startedAt,
+        updatedAt: startedAt
+      };
+      store.goals.unshift(goal);
+      
+      taskId = `task-${randomUUID()}`;
+      const task = {
+        id: taskId,
+        goalId,
+        type: "synthesis",
+        title,
+        description: content,
+        requiredCapabilities: ["research", "review", "synthesis"],
+        priority: 90,
+        status: "open",
+        createdAt: startedAt,
+        updatedAt: startedAt,
+        source: "agent-gui-claim",
+        agentGuiRoom: "home",
+        agentGuiTeamId: "home-room",
+        agentGuiAgent: agentId,
+        agentGuiModel: agent?.model || "OpenClaw local agent",
+        ownerWalletAddress: null
+      };
+      store.tasks.unshift(task);
+      
       try {
-        const agent = findAgent(agentId) || store.agentProfiles.find((p) => p.id === agentId);
-        const titleLine = jobText.split(/\n/)[0].replace(/^JOB v\d+:\s*/i, "").trim();
-        const title = (titleLine || `Claim: ${jobId}`).slice(0, 80);
-        const content = jobText;
-        const startedAt = now();
-        const goalId = `goal-claim-${randomUUID()}`;
-        const goalTitle = `Claimed Job: ${title}`;
-        const goal = {
-          id: goalId,
-          title: goalTitle,
-          status: "active",
-          createdAt: startedAt,
-          updatedAt: startedAt
-        };
-        store.goals.unshift(goal);
-        
-        taskId = `task-${randomUUID()}`;
-        const task = {
-          id: taskId,
-          goalId,
-          type: "synthesis",
-          title,
-          description: content,
-          requiredCapabilities: ["research", "review", "synthesis"],
-          priority: 90,
-          status: "open",
-          createdAt: startedAt,
-          updatedAt: startedAt,
-          source: "agent-gui-claim",
-          agentGuiRoom: "home",
-          agentGuiTeamId: "home-room",
-          agentGuiAgent: agentId,
-          agentGuiModel: agent?.model || "OpenClaw local agent",
-          ownerWalletAddress: null
-        };
-        store.tasks.unshift(task);
-        
-        // Start the agent connector so the agent actually works on the task
-        try {
-          startAgentGuiTaskConnector(req, task, agentId);
-        } catch (connectorError) {
-          console.warn(`Job claim: connector start failed (task will appear in Workspaces, but agent needs manual start): ${connectorError.message}`);
-        }
-        
-        session = agentGuiTaskSession(task);
-        claim.session_id = session.id;
-        claim.task_id = taskId;
-        event("agentgui_session_started", `Job workspace created from Work claim`, {
-          taskId,
-          goalId,
-          jobId,
-          agentId
-        });
-      } catch (error) {
-        console.warn(`Job claim: workspace session creation failed: ${error.message}`);
+        startAgentGuiTaskConnector(req, task, agentId);
+      } catch (connectorError) {
+        console.warn(`Job claim: connector start failed: ${connectorError.message}`);
       }
+      
+      session = agentGuiTaskSession(task);
+      claim.session_id = session.id;
+      claim.task_id = taskId;
+      event("agentgui_session_started", `Job workspace created from Work claim`, {
+        taskId,
+        goalId,
+        jobId,
+        agentId
+      });
+    } catch (error) {
+      console.warn(`Job claim: workspace session creation failed: ${error.message}`);
     }
     
     store.jobClaims = normalizeJobClaims([claim, ...(store.jobClaims || [])]);
@@ -10249,6 +10292,74 @@ function autoSubmitJobResultForTask(task, result) {
   } catch (error) {
     console.warn(`Auto-submit job result failed: ${error.message}`);
   }
+  
+  // If this task was created from a TCLK deal, trigger the reveal/claim
+  autoClaimTclkDealForTask(task);
+}
+
+function autoClaimTclkDealForTask(task) {
+  if (!task || !task.tclkDealId || !store.protocolPaperDeals) return;
+  const deal = store.protocolPaperDeals.find((d) => d.id === task.tclkDealId && d.status === "accepted");
+  if (!deal) return;
+  
+  // Try to sync the lock and claim
+  (async () => {
+    try {
+      const projection = await syncTechnocoreProtocolRoom(tclkOfferRoom);
+      const records = projection.records;
+      let state = reconstructPaperDealState(deal);
+      let lockFrame = null;
+      for (const record of records) {
+        if (record.protocol !== "tclk/1" || record.frameType !== "lock") continue;
+        const inspection = inspectProtocolTranscript(record.room, {
+          from: record.from,
+          nonce: record.nonce,
+          sig: record.signature,
+          text: record.text
+        });
+        if (!inspection.valid || !inspection.frame) continue;
+        if (inspection.frame.contract !== state.contract) continue;
+        lockFrame = inspection.frame;
+        break;
+      }
+      if (!lockFrame) {
+        console.warn(`TCLK auto-claim: no lock frame found for deal ${deal.id}, can't auto-claim yet`);
+        return;
+      }
+      const locked = applyTclkFrame(state, lockFrame, Date.now());
+      if (!locked.ok) {
+        console.warn(`TCLK auto-claim: lock frame rejected: ${locked.reason}`);
+        return;
+      }
+      state = locked.state;
+      const secret = decryptPaperValue(deal.encryptedSecret);
+      const reveal = decodeTclkFrame(encodeTclkFrame({
+        type: "reveal",
+        from: technocoreDid,
+        contract: state.contract,
+        secret
+      }));
+      const revealText = encodeTclkFrame(reveal);
+      await technocoreSay(tclkOfferRoom, revealText);
+      const revealed = applyTclkFrame(state, reveal, Date.now());
+      if (!revealed.ok) {
+        console.warn(`TCLK auto-claim: reveal rejected: ${revealed.reason}`);
+        return;
+      }
+      deal.status = revealed.state.status;
+      deal.lockFrame = lockFrame;
+      deal.updatedAt = now();
+      appendPaperDealStage(deal, "claim", "osa", "Auto-claimed via task completion");
+      await saveStore();
+      event("tclk_deal_auto_claimed", `Auto-claimed TCLK deal ${deal.id} after task completion`, {
+        dealId: deal.id,
+        taskId: task.id,
+        status: deal.status
+      });
+    } catch (error) {
+      console.warn(`TCLK auto-claim failed: ${error.message}`);
+    }
+  })();
 }
 
 function reconcileConsensusAfterAgentDisconnect(agentId) {
