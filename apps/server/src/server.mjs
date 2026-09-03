@@ -6994,6 +6994,20 @@ async function ensureAgentDidsOnTechnocore() {
   return registered;
 }
 
+/** Ensure every default agent has a local capability record so Vault shows them as published. */
+function ensureAgentCapabilitiesPublished() {
+  const defaultAgents = ["technocore-specialist", "coder", "bugfixer", "info-guy", "coinexpert", "graphicsexpert", "moneymaker", "security-expert", "explorer"];
+  const existing = store.agentCapabilities || [];
+  for (const agentId of defaultAgents) {
+    if (existing.some((p) => p.agent_id === agentId)) continue;
+    const did = agentDidForProfile(agentId);
+    store.agentCapabilities = normalizeAgentCapabilities([
+      { agent_id: agentId, did, capabilities: ["sign_text", "create_deal", "lock", "claim", "settle"], published_at: now(), updated_at: now() },
+      ...(store.agentCapabilities || [])
+    ]);
+  }
+}
+
 async function writeTechnocoreNote(namespace, key, value) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), technocoreMetadataTimeoutMs);
@@ -7715,7 +7729,10 @@ async function technocoreSayUnsigned(room, text) {
 
 async function technocoreSaySigned(room, text) {
   const nonce = nextTechnocoreNonce(room);
-  const payload = `${room}|${nonce}|${text}`;
+  // Technocore normalizes newlines to spaces before verifying the signature,
+  // so we must do the same when constructing the payload to sign.
+  const singleLine = text.replace(/\r?\n/g, " ").slice(0, 4096);
+  const payload = `${room}|${nonce}|${singleLine}`;
   const sig = signPayload(null, Buffer.from(payload, "utf8"), nodeIdentity.privateKeyPem).toString("base64url");
   const response = await fetchTechnocoreWrite(`/r/${room}`, {
     method: "POST",
@@ -7723,7 +7740,7 @@ async function technocoreSaySigned(room, text) {
       accept: "application/json",
       "content-type": "application/json"
     },
-    body: JSON.stringify({ did: technocoreDid, sig, nonce, text })
+    body: JSON.stringify({ did: technocoreDid, sig, nonce, text: singleLine })
   });
   if (!response.ok) throw technocoreWriteHttpError(response.status);
   let view = null;
@@ -7851,12 +7868,11 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+let technocoreGlobalNonceCounter = BigInt(Date.now()) * 1000000n;
+
 function nextTechnocoreNonce(room) {
-  const nowMicros = BigInt(Date.now()) * 1000n + (process.hrtime.bigint() % 1000n);
-  const previous = technocoreNonceByRoom.get(room) || 0n;
-  const next = nowMicros > previous ? nowMicros : previous + 1n;
-  technocoreNonceByRoom.set(room, next);
-  return next.toString();
+  technocoreGlobalNonceCounter += 1n;
+  return technocoreGlobalNonceCounter.toString();
 }
 
 // Phase 11: Legacy federation deprecation — Technocore-native paths are primary.
@@ -9114,7 +9130,8 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       const body = await readJson(req);
       const profile = createAgentGuiProfile(body);
       await saveStore();
-      // Register the new agent DID on Technocore in the background.
+      // Register the new agent DID on Technocore in the background and publish locally.
+      ensureAgentCapabilitiesPublished();
       ensureAgentDidsOnTechnocore().catch(() => {});
       return sendJson(res, 201, { ok: true, agent: publicAgentGuiProfile(profile) });
     } catch (error) {
@@ -10884,6 +10901,9 @@ server.on("upgrade", (req, socket) => {
 server.listen(port, host, () => {
   console.log(`OpenSwarmAgents node listening on http://${host}:${port}`);
   startFederationPeerSync();
+  // Publish all default agent capability records so Vault shows them as published
+  ensureAgentCapabilitiesPublished();
+  
   ensureTechnocorePublicRoomTopic().catch((error) => {
     console.warn(`Technocore public room topic ensure failed: ${error.message}`);
   });
