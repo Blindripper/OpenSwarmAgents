@@ -2123,42 +2123,6 @@ export default function App() {
         ))}
         <button
           type="button"
-          onClick={handleNewProject}
-          title="Start a fresh private project while keeping saved projects available"
-          style={{
-            height: 30,
-            padding: "0 12px",
-            borderRadius: 6,
-            border: "1px solid #2563eb",
-            background: "#12213d",
-            color: "#93c5fd",
-            fontSize: 12,
-            fontWeight: 800,
-            cursor: "pointer",
-          }}
-        >
-          New Project
-        </button>
-        <button
-          type="button"
-          onClick={() => void handleDeleteProject()}
-          title="Delete the current private project and unshare your public project"
-          style={{
-            height: 30,
-            padding: "0 12px",
-            borderRadius: 6,
-            border: "1px solid #7f1d1d",
-            background: "#2a1015",
-            color: "#fca5a5",
-            fontSize: 12,
-            fontWeight: 800,
-            cursor: "pointer",
-          }}
-        >
-          Delete Project
-        </button>
-        <button
-          type="button"
           onClick={addRoom}
           title="Create a private local workspace with its own agent desks"
           style={{
@@ -2174,24 +2138,6 @@ export default function App() {
           }}
         >
           + Workspace
-        </button>
-        <button
-          type="button"
-          onClick={() => void openShareProjectDialog()}
-          title="Share the current private workspace as one public project"
-          style={{
-            height: 30,
-            padding: "0 12px",
-            borderRadius: 6,
-            border: "1px solid #2a8c72",
-            background: "#10251f",
-            color: "#7ee0c2",
-            fontSize: 12,
-            fontWeight: 800,
-            cursor: "pointer",
-          }}
-        >
-          Share Project
         </button>
         {savedProjectTabs.length > 0 && (
           <div

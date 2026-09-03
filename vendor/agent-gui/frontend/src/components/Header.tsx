@@ -5,6 +5,7 @@ import type { SnapshotMeta } from "./SnapshotMenu";
 import { AgentRosterMenu } from "./AgentRosterMenu";
 import { DeskContextBar } from "./DeskContextBar";
 import { ReasoningEffortControl } from "./ReasoningEffortControl";
+import { DidMenu } from "./DidMenu";
 import { isVllmBackend } from "../backendKind";
 import type { DeskConfigView } from "../deskConfig";
 import type { RosterLayout } from "../rosterLayout";
@@ -99,113 +100,11 @@ function TopMetric({ label, value, hint, tone = "accent" }: { label: string; val
   );
 }
 
-function shortDid(value: string) {
-  const display = value.replace(/^did:key:/, "");
-  if (display.length <= 18) return display;
-  return `${display.slice(0, 6)}...${display.slice(-6)}`;
+function shortAddress(address: string): string {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-async function copyText(value: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
-  }
-  const textarea = document.createElement("textarea");
-  textarea.value = value;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand("copy");
-  textarea.remove();
-}
-
-function TechnocoreDidMetric({ did }: { did: string }) {
-  const [copied, setCopied] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const status = failed ? "Failed" : copied ? "Copied" : "Copy";
-  async function handleCopy() {
-    setFailed(false);
-    try {
-      await copyText(did);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      setFailed(true);
-      window.setTimeout(() => setFailed(false), 1600);
-    }
-  }
-  return (
-    <div
-      title={`Technocore DID: ${did}`}
-      style={{
-        minWidth: 0,
-        height: 34,
-        display: "flex",
-        alignItems: "center",
-        gap: 5,
-        padding: "0 6px 0 8px",
-        borderRadius: 6,
-        border: "1px solid #2a8c72",
-        background: "#10251f",
-        boxSizing: "border-box",
-      }}
-    >
-      <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-        <span style={{ fontSize: 9, fontWeight: 800, color: "var(--text-dim)", letterSpacing: 0 }}>TC DID</span>
-        <span style={{ fontSize: 12, fontWeight: 900, color: "#7ee0c2", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{shortDid(did)}</span>
-      </div>
-      <button
-        type="button"
-        onClick={handleCopy}
-        aria-label="Copy Technocore DID"
-        title="Copy Technocore DID"
-        style={{
-          width: 38,
-          height: 22,
-          borderRadius: 5,
-          border: "1px solid #2a8c72",
-          background: copied ? "#1f9f7a" : failed ? "#5c1f2b" : "#121828",
-          color: copied ? "white" : failed ? "#fda4af" : "#7ee0c2",
-          fontSize: 10,
-          fontWeight: 900,
-          cursor: "pointer",
-          flexShrink: 0,
-        }}
-      >
-        {status}
-      </button>
-    </div>
-  );
-}
-
-function PeerMetric({ value, hint, tone }: { value: string; hint: string; tone: "accent" | "green" | "muted" }) {
-  const color = tone === "green" ? "#7ee0c2" : tone === "muted" ? "var(--text-dim)" : "var(--accent2)";
-  return (
-    <div
-      title={hint}
-      style={{
-        width: 82,
-        height: 28,
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "center",
-        padding: "0 8px",
-        borderRadius: 6,
-        border: "1px solid #2a3558",
-        background: "#121828",
-        boxSizing: "border-box",
-        flexShrink: 0,
-      }}
-    >
-      <span style={{ fontSize: 8.5, fontWeight: 900, color: "var(--text-dim)", letterSpacing: 0 }}>PEERS</span>
-      <span style={{ fontSize: 10.5, fontWeight: 900, color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</span>
-    </div>
-  );
-}
-
-function federationMetric(runtime?: RuntimeStatus | null) {
+function federationHint(runtime?: RuntimeStatus | null) {
   if (!runtime?.federationEnabled) {
     return { value: "Local", hint: "Federation is disabled on this node.", tone: "muted" as const };
   }
@@ -260,7 +159,7 @@ export function Header({
   const walletButtonLabel = stats.walletConnected
     ? `Disconnect ${walletAddress ? shortAddress(walletAddress) : "Wallet"}`
     : "Connect Wallet";
-  const federation = federationMetric(stats.federation);
+  const fed = federationHint(stats.federation);
   const technocoreDid = stats.federation?.technocoreDid || null;
 
   return (
@@ -277,6 +176,7 @@ export function Header({
       width: "100%",
       boxSizing: "border-box",
     }}>
+      {/* Logo */}
       {logoOk
         ? <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <img src="/osa-logo.svg" alt="OSA" height={34} width={34}
@@ -297,6 +197,7 @@ export function Header({
 
       <div style={{ width: 1, height: 28, background: "var(--card-border)", flexShrink: 0 }} />
 
+      {/* Network indicator */}
       <div style={{
         display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
         padding: "5px 10px", background: "#10251f", borderRadius: 6, border: "1px solid #2a8c72",
@@ -316,20 +217,16 @@ export function Header({
 
       <div style={{ width: 1, height: 28, background: "var(--card-border)", flexShrink: 0 }} />
 
+      {/* Metrics grid — only FLOP Pledges, DID, Peers, $FLOP */}
       <div style={{
         flex: 1,
         display: "grid",
-        gridTemplateColumns: "repeat(6, minmax(96px, 1fr))",
+        gridTemplateColumns: "repeat(3, minmax(96px, 1fr))",
         minWidth: 0,
         gap: 8,
       }}>
-        <TopMetric label="PROJECTS" value={String(stats.publicProjects)} hint="Shared projects visible in Latest Projects and Top100 Projects" />
-        <TopMetric label="WORKING" value={String(stats.onlineAgents)} hint="Agents currently working on this node; future FLOP incentives are not active yet" tone={stats.onlineAgents > 0 ? "green" : "muted"} />
-        <TopMetric label="COPIES" value={String(stats.copies)} hint="Total public project copies in this network view" />
         <TopMetric label="FLOP PLEDGES" value={`${stats.donationsFlop.toFixed(stats.donationsFlop % 1 ? 2 : 0)} FLOP`} hint="Prelaunch FLOP pledge intents recorded by this OSA network view; no tokens have moved" tone={stats.donationsFlop > 0 ? "green" : "muted"} />
-        {technocoreDid
-          ? <TechnocoreDidMetric did={technocoreDid} />
-          : <TopMetric label="PEERS" value={federation.value} hint={federation.hint} tone={federation.tone} />}
+        <DidMenu nodeDid={technocoreDid} agents={agents} />
         <TopMetric label="$FLOP" value={stats.flopStatusLabel} hint="$FLOP is prelaunch. OSA does not show a balance or claim settlement until the official network is live." />
       </div>
 
@@ -353,8 +250,6 @@ export function Header({
           onCreateAgent={onCreateAgent}
         />
 
-        <PeerMetric value={federation.value} hint={federation.hint} tone={federation.tone} />
-
         <SnapshotMenu
           teams={teams}
           sessions={sessions}
@@ -369,14 +264,15 @@ export function Header({
           style={{
             height: 28,
             padding: "0 10px",
-            background: stats.walletConnected ? "#10251f" : "#121828",
-            border: `1px solid ${stats.walletConnected ? "#2a8c72" : "#2a3558"}`,
+            background: stats.walletConnected ? "#1f9f7a" : "#2563eb",
+            border: "1px solid transparent",
             borderRadius: 6,
-            color: stats.walletConnected ? "#7ee0c2" : "var(--text-dim)",
+            color: "#fff",
             fontSize: 10,
             fontWeight: 800,
             cursor: "pointer",
             whiteSpace: "nowrap",
+            boxShadow: stats.walletConnected ? "none" : "0 0 8px rgba(37,99,235,0.4)",
           }}
         >
           {walletButtonLabel}
@@ -405,8 +301,4 @@ export function Header({
       <style>{`@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }`}</style>
     </div>
   );
-}
-
-function shortAddress(address: string): string {
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
