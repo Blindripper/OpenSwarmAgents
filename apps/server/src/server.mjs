@@ -5449,6 +5449,7 @@ function agentGuiSessions() {
     if (["rejected", "deleted"].includes(task.status) || task.agentGuiDeletedAt) continue;
     const isDashboardHomeTask = task.agentGuiRoom === "home"
       || task.source === "agent-gui-home"
+      || task.source === "agent-gui-claim"
       || (task.agentGuiConnectorId && task.source === "agent-gui");
     if (isDashboardHomeTask) {
       taskSessions.push(agentGuiTaskSession(task, "home"));
