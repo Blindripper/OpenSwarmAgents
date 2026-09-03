@@ -797,13 +797,28 @@ export default function App() {
 
   // Listen for claim-job events from JobsPanel — switch to Workspaces/Projects
   useEffect(() => {
-    const handler = () => {
+    const handler = async (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId: string; claim: Record<string, unknown> }>).detail;
       setDashboardTab("workbench");
+      try {
+        const session = await api.sessions.get(detail.sessionId);
+        // Add the claimed session to the Home team so it appears as a workspace room
+        setTeams((prev) => prev.map((t) => {
+          if (t.id !== HOME_TEAM_ID) return t;
+          const alreadyExists = t.desks.some((d) => !("isPending" in d) && (d as Session).id === session.id);
+          if (alreadyExists) return t;
+          const pendingDesks = t.desks.filter((d) => "isPending" in d);
+          const sessionDesks = t.desks.filter((d) => !("isPending" in d));
+          return { ...t, desks: [...pendingDesks, session, ...sessionDesks] };
+        }));
+      } catch {
+        console.warn("claim-job: could not fetch session");
+      }
       void loadSessions();
     };
     window.addEventListener("osa:claim-job", handler);
     return () => window.removeEventListener("osa:claim-job", handler);
-  }, [loadSessions]);
+  }, [loadSessions, HOME_TEAM_ID]);
 
   // Persist workbench to localStorage on every change
   useEffect(() => {
