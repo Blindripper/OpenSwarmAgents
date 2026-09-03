@@ -100,14 +100,15 @@ export function JobsPanel() {
   useEffect(() => { void refresh(); }, [refresh]);
 
   // 1-click claim — always uses the default agent (server picks)
-  const claimJob = useCallback(async (jobId: string, jobText: string) => {
+  // For Technocore jobs, pass the room so a CLAIM frame is posted back
+  const claimJob = useCallback(async (jobId: string, jobText: string, jobRoom?: string) => {
     setClaimBusy(jobId);
     setError(null);
     try {
       const data = await fetch("/api/jobs/claim", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ job_id: jobId, room: "local", agent_id: "technocore-specialist", job_text: jobText })
+        body: JSON.stringify({ job_id: jobId, room: jobRoom || "local", agent_id: "technocore-specialist", job_text: jobText })
       }).then((r) => r.json());
       if (data.session) {
         window.dispatchEvent(new CustomEvent("osa:claim-job", { detail: { sessionId: data.session.id, claim: data.claim } }));
@@ -303,7 +304,7 @@ export function JobsPanel() {
                     <button
                       type="button"
                       disabled={claimBusy === jobId}
-                      onClick={() => void claimJob(jobId, job.text)}
+                      onClick={() => void claimJob(jobId, job.text, job.room)}
                       style={{ height: 32, padding: "0 16px", borderRadius: 6, border: "1px solid #2a8c72", background: claimBusy === jobId ? "#18251f" : "#16a37b", color: "white", fontSize: 13, fontWeight: 900, cursor: claimBusy === jobId ? "default" : "pointer", whiteSpace: "nowrap" }}
                     >
                       {claimBusy === jobId ? "⚙️ Claiming…" : "⚡ Claim"}

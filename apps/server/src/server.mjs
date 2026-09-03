@@ -8992,6 +8992,23 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     
     store.jobClaims = normalizeJobClaims([claim, ...(store.jobClaims || [])]);
     await saveStore();
+
+    // If this is a Technocore job (room is a real Technocore room), post a CLAIM frame back
+    if (technocoreEnabled && room && room !== "local" && /^[a-z][a-z0-9_-]{0,47}$/.test(room)) {
+      try {
+        const claimText = `CLAIM v1: ${jobId} claimed by ${technocoreDid || technocoreNick}`;
+        await technocoreSay(room, claimText);
+        event("technocore_claim_posted", "CLAIM frame posted to Technocore room", {
+          jobId,
+          room,
+          agentId,
+          text: claimText.slice(0, 120)
+        });
+      } catch (error) {
+        console.warn(`Job claim: could not post CLAIM frame to ${room}: ${error.message}`);
+      }
+    }
+
     return sendJson(res, 201, { ok: true, claim: store.jobClaims[0], session });
   }
 
