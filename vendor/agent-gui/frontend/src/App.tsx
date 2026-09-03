@@ -217,20 +217,17 @@ function readWalletConnected(): boolean {
 }
 
 // EIP-6963: find MetaMask provider directly (bypasses selectExtension bug)
-function getMetaMaskProvider(): Promise<WalletProvider> {
+async function getMetaMaskProvider(): Promise<WalletProvider> {
+  // Fast path: legacy window.ethereum is still set by MetaMask and similar wallets.
+  const eth = (window as unknown as { ethereum?: WalletProvider }).ethereum;
+  if (eth?.request) return eth;
+  // EIP-6963 fallback: some wallets only announce via the provider-discovery event.
   return new Promise((resolve, reject) => {
     let resolved = false;
     let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
     const fallback = () => {
       if (resolved) return;
-      const eth = (window as unknown as { ethereum?: WalletProvider }).ethereum;
-      if (eth?.request) {
-        resolved = true;
-        clearTimeout(fallbackTimer);
-        resolve(eth);
-      } else {
-        reject(new Error("No EVM wallet found. Install MetaMask or open this page with MetaMask enabled."));
-      }
+      reject(new Error("No EVM wallet found. Install MetaMask or open this page with MetaMask enabled."));
     };
     const handler = (e: Event) => {
       if (resolved) return;
@@ -1937,6 +1934,7 @@ export default function App() {
       setWalletConnected(true);
       await refreshWalletBalance();
     } catch (error) {
+      console.error("connectDashboardWallet error:", error);
       setWalletConnectError((error as Error).message || "Could not connect wallet.");
       setWalletConnected(false);
     } finally {
