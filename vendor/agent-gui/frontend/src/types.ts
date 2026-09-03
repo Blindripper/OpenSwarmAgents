@@ -48,6 +48,7 @@ export interface Session {
   connector_status?: string | null;
   connector_exit_code?: number | null;
   connector_error?: string | null;
+  openclaw_session_key?: string | null;
 }
 
 export interface TopAgent {

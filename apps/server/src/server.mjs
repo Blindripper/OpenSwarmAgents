@@ -1301,7 +1301,9 @@ function normalizeJobClaims(records) {
     claimed_by: String(rec.claimed_by || "").slice(0, 120),
     claimed_at: validIsoTimestamp(rec.claimed_at) || now(),
     status: ["pending", "accepted", "working", "completed", "failed"].includes(rec.status) ? rec.status : "pending",
-    updated_at: validIsoTimestamp(rec.updated_at) || now()
+    updated_at: validIsoTimestamp(rec.updated_at) || now(),
+    session_id: rec.session_id || null,
+    task_id: rec.task_id || null
   }));
 }
 
@@ -5746,7 +5748,8 @@ function agentGuiTaskSession(task, roomOverride = null) {
     ...donationStats,
     connector_status: taskFailed ? "failed" : (managed?.status || connectorExit?.status || null),
     connector_exit_code: connectorExit?.exitCode ?? managed?.exitCode ?? null,
-    connector_error: task.agentGuiConnectorError || (connectorExit?.isError ? connectorExit.message : null)
+    connector_error: task.agentGuiConnectorError || (connectorExit?.isError ? connectorExit.message : null),
+    openclaw_session_key: task.agentGuiOpenClawSessionKey || null
   };
 }
 
@@ -8109,6 +8112,7 @@ function startAgentGuiTaskConnector(req, task, agentId) {
     expiresAt: afterMs(now(), 7 * 24 * 60 * 60 * 1000)
   });
   task.agentGuiConnectorId = connector.id;
+  task.agentGuiOpenClawSessionKey = `osa-${connector.id}`;
   connector.agentGuiRunOnce = true;
   startManagedConnector(req, rawToken, connector, {
     models: connector.models,

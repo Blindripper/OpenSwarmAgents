@@ -1957,6 +1957,35 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
                 </div>
               );
             })()}
+            {session.connector_status === "running" && (
+              <div style={{
+                marginTop: 5, padding: "3px 8px",
+                background: "rgba(78,204,163,0.12)",
+                border: "1px solid rgba(78,204,163,0.3)",
+                borderRadius: 6, textAlign: "center",
+                maxWidth: 190, marginInline: "auto",
+                fontSize: 10, color: "#7ee0c2",
+              }}>
+                <span style={{ animation: "pulse 1.5s ease-in-out infinite" }}>🔄</span> Agent working…
+                {session.openclaw_session_key && (
+                  <div style={{ fontSize: 9, marginTop: 2, color: "#94a3b8", wordBreak: "break-all" }}>
+                    {session.openclaw_session_key}
+                  </div>
+                )}
+              </div>
+            )}
+            {session.connector_status === "exited" && !session.connector_error && (
+              <div style={{
+                marginTop: 5, padding: "3px 8px",
+                background: "rgba(78,204,163,0.08)",
+                border: "1px solid rgba(78,204,163,0.2)",
+                borderRadius: 6, textAlign: "center",
+                maxWidth: 190, marginInline: "auto",
+                fontSize: 10, color: "#7ee0c2",
+              }}>
+                ✅ Agent completed
+              </div>
+            )}
             {readOnly ? (
               <div style={{ display: "grid", justifyItems: "center", gap: 5, marginTop: 8 }}>
                 <div style={{ display: "grid", justifyItems: "center", gap: 2, fontSize: 10, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>
