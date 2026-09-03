@@ -336,6 +336,8 @@ export interface AgentProfile {
   clone_from?: string | null;
   /** Frontend-derived: profile is currently bound to an awake desk (one-per-desk). */
   inUse?: boolean;
+  /** Deterministic Ed25519 did:key derived from node identity + profile id. */
+  did?: string | null;
 }
 
 export interface LlmProvider {

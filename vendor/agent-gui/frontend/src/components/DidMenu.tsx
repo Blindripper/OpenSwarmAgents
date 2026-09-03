@@ -206,7 +206,7 @@ export function DidMenu({ nodeDid, agents }: Props) {
                 .filter((a) => a.id)
                 .map((agent) => {
                   const isExpanded = expandedAgent === agent.id;
-                  const agentDid = agent.id;
+                  const agentDid = agent.did || agent.id;
                   return (
                     <div key={agent.id}>
                       <div

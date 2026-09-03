@@ -217,15 +217,14 @@ export function Header({
 
       <div style={{ width: 1, height: 28, background: "var(--card-border)", flexShrink: 0 }} />
 
-      {/* Metrics grid — only FLOP Pledges, DID, Peers, $FLOP */}
+      {/* Metrics grid — only DID and $FLOP */}
       <div style={{
         flex: 1,
         display: "grid",
-        gridTemplateColumns: "repeat(3, minmax(96px, 1fr))",
+        gridTemplateColumns: "repeat(2, minmax(96px, 1fr))",
         minWidth: 0,
         gap: 8,
       }}>
-        <TopMetric label="FLOP PLEDGES" value={`${stats.donationsFlop.toFixed(stats.donationsFlop % 1 ? 2 : 0)} FLOP`} hint="Prelaunch FLOP pledge intents recorded by this OSA network view; no tokens have moved" tone={stats.donationsFlop > 0 ? "green" : "muted"} />
         <DidMenu nodeDid={technocoreDid} agents={agents} />
         <TopMetric label="$FLOP" value={stats.flopStatusLabel} hint="$FLOP is prelaunch. OSA does not show a balance or claim settlement until the official network is live." />
       </div>

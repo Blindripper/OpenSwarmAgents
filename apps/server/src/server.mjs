@@ -2415,13 +2415,17 @@ function tooManyRequests(res, result) {
 function securityHeaders(options = {}) {
   const styleSrc = options.allowInlineStyles ? "style-src 'self' 'unsafe-inline'" : "style-src 'self'";
   const connectSrc = options.allowWebSockets ? "connect-src 'self' ws: wss:" : "connect-src 'self'";
+  const extSrc = options.allowMetaMask ? "chrome-extension: moz-extension:" : "";
+  const scriptSrc = options.allowMetaMask ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'" : "script-src 'self'";
+  const defaultSrc = options.allowMetaMask ? "default-src 'self' " + extSrc : "default-src 'self'";
+  const finalConnect = extSrc ? connectSrc + " " + extSrc : connectSrc;
   return {
     "content-security-policy": [
-      "default-src 'self'",
-      "script-src 'self'",
+      defaultSrc,
+      scriptSrc,
       styleSrc,
       "img-src 'self' data: blob:",
-      connectSrc,
+      finalConnect,
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",
@@ -5561,7 +5565,8 @@ function publicAgentGuiProfile(profile) {
     base_url: profile.base_url || "",
     profile_path: profile.profile_path || `osa://profiles/${profile.id}`,
     is_prototype: false,
-    clone_from: profile.clone_from || "coder"
+    clone_from: profile.clone_from || "coder",
+    did: agentDidForProfile(profile.id)
   };
 }
 
@@ -10322,7 +10327,7 @@ async function serveAgentGuiStatic(req, res, url) {
     const fileStat = await stat(filePath);
     if (!fileStat.isFile()) return serveAgentGuiIndex(res);
     const type = contentTypes[extname(filePath)] || "application/octet-stream";
-    res.writeHead(200, { "content-type": type, ...securityHeaders({ allowInlineStyles: true, allowWebSockets: true }) });
+    res.writeHead(200, { "content-type": type, ...securityHeaders({ allowInlineStyles: true, allowWebSockets: true, allowMetaMask: true }) });
     createReadStream(filePath).pipe(res);
   } catch {
     return serveAgentGuiIndex(res);
@@ -10334,7 +10339,7 @@ async function serveAgentGuiIndex(res) {
   try {
     const fileStat = await stat(filePath);
     if (!fileStat.isFile()) return notFound(res);
-    res.writeHead(200, { "content-type": contentTypes[".html"], ...securityHeaders({ allowInlineStyles: true, allowWebSockets: true }) });
+    res.writeHead(200, { "content-type": contentTypes[".html"], ...securityHeaders({ allowInlineStyles: true, allowWebSockets: true, allowMetaMask: true }) });
     createReadStream(filePath).pipe(res);
   } catch {
     sendJson(res, 503, {
@@ -10362,6 +10367,24 @@ const server = createServer(async (req, res) => {
   if (url.pathname === "/full-logo.png") {
     const assetUrl = new URL(`${dashboardBasePath}/full-logo.png`, `http://${req.headers.host || "127.0.0.1"}`);
     return serveAgentGuiStatic(req, res, assetUrl);
+  }
+  if (url.pathname.startsWith("/metamask-test")) {
+    const filePath = join(publicDir, "metamask-test.html");
+    try {
+      const fileStat = await stat(filePath);
+      if (!fileStat.isFile()) return notFound(res);
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "content-security-policy": "default-src 'self' 'unsafe-inline' 'unsafe-eval' chrome-extension: moz-extension:; img-src 'self' data:; connect-src 'self' ws: wss: chrome-extension: moz-extension:; frame-src 'self' chrome-extension: moz-extension:",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "x-frame-options": "DENY"
+      });
+      createReadStream(filePath).pipe(res);
+    } catch {
+      notFound(res);
+    }
+    return;
   }
   return serveStatic(req, res, url);
 });
