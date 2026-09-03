@@ -1667,6 +1667,223 @@ async function mutateProtocolPaperDeal(id, operation) {
   }
 }
 
+async function acceptTechnocoreOffer(body = {}) {
+  if (!technocoreDid) {
+    const error = new Error("A local DID is required to accept TCLK offers");
+    error.statusCode = 400;
+    throw error;
+  }
+  const offerId = String(body.offer_id || "").trim();
+  if (!offerId) {
+    const error = new Error("offer_id is required");
+    error.statusCode = 400;
+    throw error;
+  }
+  const requestedAgentId = String(body.agent_id || "technocore-specialist").trim().slice(0, 80);
+
+  // Sync the protocol room to find the offer frame
+  const projection = await syncTechnocoreProtocolRoom(tclkOfferRoom);
+  const records = projection.records;
+
+  // Find the valid offer frame
+  let offerFrame = null;
+  let offerRecord = null;
+  for (const record of records) {
+    if (record.protocol !== "tclk/1" || record.frameType !== "offer") continue;
+    if (record.objectId !== offerId) continue;
+    const inspection = inspectProtocolTranscript(record.room, {
+      from: record.from,
+      nonce: record.nonce,
+      sig: record.signature,
+      text: record.text
+    });
+    if (!inspection.valid || !inspection.frame) continue;
+    offerFrame = inspection.frame;
+    offerRecord = record;
+    break;
+  }
+
+  if (!offerFrame) {
+    const error = new Error("Offer not found or invalid in the protocol room");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  // Check if the offer is expired
+  if (Date.now() >= offerFrame.expiresMs) {
+    const error = new Error("This offer has expired");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Check if there's already an accept (we only accept proposed offers)
+  let state = openTclkContract(offerFrame);
+  if (state.status !== "proposed") {
+    const error = new Error("Offer is no longer in proposed state");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Mint a hash-lock secret and make the accept frame
+  const secret = generateTclkHashLock();
+  const accept = makeTclkAccept(offerFrame, { from: technocoreDid, statement: secret.hash });
+
+  // Post the accept frame to the Technocore room
+  const acceptText = encodeTclkFrame(accept);
+  let posted;
+  try {
+    posted = await technocoreSay(tclkOfferRoom, acceptText);
+  } catch (error) {
+    const err = new Error(`Failed to post accept frame to Technocore: ${error.message}`);
+    err.statusCode = 502;
+    throw err;
+  }
+
+  // Apply the accept to the local state machine
+  state = applyTclkFrame(state, accept, Date.now());
+  if (!state.ok) {
+    const err = new Error(`Accept frame rejected by TCLK state machine: ${state.reason}`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Create a local PaperRail deal record
+  const createdAt = now();
+  const deal = {
+    id: offerId,
+    label: `${offerFrame.amount} ${offerFrame.asset} offer from ${offerFrame.from.slice(0, 20)}`,
+    status: "accepted",
+    offer: offerFrame,
+    accept,
+    lockFrame: null,
+    statement: secret.hash,
+    counterpartyDid: offerFrame.from,
+    encryptedSecret: encryptPaperValue(secret.preimage),
+    railRef: null,
+    receiptRecorded: false,
+    createdAt,
+    updatedAt: createdAt,
+    timeline: [
+      { stage: "offer", actor: offerFrame.from, detail: `${offerFrame.amount} ${offerFrame.asset} on ${offerFrame.rails.join(",")}`, at: offerRecord?.createdAt || createdAt },
+      { stage: "accept", actor: "osa", detail: `Accepted with signed hash-lock statement`, at: createdAt }
+    ]
+  };
+  store.protocolPaperDeals = normalizeProtocolPaperDeals([deal, ...(store.protocolPaperDeals || [])]);
+  await saveStore();
+
+  event("tclk_offer_accepted", `Accepted TCLK offer ${offerId}`, {
+    offerId,
+    amount: offerFrame.amount,
+    asset: offerFrame.asset,
+    payerDid: offerFrame.from,
+    agentId: requestedAgentId
+  });
+
+  return publicProtocolPaperDeal(store.protocolPaperDeals.find((item) => item.id === deal.id));
+}
+
+async function claimTechnocoreOffer(body = {}) {
+  const dealId = String(body.deal_id || "").trim();
+  if (!dealId) {
+    const error = new Error("deal_id is required");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  store.protocolPaperDeals = normalizeProtocolPaperDeals(store.protocolPaperDeals || []);
+  const deal = store.protocolPaperDeals.find((item) => item.id === dealId);
+  if (!deal) {
+    const error = new Error("Deal not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (deal.status !== "accepted") {
+    const error = new Error(`Deal is in "${deal.status}" state, expected "accepted"`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Sync the room to see if the payer has posted a lock frame
+  const projection = await syncTechnocoreProtocolRoom(tclkOfferRoom);
+  const records = projection.records;
+
+  // Find a lock frame that references this contract
+  let state = reconstructPaperDealState(deal);
+  let lockFrame = null;
+  for (const record of records) {
+    if (record.protocol !== "tclk/1" || record.frameType !== "lock") continue;
+    const inspection = inspectProtocolTranscript(record.room, {
+      from: record.from,
+      nonce: record.nonce,
+      sig: record.signature,
+      text: record.text
+    });
+    if (!inspection.valid || !inspection.frame) continue;
+    if (inspection.frame.contract !== state.contract) continue;
+    lockFrame = inspection.frame;
+    break;
+  }
+
+  if (!lockFrame) {
+    const error = new Error("No lock frame found for this contract yet. The payer hasn't locked funds.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Apply the lock to local state
+  const locked = applyTclkFrame(state, lockFrame, Date.now());
+  if (!locked.ok) {
+    const error = new Error(`Lock frame rejected: ${locked.reason}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  state = locked.state;
+
+  // Decrypt the secret and reveal
+  const secret = decryptPaperValue(deal.encryptedSecret);
+  const reveal = decodeTclkFrame(encodeTclkFrame({
+    type: "reveal",
+    from: technocoreDid,
+    contract: state.contract,
+    secret
+  }));
+
+  // Post the reveal to the room
+  const revealText = encodeTclkFrame(reveal);
+  try {
+    await technocoreSay(tclkOfferRoom, revealText);
+  } catch (error) {
+    const err = new Error(`Failed to post reveal frame: ${error.message}`);
+    err.statusCode = 502;
+    throw err;
+  }
+
+  // Apply reveal locally
+  const revealed = applyTclkFrame(state, reveal, Date.now());
+  if (!revealed.ok) {
+    const err = new Error(`Reveal rejected: ${revealed.reason}`);
+    err.statusCode = 400;
+    throw err;
+  }
+  state = revealed.state;
+
+  deal.status = state.status;
+  deal.lockFrame = lockFrame;
+  deal.updatedAt = now();
+  appendPaperDealStage(deal, "claim", "osa", `Claimed via PaperRail with hash-lock reveal`);
+
+  await saveStore();
+
+  event("tclk_offer_claimed", `Claimed TCLK offer ${dealId}`, {
+    offerId: dealId,
+    amount: deal.offer?.amount,
+    asset: deal.offer?.asset
+  });
+
+  return publicProtocolPaperDeal(deal);
+}
+
 function normalizeFederationPeerAnnouncements(announcements) {
   return announcements
     .filter((announcement) => announcement?.nodeId)
@@ -8219,6 +8436,25 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
   if (method === "GET" && path === "/api/protocol/overview") {
     return sendJson(res, 200, await technocoreProtocolOverview());
   }
+
+  if (method === "POST" && path === "/api/protocol/offers/accept") {
+    try {
+      const body = await readJson(req);
+      return sendJson(res, 201, await acceptTechnocoreOffer(body));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to accept TCLK offer" });
+    }
+  }
+
+  if (method === "POST" && path === "/api/protocol/offers/claim") {
+    try {
+      const body = await readJson(req);
+      return sendJson(res, 200, await claimTechnocoreOffer(body));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to claim TCLK offer" });
+    }
+  }
+
   // Phase 3: Agent DID / Capabilities / Delegation
   if (method === "GET" && path === "/api/agents/dids") {
     const profiles = normalizeAgentCapabilities(store.agentCapabilities || []);

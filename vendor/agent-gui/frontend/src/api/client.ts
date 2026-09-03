@@ -386,6 +386,10 @@ export const api = {
       post<ProtocolPaperDeal>(`/protocol/paper-deals/${encodeURIComponent(id)}/refund`, {}),
     cancelPaperDeal: (id: string) =>
       post<ProtocolPaperDeal>(`/protocol/paper-deals/${encodeURIComponent(id)}/cancel`, {}),
+    acceptOffer: (body: { offer_id: string; agent_id?: string }) =>
+      post<ProtocolPaperDeal>("/protocol/offers/accept", body),
+    claimOffer: (body: { deal_id: string }) =>
+      post<ProtocolPaperDeal>("/protocol/offers/claim", body),
   },
   wallet: {
     challenge: (body: { address: string; chain_id?: string | null }) =>

@@ -37,12 +37,14 @@ function deadlineLabel(value: string): string {
   });
 }
 
-function OfferCard({ offer }: { offer: TclkOfferProjection }) {
+function OfferCard({ offer, onAccept, onClaim, busy }: { offer: TclkOfferProjection; onAccept?: (offer: TclkOfferProjection) => void; onClaim?: (offer: TclkOfferProjection) => void; busy?: boolean }) {
   const status = offer.expired && offer.status === "proposed" ? "expired" : offer.status;
   const active = !offer.expired && ["proposed", "accepted", "locked"].includes(offer.status);
+  const canAccept = !offer.expired && offer.status === "proposed" && Boolean(onAccept);
+  const canClaim = offer.status === "accepted" && Boolean(onClaim);
   return (
     <article style={{
-      border: "1px solid #273453",
+      border: `1px solid ${canAccept ? "#2a8c72" : "#273453"}`,
       borderRadius: 10,
       padding: 13,
       background: "linear-gradient(145deg, rgba(18,24,40,.96), rgba(10,18,31,.96))",
@@ -95,6 +97,18 @@ function OfferCard({ offer }: { offer: TclkOfferProjection }) {
           Deal room: #{offer.deal_room}
         </div>
       )}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {canAccept && (
+          <button type="button" disabled={busy} onClick={() => onAccept?.(offer)} style={{ height: 28, padding: "0 12px", borderRadius: 6, border: "1px solid #2a8c72", background: "#1a3a2a", color: "#7ee0c2", fontWeight: 900, fontSize: 10, cursor: busy ? "default" : "pointer" }}>
+            {busy ? "Accepting…" : "Accept Offer"}
+          </button>
+        )}
+        {canClaim && (
+          <button type="button" disabled={busy} onClick={() => onClaim?.(offer)} style={{ height: 28, padding: "0 12px", borderRadius: 6, border: "1px solid #a16207", background: "#3b2b0d", color: "#fde68a", fontWeight: 900, fontSize: 10, cursor: busy ? "default" : "pointer" }}>
+            {busy ? "Claiming…" : "Claim Reward"}
+          </button>
+        )}
+      </div>
     </article>
   );
 }
@@ -157,6 +171,7 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
   const [paperAmount, setPaperAmount] = useState("100");
   const [paperLabel, setPaperLabel] = useState("FLOP end-to-end rehearsal");
   const [paperBusy, setPaperBusy] = useState<string | null>(null);
+  const [offerBusy, setOfferBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -199,6 +214,32 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
       setError(cause instanceof Error ? cause.message : "Unable to update PaperRail rehearsal");
     } finally {
       setPaperBusy(null);
+    }
+  }, [refresh]);
+
+  const acceptOffer = useCallback(async (offer: TclkOfferProjection) => {
+    setOfferBusy(offer.id);
+    setError(null);
+    try {
+      await api.protocol.acceptOffer({ offer_id: offer.id });
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to accept offer");
+    } finally {
+      setOfferBusy(null);
+    }
+  }, [refresh]);
+
+  const claimOffer = useCallback(async (offer: TclkOfferProjection) => {
+    setOfferBusy(offer.id);
+    setError(null);
+    try {
+      await api.protocol.claimOffer({ deal_id: offer.id });
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to claim offer");
+    } finally {
+      setOfferBusy(null);
     }
   }, [refresh]);
 
@@ -298,7 +339,7 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
                 <div style={{ minHeight: 180, display: "grid", placeItems: "center", textAlign: "center", color: "var(--text-dim)", fontSize: 12 }}>
                   No verified TCLK offers are visible in the current room window.
                 </div>
-              ) : overview?.tclk.offers.map((offer) => <OfferCard key={`${offer.id}-${offer.sequence}`} offer={offer} />)}
+              ) : overview?.tclk.offers.map((offer) => <OfferCard key={`${offer.id}-${offer.sequence}`} offer={offer} onAccept={acceptOffer} onClaim={claimOffer} busy={offerBusy === offer.id} />)}
             </div>
           </div>
 
