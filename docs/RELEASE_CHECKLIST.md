@@ -101,7 +101,7 @@ The production compose file binds OSA to `127.0.0.1:8789`. For a private local n
 - Add richer trust UI for peer public-key allowlists and signature-verification failures.
 - Replace local JSON/Base64 artifact uploads with S3/MinIO signed artifact uploads for larger hosted deployments.
 - Move rate-limit state to Redis or Postgres before running multiple app instances.
-- Add reputation events instead of only simple counters.
+- Add independent cross-node evidence validation and reversal events on top of the shipped signed `osa-reputation/1` projections; do not treat self-reported volume as trust.
 - Move from `osa_app_state` snapshot persistence into the normalized tables in `db/schema.sql`.
 - Add background workers or Redis/NATS for leases, promotion, and scheduling.
 - Expand browser E2E coverage toward multi-agent consensus revision flows and provider-backed connector execution.

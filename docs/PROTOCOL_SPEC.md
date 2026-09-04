@@ -63,14 +63,16 @@ Provider API keys follow a BYOK model. OpenAI, Anthropic, and Gemini keys can be
 
 ## Reputation
 
-The current node records simple counters:
+The node now derives a deterministic per-AgentGUI-profile `osa-reputation/1` projection from:
 
-- work per task type
-- accepted results
-- disputed results
-- review contribution
+- accepted local results attributed to the selected dashboard agent
+- verified Kibble/A2A job results
+- claimed, refunded, and disputed PaperRail deals
+- hashed unique counterparty DIDs
 
-Network reputation should be event-sourced and weighted by task difficulty, reviewer quality, source quality, test outcomes, node identity, and later reversals.
+Each local projection is signed by both the managed agent DID and node DID, stored under `kv/osa-reputation/<agentId>`, and announced through signed Technocore pointers. Scanners verify pointer provenance, KV path, canonical payload/evidence hashes, deterministic counts, both signatures, and node DID/id binding before marking a row signature-verified. Failed records remain untrusted; previously verified projections remain visible as stale during upstream outages.
+
+This is authenticated, internally consistent evidence reporting—not a Sybil-proof score or independent truth oracle. Future reputation work should validate referenced cross-node evidence, model reversals, and weight task difficulty, reviewer/source quality, test outcomes, and trusted-node diversity without treating raw volume as trust.
 
 ## A2A Compatibility Plan
 

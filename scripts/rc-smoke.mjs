@@ -62,6 +62,7 @@ try {
       OSA_TECHNOCORE_ROOMS: "osa-lab",
       OSA_TECHNOCORE_ROOM_LIMIT: "2",
       OSA_CAPABILITY_REGISTRY_STALE_MS: "50",
+      OSA_REPUTATION_STALE_MS: "50",
       OSA_TECHNOCORE_ANNOUNCE: "1",
       OSA_PUBLIC_URL: "https://osa.example",
       AGENTSWARM_PROPOSAL_VOTING_MS: "1",
@@ -212,10 +213,10 @@ try {
   assert(!bridgedEvent, "OSA Network Activity should not include raw Technocore room messages");
   const publicChannel = await getJson("/api/network/chat?limit=10&channel=osa-network");
   assert(publicChannel.messages.some((item) => item.source === "technocore" && item.room === "osa-network"), "osa-network should include the Technocore OSA room");
-  const unsignedDidClaim = publicChannel.messages.find((item) => item.message === "OSA public channel fixture message");
-  assert(unsignedDidClaim?.signed === false && unsignedDidClaim?.verified === false && unsignedDidClaim?.trusted === false, "A did:key sender without a valid signature must not be trusted");
   const labChannel = await getJson("/api/network/chat?limit=10&channel=osa-lab");
   assert(labChannel.messages.some((item) => item.source === "technocore" && item.room === "osa-lab"), "Pinned Technocore channels should read their selected room");
+  const unsignedDidClaim = labChannel.messages.find((item) => item.message === "External bridge fixture message");
+  assert(unsignedDidClaim?.signed === false && unsignedDidClaim?.verified === false && unsignedDidClaim?.trusted === false, "A did:key sender without a valid signature must not be trusted");
   await getJson("/api/network/chat?limit=10&channel=osa-lab&since=41");
   await getJson("/api/network/chat?limit=10&channel=osa-lab&since=41");
   const cursorReads = technocoreReads.filter((item) => item.room === "osa-lab" && item.since === "41");
@@ -483,6 +484,19 @@ try {
   const firstHash = firstPublish.registry.local.find((agent) => agent.agent_id === "technocore-specialist")?.payload_hash;
   const secondHash = secondPublish.registry.local.find((agent) => agent.agent_id === "technocore-specialist")?.payload_hash;
   assert(firstHash && firstHash === secondHash, "Capability registry publish should be idempotent for unchanged agent profiles");
+  const reputationPath = "osa-reputation/technocore-specialist";
+  for (let attempt = 0; attempt < 40 && !technocoreNotes.has(reputationPath); attempt += 1) await delay(50);
+  assert(technocoreNotes.has(reputationPath), "Local reputation should publish each default agent to kv/osa-reputation/<agentId>");
+  let reputation = await getJson("/api/reputation");
+  const reputationText = JSON.stringify(reputation);
+  assert(!/\"signature\"|privateKey|PRIVATE KEY|seed|pkcs8/i.test(reputationText), "Reputation API must not expose raw signatures, keys, or deterministic seeds");
+  const localReputation = reputation.local?.find((agent) => agent.agent_id === "technocore-specialist");
+  assert(localReputation?.verified === true && localReputation.kv_path === "/kv/osa-reputation/technocore-specialist", "Local reputation should verify and expose only KV path/hash/evidence metadata");
+  const firstReputationPublish = await postJson("/api/reputation/publish", { announce: false });
+  const secondReputationPublish = await postJson("/api/reputation/publish", { announce: false });
+  const firstReputationHash = firstReputationPublish.reputation.local.find((agent) => agent.agent_id === "technocore-specialist")?.payload_hash;
+  const secondReputationHash = secondReputationPublish.reputation.local.find((agent) => agent.agent_id === "technocore-specialist")?.payload_hash;
+  assert(firstReputationHash && firstReputationHash === secondReputationHash, "Reputation publish should be idempotent for unchanged local evidence");
   const externalRecord = makeCapabilityRegistryFixtureRecord({ agentId: "remote-coder", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId });
   technocoreNotes.set("osa-capabilities/remote-coder", stableStringify(externalRecord));
   signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, capabilityRegistryAnnouncementText(externalRecord), "9100001");
@@ -498,10 +512,49 @@ try {
   assert(capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-coder" && agent.verified === true), "Registry scanner should verify a foreign canonical signed capability entry");
   assert(capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-tampered" && agent.verified === false), "Registry scanner should mark tampered payloads untrusted");
   assert(capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-mismatch" && agent.verified === false && agent.rejection_reason), "Registry scanner should fail closed on signer mismatch");
+  const remoteReputation = makeReputationFixtureRecord({ agentId: "remote-reputable", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId });
+  technocoreNotes.set("osa-reputation/remote-reputable", stableStringify(remoteReputation));
+  signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, reputationAnnouncementText(remoteReputation), "9200001");
+  const payloadMismatch = makeReputationFixtureRecord({ agentId: "remote-rep-payload", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId });
+  payloadMismatch.payload.projection.counts.accepted_results = 4;
+  technocoreNotes.set("osa-reputation/remote-rep-payload", stableStringify(payloadMismatch));
+  signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, reputationAnnouncementText(payloadMismatch), "9200002");
+  const signatureMismatch = makeReputationFixtureRecord({ agentId: "remote-rep-sig", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId });
+  signatureMismatch.signature.signature = `${signatureMismatch.signature.signature.startsWith("A") ? "B" : "A"}${signatureMismatch.signature.signature.slice(1)}`;
+  technocoreNotes.set("osa-reputation/remote-rep-sig", stableStringify(signatureMismatch));
+  signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, reputationAnnouncementText(signatureMismatch), "9200003");
+  const didMismatch = makeReputationFixtureRecord({ agentId: "remote-rep-did", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId });
+  didMismatch.signer_did = externalRegistryNodeDid;
+  technocoreNotes.set("osa-reputation/remote-rep-did", stableStringify(didMismatch));
+  signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, reputationAnnouncementText(didMismatch), "9200004");
+  const nodeMismatch = makeReputationFixtureRecord({ agentId: "remote-rep-node", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: "node-not-derived-from-did" });
+  technocoreNotes.set("osa-reputation/remote-rep-node", stableStringify(nodeMismatch));
+  signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, reputationAnnouncementText(nodeMismatch), "9200005");
+  const evidenceMismatch = makeReputationFixtureRecord({
+    agentId: "remote-rep-evidence",
+    agentDid: externalRegistryAgentDid,
+    agentPrivateKey: externalRegistryAgent.privateKey,
+    nodeDid: externalRegistryNodeDid,
+    nodePrivateKey: externalRegistryNode.privateKey,
+    nodeId: externalRegistryNodeId,
+    mutatePayload: (payload) => { payload.projection.counts.accepted_results = 9; }
+  });
+  technocoreNotes.set("osa-reputation/remote-rep-evidence", stableStringify(evidenceMismatch));
+  signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, reputationAnnouncementText(evidenceMismatch), "9200006");
+  reputation = (await postJson("/api/reputation/scan", {})).reputation;
+  assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-reputable" && agent.verified === true && agent.counts.accepted_results === 1 && agent.counts.claimed_deals === 1), "Reputation scanner should verify a foreign canonical signed reputation entry");
+  assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-payload" && agent.verified === false), "Reputation scanner should mark tampered payloads untrusted");
+  assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-sig" && agent.verified === false && agent.rejection_reason), "Reputation scanner should fail closed on invalid signatures");
+  assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-did" && agent.verified === false && agent.rejection_reason), "Reputation scanner should fail closed on signer DID mismatch");
+  assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-node" && agent.verified === false && agent.rejection_reason), "Reputation scanner should fail closed on node DID mismatch");
+  assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-evidence" && agent.verified === false && agent.rejection_reason === "evidence_count_mismatch"), "Reputation scanner should reject invented evidence counts");
+  assert(!/\"signature\"|privateKey|PRIVATE KEY|seed|pkcs8/i.test(JSON.stringify(reputation)), "Discovered reputation projection must not expose raw signatures, keys, or deterministic seeds");
   technocoreRegistryUnavailable = true;
   await delay(80);
   capabilityRegistry = (await postJson("/api/capability-registry/scan", {})).registry;
   assert(capabilityRegistry.status.last_scan_status === "archive" && capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-coder" && agent.stale === true), "Registry scanner should retain stale restart-safe projection during Technocore KV outage");
+  reputation = (await postJson("/api/reputation/scan", {})).reputation;
+  assert(reputation.status.last_scan_status === "archive" && reputation.discovered?.some((agent) => agent.agent_id === "remote-reputable" && agent.stale === true), "Reputation scanner should retain stale restart-safe projection during Technocore KV outage");
   technocoreRegistryUnavailable = false;
   const lockFrame = {
     type: "lock",
@@ -543,6 +596,11 @@ try {
   const finalManagedOverview = await getJson("/api/protocol/overview");
   const finalManagedDeal = finalManagedOverview.paper?.deals?.find((deal) => deal.id === managedOffer.id);
   assert(finalManagedDeal?.status === "claimed" && finalManagedDeal.receipt_recorded === true, "Managed result submission should complete auto-reveal and receipt in the dealbook");
+  const updatedReputation = await postJson("/api/reputation/publish", { agent_id: "technocore-specialist", announce: false });
+  const updatedLocalReputation = updatedReputation.reputation.local.find((agent) => agent.agent_id === "technocore-specialist");
+  assert(updatedLocalReputation?.counts.accepted_results >= 1, "Local reputation should deterministically count accepted OSA results");
+  assert(updatedLocalReputation?.counts.verified_job_results >= 0, "Local reputation should expose verified job result counts without inventing jobs");
+  assert(updatedLocalReputation?.counts.claimed_deals >= 1 && updatedLocalReputation?.counts.unique_counterparties >= 1, "Local reputation should deterministically count claimed PaperRail deals and unique counterparties");
   await postJson(`/api/connectors/${tclkScopedToken.connector.id}/revoke`, {}, headers);
   const rotatedVotingConnector = await postJson(`/api/connectors/${votingConnector.connector.id}/rotate`, {}, headers);
   assert(rotatedVotingConnector.token.startsWith("osa_conn_"), "rotated connector should return a fresh raw token once");
@@ -746,7 +804,7 @@ function startTechnocoreFixture() {
     }
     if (noteMatch && req.method === "GET") {
       const key = `${noteMatch[1]}/${noteMatch[2]}`;
-      if (noteMatch[1] === "osa-capabilities" && technocoreRegistryUnavailable) {
+      if (["osa-capabilities", "osa-reputation"].includes(noteMatch[1]) && technocoreRegistryUnavailable) {
         res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
         res.end("registry unavailable\n");
         return;
@@ -955,6 +1013,68 @@ function makeCapabilityRegistryFixtureRecord({ agentId, agentDid, agentPrivateKe
 
 function capabilityRegistryAnnouncementText(record) {
   return `OSA CAPABILITY v1 agent=${record.payload.agent_id} path=${record.kv_path} hash=${record.payload_hash} node=${record.payload.node_id} did=${record.payload.node_did}`;
+}
+
+function makeReputationFixtureRecord({ agentId, agentDid, agentPrivateKey, nodeDid, nodePrivateKey, nodeId, mutatePayload }) {
+  const timestamp = new Date().toISOString();
+  const evidenceRefs = {
+    accepted_results: [{ id: `result-${agentId}`, task_id: `task-${agentId}`, goal_id: `goal-${agentId}`, hash: createHash("sha256").update(`${agentId}:result`).digest("hex"), accepted_at: timestamp }],
+    verified_job_results: [{ job_id: `kibble:${agentId}`, claim_id: `claim-${agentId}`, output_hash: createHash("sha256").update(`${agentId}:job`).digest("hex"), submitted_at: timestamp }],
+    paperrail_deals: [{ deal_id: `deal-${agentId}`, contract_id: `contract-${agentId}`, status: "claimed", counterparty_hash: createHash("sha256").update(`${agentId}:counterparty`).digest("hex"), result_frame_posted: true, attest_frame_posted: true, receipt_recorded: true, no_value: true, updated_at: timestamp, hash: createHash("sha256").update(`${agentId}:deal`).digest("hex") }],
+    counterparty_hashes: [createHash("sha256").update(`${agentId}:counterparty`).digest("hex")]
+  };
+  const evidenceHash = objectHash(evidenceRefs);
+  const payload = {
+    schema: "osa-reputation/1",
+    version: 1,
+    agent_id: agentId,
+    identity: {
+      agent_id: agentId,
+      name: agentId,
+      did: agentDid
+    },
+    node_id: nodeId,
+    node_did: nodeDid,
+    projection: {
+      deterministic: true,
+      counts: {
+        accepted_results: 1,
+        verified_job_results: 1,
+        claimed_deals: 1,
+        refunded_deals: 0,
+        disputed_deals: 0,
+        unique_counterparties: 1
+      },
+      evidence_hash: evidenceHash
+    },
+    evidence: {
+      evidence_hash: evidenceHash,
+      refs: evidenceRefs
+    },
+    settlement: {
+      rail: "paper",
+      has_value: false,
+      value_settlement_enabled: false
+    },
+    published_at: timestamp,
+    updated_at: timestamp
+  };
+  if (typeof mutatePayload === "function") mutatePayload(payload);
+  const payloadHash = objectHash(payload);
+  return {
+    schema: "osa-reputation/1",
+    version: 1,
+    kv_path: `/kv/osa-reputation/${agentId}`,
+    payload,
+    payload_hash: payloadHash,
+    signer_did: agentDid,
+    signature: signCapabilityEnvelope("agent_reputation_projection", payload, agentDid, agentPrivateKey, timestamp),
+    node_signature: signCapabilityEnvelope("node_reputation_projection", payload, nodeDid, nodePrivateKey, timestamp)
+  };
+}
+
+function reputationAnnouncementText(record) {
+  return `OSA REPUTATION v1 agent=${record.payload.agent_id} path=${record.kv_path} hash=${record.payload_hash} evidence=${record.payload.evidence.evidence_hash} node=${record.payload.node_id} did=${record.payload.node_did}`;
 }
 
 function signCapabilityEnvelope(type, payload, did, privateKey, signedAt) {

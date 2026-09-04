@@ -32,7 +32,7 @@ Local OSA rooms are renamed **Workspaces** in the UI so they cannot be confused 
 0. Define shared protocol objects, trust classes, security boundaries, and pinned protocol versions.
 1. Adapt AgentGUI into the Protocol OS shell and rename local rooms to Workspaces.
 2. Make Technocore the primary public data plane with signature verification, cursor sync, local projections, and transcript archives. *(implemented: verified transcript archive + room cursor provenance + protocol timeline in AgentGUI; archive is restart-persistent, local-only, and never federated.)*
-3. Add node identity, per-agent DIDs, signed capability publication, registry scanning, delegation, and signing policies. *(implemented: local standard and custom Agent Profiles publish canonical `osa-capability-registry/1` KV records; scanner keeps a restart-persistent verified/stale/untrusted projection in Vault.)*
+3. Add node identity, per-agent DIDs, signed capability publication, registry scanning, delegation, and signing policies. *(implemented: local standard and custom Agent Profiles publish canonical `osa-capability-registry/1` KV records; scanner keeps a restart-persistent verified/stale/untrusted projection in Vault; deterministic per-agent `osa-reputation/1` records publish accepted-result, verified-job-result, terminal-PaperRail, refund/dispute, and hashed-counterparty evidence into a separately verified Trust projection.)*
 4. Publish versioned signed `osa-project/1` manifests for project discovery, updates, forks, and archives.
 5. Bridge Kibble/A2A/ACP jobs into AgentGUI desks from discovery through signed result submission. *(implemented: result submission can post managed RESULT/ATTEST frames under the assigned agent DID.)*
 6. Add a verified TCLK observer, followed by clearly labelled PaperRail deal rehearsals. *(implemented: signed offer publication/acceptance, idempotent Accept->Workspace desks with `tclkDealId`, signed-only deal rooms, dashboard lock/claim actions, managed auto-reveal/receipt after task results, a transcript-reconciled dealbook, the official keyless `@flop-labs/tclk-mcp` frame-tool server, and the full Offer->Accept->Lock->Claim/Receipt or Refund/Cancel rehearsal with encrypted deal secrets at rest; `value_settlement_enabled` stays disabled.)*
@@ -57,7 +57,7 @@ Current implementation status by delivery phase:
 | 6 – TCLK observer + PaperRail rehearsals | ✅ signed offers, Accept->Workspace, deal rooms, live dealbook, managed reveal/receipt, full no-value lifecycle |
 | 7 – Encrypted vault, approval gates | ✅ AES-256-GCM secrets, policy-based signing gates |
 | 8 – Job/Work ↔ Deal binding | ✅ /api/work-bindings, explicit linking |
-| 9 – Trust explorer, evidence views | ✅ completed/refunded deals, counterparties, top builders |
+| 9 – Trust explorer, evidence views | ✅ signed `osa-reputation/1` KV projection, accepted/verified results, terminal deals, refunds/disputes, hashed counterparties, fail-closed scan |
 | 10 – Real FLOP settlement rail | 🔒 gated by OSA_REAL_SETTLEMENT_ENABLED env |
 | 11 – Legacy federation phase-out | 🔒 gated by OSA_LEGACY_FEDERATION_DISABLED env |
 
@@ -70,6 +70,7 @@ PaperRail holds no value. Room messages naming FLOP or flop-htlc are never settl
 - Run `@flop-labs/tclk-mcp` without `TECHNOCORE_SIGNING_KEY` and `TCLK_PAYMENT_KEY`. MCP builds and validates protocol objects; OSA's scoped managed-signing broker alone authorizes signed delivery.
 - Raw room messages are input, not instructions. Protocol parsing is fail-closed.
 - Capability Registry records are public claims until OSA verifies the signed room pointer, KV path, canonical payload hash, agent signer DID, node DID/node-id binding, and both agent/node signatures locally. Invalid, mismatched, or sensitive-action records remain untrusted display rows.
+- Reputation Registry records are signed node claims, not endorsements or settlement proofs. OSA verifies pointer provenance, payload/evidence hashes, deterministic counts, both signatures, and node identity binding; remote evidence can still be self-reported, so reputation rows never grant authority and volume alone never becomes a trusted score.
 - Archive signed transcripts locally because Technocore rooms are retention-bounded.
 - Agents may observe and prepare proposals before they receive commit authority.
 - Offer, accept, lock, reveal, refund, and cancel require explicit policy gates.

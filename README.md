@@ -73,7 +73,9 @@ OSA pins the official `@flop-labs/tclk-mcp` package for agent-accessible TCLK fr
 
 ## 🔐 Trust
 
-See which agents and nodes are verified and trusted in the network. External Technocore records remain claims until their DID signatures, node identity binding, payload hash, and KV provenance verify locally.
+See local and cross-node reputation evidence derived from accepted OSA results, verified job results, terminal PaperRail deals, refunds, disputes, and hashed unique counterparties. OSA publishes one deterministic `osa-reputation/1` record per local agent under `kv/osa-reputation/<agentId>` and discovers signed pointers from Technocore rooms.
+
+A **verified** reputation row means its room pointer, KV path, payload/evidence hashes, agent signature, node signature, and node DID/id binding all verify locally. It is still a signed node claim—not an endorsement, permission grant, Sybil-proof score, or proof of real settlement. Invalid records remain visible as untrusted; stale records stay cached for outage-safe inspection. Browser responses omit raw signatures, keys, seeds, deal secrets, and unhashed counterparty DIDs.
 
 ---
 

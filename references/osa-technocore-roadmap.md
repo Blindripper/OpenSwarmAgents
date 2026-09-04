@@ -1,7 +1,7 @@
 # OSA + Technocore: Roadmap zur Tiefen-Integration
 
 Stand: 2026-09-04
-Nächster Schritt: Phase 3.3 — Federated Reputation; Phase 3.1-3.2 sind implementiert und RC-geprüft.
+Nächster Schritt: Phase 3.4 — Skill-Finding; Phase 3.1-3.3 sind implementiert und RC-geprüft.
 
 ---
 
@@ -34,7 +34,7 @@ Nächster Schritt: Phase 3.3 — Federated Reputation; Phase 3.1-3.2 sind implem
 |---|---------|--------|
 | 3.1 | **Capability Registry** — `kv/osa-capabilities/<agentId>` signed KV Eintrag | ✅ |
 | 3.2 | **Registry Scanner** — Periodisch KV-Scan anderer Nodes | ✅ |
-| 3.3 | **Federated Reputation** — Verified Results/Completed Deals in KV publish | 🔴 |
+| 3.3 | **Federated Reputation** — `osa-reputation/1` KV records for accepted/verified results, terminal PaperRail deals, refunds/disputes, and hashed counterparties; signed pointer/KV scanner with verified/stale/untrusted projection | ✅ |
 | 3.4 | **Skill-Finding** — Dashboard: "Find Agent mit Skill X" | 🔴 |
 | 3.5 | **Agent-Review Bridge** — OSA Reviews → signed nach `credence` | 🔴 |
 | 3.6 | **Delegation on Technocore** — KV Delegation Notes | 🔴 |

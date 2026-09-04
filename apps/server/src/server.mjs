@@ -128,6 +128,8 @@ const technocoreProfileEnabled = process.env.OSA_TECHNOCORE_PROFILE !== "0";
 const technocoreProjectRepositoryUrl = "https://github.com/Blindripper/OpenSwarmAgents";
 const capabilityRegistrySchema = "osa-capability-registry/1";
 const capabilityRegistryNamespace = "osa-capabilities";
+const reputationRegistrySchema = "osa-reputation/1";
+const reputationRegistryNamespace = "osa-reputation";
 const managedNoValueSigningActions = ["sign_text", "create_deal", "request_work", "submit_result", "attest_result", "claim", "receipt"];
 const humanRequiredSigningActions = ["lock", "settle", "transfer", "refund", "delegate"];
 const capabilityRegistryScanRooms = uniqueTechnocoreRooms([
@@ -140,6 +142,11 @@ const capabilityRegistryScanMs = Math.round(boundedNumber(process.env.OSA_CAPABI
 const capabilityRegistryStaleMs = Math.round(boundedNumber(process.env.OSA_CAPABILITY_REGISTRY_STALE_MS, 24 * 60 * 60 * 1000, 1_000, 30 * 24 * 60 * 60 * 1000));
 const capabilityRegistryPointerLimit = Math.round(boundedNumber(process.env.OSA_CAPABILITY_REGISTRY_POINTER_LIMIT, 80, 5, 250));
 const capabilityRegistryRoomLimit = Math.round(boundedNumber(process.env.OSA_CAPABILITY_REGISTRY_ROOM_LIMIT, 80, 10, 200));
+const reputationRegistryScanRooms = capabilityRegistryScanRooms;
+const reputationRegistryScanMs = Math.round(boundedNumber(process.env.OSA_REPUTATION_SCAN_MS, 5 * 60 * 1000, 30_000, 60 * 60 * 1000));
+const reputationRegistryStaleMs = Math.round(boundedNumber(process.env.OSA_REPUTATION_STALE_MS, 24 * 60 * 60 * 1000, 1_000, 30 * 24 * 60 * 60 * 1000));
+const reputationRegistryPointerLimit = Math.round(boundedNumber(process.env.OSA_REPUTATION_POINTER_LIMIT, 80, 5, 250));
+const reputationRegistryRoomLimit = Math.round(boundedNumber(process.env.OSA_REPUTATION_ROOM_LIMIT, 80, 10, 200));
 const technocoreChannelsCache = { key: "", expiresAt: 0, channels: [], error: null };
 let technocoreChannelsRefreshPromise = null;
 const technocoreNonceByRoom = new Map();
@@ -149,6 +156,7 @@ const technocoreDidPublicKeyCache = new Map();
 const agentSigningIdentityCache = new Map();
 const protocolRoomSyncPromises = new Map();
 const protocolPaperDealPromises = new Map();
+const reputationPublishTimers = new Map();
 let technocoreReadRequestCounter = 0;
 const managedConnectorProcesses = new Map();
 const managedConnectorLogLimit = 12 * 1024;
@@ -268,6 +276,9 @@ async function loadStore() {
       capabilityRegistryRecords: [],
       capabilityRegistryProjection: [],
       capabilityRegistrySync: {},
+      reputationRecords: [],
+      reputationProjection: [],
+      reputationSync: {},
       delegations: [],
       jobClaims: [],
       jobResults: [],
@@ -322,6 +333,9 @@ function normalizeStore(input) {
     capabilityRegistryRecords: normalizeCapabilityRegistryRecords(input.capabilityRegistryRecords || []),
     capabilityRegistryProjection: normalizeCapabilityRegistryProjection(input.capabilityRegistryProjection || []),
     capabilityRegistrySync: normalizeCapabilityRegistrySync(input.capabilityRegistrySync || {}),
+    reputationRecords: normalizeReputationRecords(input.reputationRecords || []),
+    reputationProjection: normalizeReputationProjection(input.reputationProjection || []),
+    reputationSync: normalizeReputationSync(input.reputationSync || {}),
     delegations: normalizeDelegations(input.delegations || []),
     jobClaims: normalizeJobClaims(input.jobClaims || []),
     jobResults: normalizeJobResults(input.jobResults || []),
@@ -1468,6 +1482,130 @@ function normalizeCapabilityRegistrySync(input) {
   };
 }
 
+function normalizeReputationRecords(records) {
+  if (!Array.isArray(records)) return [];
+  const byAgent = new Map();
+  for (const rec of records) {
+    const agentId = String(rec?.agent_id || rec?.record?.payload?.agent_id || "").slice(0, 80);
+    const record = rec?.record && typeof rec.record === "object" && !Array.isArray(rec.record) ? rec.record : null;
+    if (!agentId || !record) continue;
+    byAgent.set(agentId, {
+      agent_id: agentId,
+      kv_path: String(rec.kv_path || record.kv_path || technocoreReputationKvLocation(agentId).path).slice(0, 120),
+      payload_hash: String(rec.payload_hash || record.payload_hash || "").slice(0, 100),
+      evidence_hash: String(rec.evidence_hash || record.payload?.evidence?.evidence_hash || "").slice(0, 100),
+      signer_did: String(rec.signer_did || record.signer_did || record.payload?.identity?.did || "").slice(0, 150),
+      node_id: String(rec.node_id || record.payload?.node_id || nodeIdentity.nodeId).slice(0, 100),
+      record,
+      published_at: validIsoTimestamp(rec.published_at || record.payload?.published_at) || now(),
+      updated_at: validIsoTimestamp(rec.updated_at || record.payload?.updated_at) || now(),
+      last_publish_at: validIsoTimestamp(rec.last_publish_at) || null,
+      last_publish_status: ["pending", "published", "unchanged", "disabled", "failed"].includes(rec.last_publish_status) ? rec.last_publish_status : "pending",
+      last_publish_error: rec.last_publish_error ? String(rec.last_publish_error).slice(0, 300) : null,
+      last_announced_at: validIsoTimestamp(rec.last_announced_at) || null,
+      last_announced_hash: rec.last_announced_hash ? String(rec.last_announced_hash).slice(0, 100) : null
+    });
+  }
+  return [...byAgent.values()].sort((a, b) => a.agent_id.localeCompare(b.agent_id)).slice(0, 500);
+}
+
+function normalizeReputationProjection(records) {
+  if (!Array.isArray(records)) return [];
+  const byKey = new Map();
+  for (const rec of records) {
+    const agentId = String(rec?.agent_id || "").slice(0, 80);
+    const did = String(rec?.did || "").slice(0, 150);
+    const nodeId = String(rec?.node_id || "").slice(0, 100);
+    const kvPath = String(rec?.kv_path || "").slice(0, 120);
+    if (!agentId || !did || !nodeId || !kvPath) continue;
+    const verified = rec.verified === true;
+    const key = `${nodeId}\x00${agentId}\x00${did}\x00${kvPath}`;
+    byKey.set(key, {
+      id: String(rec.id || `reputation-${createHash("sha256").update(key).digest("hex").slice(0, 24)}`).slice(0, 100),
+      source: rec.source === "local" ? "local" : "technocore",
+      agent_id: agentId,
+      name: String(rec.name || agentId).slice(0, 80),
+      did,
+      node_id: nodeId,
+      node_did: String(rec.node_did || "").slice(0, 150),
+      kv_path: kvPath,
+      payload_hash: String(rec.payload_hash || "").slice(0, 100),
+      evidence_hash: String(rec.evidence_hash || "").slice(0, 100),
+      verified,
+      status: verified ? "verified" : "untrusted",
+      stale: rec.stale === true,
+      rejection_reason: verified ? null : String(rec.rejection_reason || "unverified").slice(0, 240),
+      counts: normalizeReputationCounts(rec.counts || {}),
+      evidence_refs: normalizePublicReputationEvidenceRefs(rec.evidence_refs || {}),
+      first_seen_at: validIsoTimestamp(rec.first_seen_at) || now(),
+      last_seen_at: validIsoTimestamp(rec.last_seen_at) || now(),
+      provenance: {
+        room: normalizeTechnocoreName(rec.provenance?.room) || null,
+        seq: finitePositiveNumber(rec.provenance?.seq),
+        from: rec.provenance?.from ? String(rec.provenance.from).slice(0, 150) : null,
+        announced_at: validIsoTimestamp(rec.provenance?.announced_at) || null
+      }
+    });
+  }
+  return [...byKey.values()]
+    .sort((a, b) => String(b.last_seen_at).localeCompare(String(a.last_seen_at)) || a.agent_id.localeCompare(b.agent_id))
+    .slice(0, 1000);
+}
+
+function normalizeReputationSync(input) {
+  const value = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  return {
+    enabled: value.enabled === true,
+    rooms: Array.isArray(value.rooms) ? value.rooms.map(normalizeTechnocoreName).filter(Boolean).slice(0, 20) : reputationRegistryScanRooms,
+    last_publish_at: validIsoTimestamp(value.last_publish_at) || null,
+    last_scan_at: validIsoTimestamp(value.last_scan_at) || null,
+    last_scan_status: ["idle", "live", "archive", "disabled", "failed"].includes(value.last_scan_status) ? value.last_scan_status : "idle",
+    last_error: value.last_error ? String(value.last_error).slice(0, 300) : null,
+    discovered_count: Math.max(0, Number(value.discovered_count || 0)),
+    verified_count: Math.max(0, Number(value.verified_count || 0)),
+    rejected_count: Math.max(0, Number(value.rejected_count || 0))
+  };
+}
+
+function normalizeReputationCounts(input) {
+  const value = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  return {
+    accepted_results: Math.max(0, Number(value.accepted_results || 0)),
+    verified_job_results: Math.max(0, Number(value.verified_job_results || 0)),
+    claimed_deals: Math.max(0, Number(value.claimed_deals || 0)),
+    refunded_deals: Math.max(0, Number(value.refunded_deals || 0)),
+    disputed_deals: Math.max(0, Number(value.disputed_deals || 0)),
+    unique_counterparties: Math.max(0, Number(value.unique_counterparties || 0))
+  };
+}
+
+function normalizePublicReputationEvidenceRefs(input) {
+  const value = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const cleanRefs = (records, limit = 80) => (Array.isArray(records) ? records : [])
+    .map((rec) => {
+      const out = {};
+      for (const [key, raw] of Object.entries(rec || {})) {
+        if (["id", "task_id", "goal_id", "result_id", "job_id", "claim_id", "deal_id", "contract_id", "status", "hash", "output_hash", "counterparty_hash", "updated_at", "accepted_at", "submitted_at"].includes(key)) {
+          out[key] = String(raw || "").slice(0, 160);
+        } else if (["result_frame_posted", "attest_frame_posted", "receipt_recorded", "no_value"].includes(key)) {
+          out[key] = raw === true;
+        }
+      }
+      return Object.keys(out).length ? out : null;
+    })
+    .filter(Boolean)
+    .slice(0, limit);
+  return {
+    accepted_results: cleanRefs(value.accepted_results),
+    verified_job_results: cleanRefs(value.verified_job_results),
+    paperrail_deals: cleanRefs(value.paperrail_deals),
+    counterparty_hashes: (Array.isArray(value.counterparty_hashes) ? value.counterparty_hashes : [])
+      .map((hash) => String(hash || "").slice(0, 100))
+      .filter((hash) => /^[a-f0-9]{64}$/.test(hash))
+      .slice(0, 200)
+  };
+}
+
 function sanitizeCapabilityList(capabilities) {
   const seen = new Set();
   const output = [];
@@ -2015,6 +2153,7 @@ async function mutateProtocolPaperDeal(id, operation) {
     deal.updatedAt = now();
     store.protocolPaperDeals = normalizeProtocolPaperDeals(store.protocolPaperDeals);
     await saveStore();
+    scheduleReputationPublishForDeal(deal);
     return publicProtocolPaperDeal(store.protocolPaperDeals.find((item) => item.id === dealId));
   })();
   protocolPaperDealPromises.set(dealId, promise);
@@ -2390,6 +2529,7 @@ async function claimTechnocoreOffer(body = {}) {
   }
 
   await saveStore();
+  scheduleReputationPublishForDeal(deal);
 
   event("tclk_offer_claimed", `Claimed TCLK offer ${dealId}`, {
     offerId: dealId,
@@ -3011,6 +3151,9 @@ async function loadPostgresStore() {
     capabilityRegistryRecords: [],
     capabilityRegistryProjection: [],
     capabilityRegistrySync: {},
+    reputationRecords: [],
+    reputationProjection: [],
+    reputationSync: {},
     delegations: [],
     jobClaims: [],
     jobResults: [],
@@ -5341,6 +5484,11 @@ function publicRuntime() {
     capabilityRegistryScanRooms,
     capabilityRegistryLastScanAt: normalizeCapabilityRegistrySync(store?.capabilityRegistrySync || {}).last_scan_at,
     capabilityRegistryLastScanStatus: normalizeCapabilityRegistrySync(store?.capabilityRegistrySync || {}).last_scan_status,
+    reputationRegistryEnabled: technocoreEnabled,
+    reputationRegistryNamespace,
+    reputationRegistryScanRooms,
+    reputationRegistryLastScanAt: normalizeReputationSync(store?.reputationSync || {}).last_scan_at,
+    reputationRegistryLastScanStatus: normalizeReputationSync(store?.reputationSync || {}).last_scan_status,
     node: publicNodeIdentity(),
     oauthConfigured: Object.fromEntries(
       Object.keys(oauthProviderConfig).map((provider) => [provider, Boolean(providerCredentials(provider))])
@@ -8081,24 +8229,592 @@ function startCapabilityRegistrySync() {
   setInterval(() => scanCapabilityRegistry().catch((error) => console.warn(`Capability registry scan failed: ${error.message}`)), capabilityRegistryScanMs).unref?.();
 }
 
-/** Share local trust summary to Technocore osa-network for cross-node federation. */
-async function shareTrustToTechnocore() {
-  if (!technocoreEnabled || !technocorePublicRoom || !technocoreSignedMessages || !technocoreDid) return;
-  const results = normalizeJobResults(store.jobResults || []);
-  const agentCounts = {};
-  for (const r of results) {
-    if (r.verified) agentCounts[r.agent_id] = (agentCounts[r.agent_id] || 0) + 1;
+function technocoreReputationKvLocation(agentId) {
+  const normalized = String(agentId || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  const key = normalized && normalized.length <= 48
+    ? normalized
+    : `agent-${createHash("sha256").update(String(agentId || "")).digest("hex").slice(0, 16)}`;
+  return {
+    namespace: reputationRegistryNamespace,
+    key,
+    path: `/kv/${reputationRegistryNamespace}/${key}`
+  };
+}
+
+function hashPublicValue(value) {
+  return createHash("sha256").update(String(value || ""), "utf8").digest("hex");
+}
+
+function resultEvidenceHash(result) {
+  return objectHash({
+    id: result.id,
+    taskId: result.taskId,
+    goalId: result.goalId,
+    agentId: result.agentId,
+    summaryHash: hashToken(result.summary || ""),
+    contentHash: hashToken(result.content || ""),
+    artifactHashes: normalizeArtifacts(result.artifacts || []).map((artifact) => artifact.sha256 || hashToken(`${artifact.name}:${artifact.uri}`)).sort()
+  });
+}
+
+function terminalPaperDealStatuses() {
+  return new Set(["claimed", "refunded", "disputed"]);
+}
+
+function isDealEvidenceForAgent(deal, agentId, agentDid) {
+  if (deal.agentProfileId && deal.agentProfileId === agentId) return true;
+  if (deal.localAgentDid && deal.localAgentDid === agentDid) return true;
+  const timeline = Array.isArray(deal.timeline) ? deal.timeline : [];
+  return timeline.some((entry) => entry?.actor === agentDid);
+}
+
+function reputationAgentIdForResult(result) {
+  const task = (store.tasks || []).find((item) => item.id === result?.taskId);
+  if (task?.agentGuiAgent && agentGuiProfileById(task.agentGuiAgent)) return task.agentGuiAgent;
+  return agentGuiProfileById(result?.agentId) ? result.agentId : null;
+}
+
+function buildLocalReputationEvidence(agentId) {
+  const agentDid = agentDidForProfile(agentId);
+  const acceptedResults = (store.results || [])
+    .filter((result) => reputationAgentIdForResult(result) === agentId && result.status === "accepted")
+    .map((result) => ({
+      id: result.id,
+      task_id: result.taskId,
+      goal_id: result.goalId,
+      hash: resultEvidenceHash(result),
+      accepted_at: validIsoTimestamp(result.createdAt) || now()
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const verifiedJobResults = normalizeJobResults(store.jobResults || [])
+    .filter((result) => result.agent_id === agentId && result.verified === true)
+    .map((result) => ({
+      job_id: result.job_id,
+      claim_id: result.claim_id,
+      output_hash: result.output_hash,
+      submitted_at: validIsoTimestamp(result.submitted_at) || now()
+    }))
+    .sort((a, b) => `${a.job_id}:${a.claim_id}`.localeCompare(`${b.job_id}:${b.claim_id}`));
+  const terminalDeals = normalizeProtocolPaperDeals(store.protocolPaperDeals || [])
+    .filter((deal) => terminalPaperDealStatuses().has(deal.status))
+    .filter((deal) => isDealEvidenceForAgent(deal, agentId, agentDid));
+  const counterpartyHashes = [...new Set(terminalDeals
+    .map((deal) => deal.counterpartyDid || "")
+    .filter(Boolean)
+    .map(hashPublicValue))]
+    .sort();
+  const paperrailDeals = terminalDeals
+    .map((deal) => ({
+      deal_id: deal.id,
+      contract_id: deal.accept?.contract || "",
+      status: deal.status,
+      counterparty_hash: deal.counterpartyDid ? hashPublicValue(deal.counterpartyDid) : "",
+      result_frame_posted: deal.resultFramePosted === true,
+      attest_frame_posted: deal.attestFramePosted === true,
+      receipt_recorded: deal.receiptRecorded === true,
+      no_value: true,
+      updated_at: validIsoTimestamp(deal.updatedAt) || now(),
+      hash: objectHash({
+        id: deal.id,
+        contract: deal.accept?.contract || null,
+        status: deal.status,
+        counterpartyHash: deal.counterpartyDid ? hashPublicValue(deal.counterpartyDid) : null,
+        resultFramePosted: deal.resultFramePosted === true,
+        attestFramePosted: deal.attestFramePosted === true,
+        receiptRecorded: deal.receiptRecorded === true,
+        hasValue: false
+      })
+    }))
+    .sort((a, b) => a.deal_id.localeCompare(b.deal_id));
+  return normalizePublicReputationEvidenceRefs({
+    accepted_results: acceptedResults,
+    verified_job_results: verifiedJobResults,
+    paperrail_deals: paperrailDeals,
+    counterparty_hashes: counterpartyHashes
+  });
+}
+
+function reputationCountsFromEvidence(evidence) {
+  const refs = normalizePublicReputationEvidenceRefs(evidence || {});
+  return normalizeReputationCounts({
+    accepted_results: refs.accepted_results.length,
+    verified_job_results: refs.verified_job_results.length,
+    claimed_deals: refs.paperrail_deals.filter((deal) => deal.status === "claimed").length,
+    refunded_deals: refs.paperrail_deals.filter((deal) => deal.status === "refunded").length,
+    disputed_deals: refs.paperrail_deals.filter((deal) => deal.status === "disputed").length,
+    unique_counterparties: refs.counterparty_hashes.length
+  });
+}
+
+function reputationEvidenceHash(evidence) {
+  return objectHash(normalizePublicReputationEvidenceRefs(evidence || {}));
+}
+
+function reputationPayloadCore(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  return {
+    schema: payload.schema,
+    version: payload.version,
+    agent_id: payload.agent_id,
+    identity: payload.identity,
+    node_id: payload.node_id,
+    node_did: payload.node_did,
+    projection: payload.projection,
+    evidence: payload.evidence,
+    settlement: payload.settlement
+  };
+}
+
+function makeReputationRecord(agent) {
+  const profile = agentGuiProfileById(agent.id) || agent;
+  const did = agentDidForProfile(agent.id);
+  const nodeDid = technocoreDid || didKeyFromEd25519PublicKeyPem(nodeIdentity.publicKeyPem);
+  const location = technocoreReputationKvLocation(agent.id);
+  const evidenceRefs = buildLocalReputationEvidence(agent.id);
+  const evidenceHash = reputationEvidenceHash(evidenceRefs);
+  const counts = reputationCountsFromEvidence(evidenceRefs);
+  const existing = normalizeReputationRecords(store.reputationRecords || []).find((item) => item.agent_id === agent.id);
+  const previousPayload = existing?.record?.payload || null;
+  const candidate = {
+    schema: reputationRegistrySchema,
+    version: 1,
+    agent_id: agent.id,
+    identity: {
+      agent_id: agent.id,
+      name: String(profile.name || agent.id).slice(0, 80),
+      did
+    },
+    node_id: nodeIdentity.nodeId,
+    node_did: nodeDid,
+    projection: {
+      deterministic: true,
+      counts,
+      evidence_hash: evidenceHash
+    },
+    evidence: {
+      evidence_hash: evidenceHash,
+      refs: evidenceRefs
+    },
+    settlement: {
+      rail: "paper",
+      has_value: false,
+      value_settlement_enabled: false
+    }
+  };
+  if (previousPayload && objectHash(reputationPayloadCore(previousPayload)) === objectHash(candidate)) {
+    return existing.record;
   }
-  const top = Object.entries(agentCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10)
-    .map(([agent_id, verified_results]) => ({ agent_id, verified_results }));
-  if (top.length === 0) return;
-  const trustSummary = { total_results: results.length, top };
-  const text = `OSA TRUST v1: ${JSON.stringify(trustSummary)}`;
+  const timestamp = now();
+  const payload = {
+    ...candidate,
+    published_at: previousPayload?.published_at || timestamp,
+    updated_at: timestamp
+  };
+  const agentIdentity = agentSigningIdentityForProfile(agent.id);
+  const nodeIdentityForSignature = { did: nodeDid, privateKey: nodeIdentity.privateKeyPem };
+  const payloadHash = objectHash(payload);
+  return {
+    schema: reputationRegistrySchema,
+    version: 1,
+    kv_path: location.path,
+    payload,
+    payload_hash: payloadHash,
+    signer_did: did,
+    signature: signCapabilityEnvelope("agent_reputation_projection", payload, agentIdentity, timestamp),
+    node_signature: signCapabilityEnvelope("node_reputation_projection", payload, nodeIdentityForSignature, timestamp)
+  };
+}
+
+function verifyReputationRecord(record, options = {}) {
   try {
-    await technocoreWriteWithRetry(() => technocoreSaySigned(technocorePublicRoom, text), {});
-  } catch { /* best effort */ }
+    if (!record || record.schema !== reputationRegistrySchema || record.version !== 1) return { ok: false, reason: "wrong_schema" };
+    const payload = record.payload;
+    if (!payload || payload.schema !== reputationRegistrySchema || payload.version !== 1) return { ok: false, reason: "invalid_payload" };
+    const expectedPath = technocoreReputationKvLocation(payload.agent_id).path;
+    if (record.kv_path !== expectedPath) return { ok: false, reason: "kv_path_agent_mismatch" };
+    if (options.expectedPath && record.kv_path !== options.expectedPath) return { ok: false, reason: "announcement_path_mismatch" };
+    if (options.expectedAgentId && payload.agent_id !== options.expectedAgentId) return { ok: false, reason: "announcement_agent_mismatch" };
+    if (record.payload_hash !== objectHash(payload)) return { ok: false, reason: "payload_hash_mismatch" };
+    if (options.expectedHash && record.payload_hash !== options.expectedHash) return { ok: false, reason: "announcement_hash_mismatch" };
+    if (payload.identity?.agent_id !== payload.agent_id) return { ok: false, reason: "identity_agent_mismatch" };
+    if (record.signer_did !== payload.identity?.did) return { ok: false, reason: "signer_did_mismatch" };
+    if (!payload.node_did || !payload.node_id) return { ok: false, reason: "missing_node_identity" };
+    const nodePublicKey = ed25519PublicKeyFromDidKey(payload.node_did);
+    if (!nodePublicKey) return { ok: false, reason: "invalid_node_did" };
+    const nodePublicKeyPem = nodePublicKey.export({ type: "spki", format: "pem" });
+    if (nodeIdForPublicKey(nodePublicKeyPem) !== payload.node_id) return { ok: false, reason: "node_id_did_mismatch" };
+    if (options.announcedFrom && options.announcedFrom !== payload.node_did) return { ok: false, reason: "announcement_node_did_mismatch" };
+    if (payload.projection?.deterministic !== true) return { ok: false, reason: "non_deterministic_projection" };
+    if (payload.settlement?.rail !== "paper" || payload.settlement?.has_value !== false || payload.settlement?.value_settlement_enabled !== false) return { ok: false, reason: "non_paper_or_value_settlement" };
+    const rawCounts = payload.projection?.counts;
+    const countKeys = ["accepted_results", "verified_job_results", "claimed_deals", "refunded_deals", "disputed_deals", "unique_counterparties"];
+    if (!rawCounts || countKeys.some((key) => !Number.isSafeInteger(rawCounts[key]) || rawCounts[key] < 0)) return { ok: false, reason: "invalid_counts" };
+    const evidenceRefs = normalizePublicReputationEvidenceRefs(payload.evidence?.refs || {});
+    const evidenceHash = reputationEvidenceHash(evidenceRefs);
+    if (payload.evidence?.evidence_hash !== evidenceHash || payload.projection?.evidence_hash !== evidenceHash) return { ok: false, reason: "evidence_hash_mismatch" };
+    if (objectHash(normalizeReputationCounts(payload.projection?.counts || {})) !== objectHash(reputationCountsFromEvidence(evidenceRefs))) return { ok: false, reason: "evidence_count_mismatch" };
+    if (!verifyCapabilityEnvelope("agent_reputation_projection", record.signature, payload, payload.identity.did)) return { ok: false, reason: "agent_sig_invalid" };
+    if (!verifyCapabilityEnvelope("node_reputation_projection", record.node_signature, payload, payload.node_did)) return { ok: false, reason: "node_sig_invalid" };
+    return { ok: true, reason: null };
+  } catch (error) {
+    return { ok: false, reason: String(error?.message || "verification_failed").replace(/\s+/g, "_").slice(0, 120) };
+  }
+}
+
+function publicReputationRecord(item) {
+  const payload = item.record?.payload || {};
+  const verification = verifyReputationRecord(item.record || {});
+  return {
+    agent_id: item.agent_id,
+    name: payload.identity?.name || item.agent_id,
+    did: payload.identity?.did || item.signer_did,
+    node_id: payload.node_id || item.node_id,
+    node_did: payload.node_did || null,
+    kv_path: item.kv_path,
+    payload_hash: item.payload_hash,
+    evidence_hash: item.evidence_hash || payload.evidence?.evidence_hash || null,
+    verified: verification.ok,
+    status: verification.ok ? (item.last_publish_status || "pending") : "invalid",
+    counts: normalizeReputationCounts(payload.projection?.counts || {}),
+    evidence_refs: normalizePublicReputationEvidenceRefs(payload.evidence?.refs || {}),
+    published_at: item.published_at,
+    updated_at: item.updated_at,
+    last_publish_at: item.last_publish_at,
+    last_publish_status: item.last_publish_status,
+    last_publish_error: item.last_publish_error,
+    last_announced_at: item.last_announced_at,
+    rejection_reason: verification.ok ? null : verification.reason
+  };
+}
+
+function publicDiscoveredReputation(record) {
+  const lastSeen = Date.parse(record.last_seen_at || "");
+  return {
+    ...record,
+    stale: record.stale === true || (Number.isFinite(lastSeen) && Date.now() - lastSeen > reputationRegistryStaleMs),
+    provenance: record.provenance || null
+  };
+}
+
+function upsertReputationRecord(record, statusPatch = {}) {
+  store.reputationRecords = normalizeReputationRecords(store.reputationRecords || []);
+  const existingIndex = store.reputationRecords.findIndex((item) => item.agent_id === record.payload.agent_id);
+  const existing = existingIndex >= 0 ? store.reputationRecords[existingIndex] : null;
+  const next = {
+    ...(existing || {}),
+    agent_id: record.payload.agent_id,
+    kv_path: record.kv_path,
+    payload_hash: record.payload_hash,
+    evidence_hash: record.payload.evidence?.evidence_hash,
+    signer_did: record.signer_did,
+    node_id: record.payload.node_id,
+    record,
+    published_at: record.payload.published_at,
+    updated_at: record.payload.updated_at,
+    ...statusPatch
+  };
+  if (existingIndex >= 0) store.reputationRecords[existingIndex] = next;
+  else store.reputationRecords.push(next);
+  store.reputationRecords = normalizeReputationRecords(store.reputationRecords);
+  return next;
+}
+
+async function writeTechnocoreNoteWithRetry(namespace, key, value) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= technocoreWriteAttempts; attempt += 1) {
+    try {
+      return await writeTechnocoreNote(namespace, key, value);
+    } catch (error) {
+      lastError = error;
+      if (attempt < technocoreWriteAttempts) await delay(100 * attempt);
+    }
+  }
+  throw lastError || new Error("Technocore note write failed");
+}
+
+async function publishReputationForAgent(agent, options = {}) {
+  const record = makeReputationRecord(agent);
+  let item = upsertReputationRecord(record);
+  const recordText = stableStringify(record);
+  if (!technocoreEnabled) {
+    item = upsertReputationRecord(record, { last_publish_status: "disabled", last_publish_error: null });
+    return { agent_id: agent.id, kv_path: record.kv_path, payload_hash: record.payload_hash, evidence_hash: record.payload.evidence?.evidence_hash, status: "disabled", announced: false };
+  }
+  const location = technocoreReputationKvLocation(agent.id);
+  let status = "published";
+  let announced = false;
+  try {
+    const existing = await fetchTechnocoreText(record.kv_path, technocoreTimeoutMs);
+    const existingValue = existing.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) || "";
+    if (existingValue === recordText) status = "unchanged";
+  } catch {
+    /* Missing or stale reputation note: publish canonical JSON below. */
+  }
+  try {
+    if (status !== "unchanged") await writeTechnocoreNoteWithRetry(location.namespace, location.key, recordText);
+    if (options.announce !== false && item.last_announced_hash !== record.payload_hash) {
+      await technocoreSay(technocorePublicRoom, reputationAnnouncementText(record));
+      announced = true;
+    }
+    item = upsertReputationRecord(record, {
+      last_publish_at: now(),
+      last_publish_status: status,
+      last_publish_error: null,
+      last_announced_at: announced ? now() : item.last_announced_at,
+      last_announced_hash: announced ? record.payload_hash : item.last_announced_hash
+    });
+    return { agent_id: agent.id, kv_path: record.kv_path, payload_hash: record.payload_hash, evidence_hash: record.payload.evidence?.evidence_hash, status, announced };
+  } catch (error) {
+    upsertReputationRecord(record, {
+      last_publish_at: now(),
+      last_publish_status: "failed",
+      last_publish_error: error.message || "publish failed"
+    });
+    return { agent_id: agent.id, kv_path: record.kv_path, payload_hash: record.payload_hash, evidence_hash: record.payload.evidence?.evidence_hash, status: "failed", announced: false, error: error.message || "publish failed" };
+  }
+}
+
+function reputationAnnouncementText(record) {
+  return [
+    "OSA REPUTATION v1",
+    `agent=${record.payload.agent_id}`,
+    `path=${record.kv_path}`,
+    `hash=${record.payload_hash}`,
+    `evidence=${record.payload.evidence?.evidence_hash}`,
+    `node=${record.payload.node_id}`,
+    `did=${record.payload.node_did}`
+  ].join(" ").slice(0, 600);
+}
+
+async function publishLocalReputations(options = {}) {
+  const changed = ensureAgentCapabilitiesPublished();
+  if (changed) await saveStore();
+  const results = [];
+  for (const agent of agentGuiAgents()) {
+    results.push(await publishReputationForAgent(agent, options));
+  }
+  store.reputationSync = normalizeReputationSync({
+    ...(store.reputationSync || {}),
+    enabled: technocoreEnabled,
+    rooms: reputationRegistryScanRooms,
+    last_publish_at: now()
+  });
+  await saveStore();
+  return results;
+}
+
+function parseReputationAnnouncement(text) {
+  const value = String(text || "").trim();
+  if (!/^OSA\s+REPUTATION\s+v1\b/i.test(value)) return null;
+  const fields = {};
+  for (const match of value.matchAll(/\b(agent|path|hash|evidence|node|did)=([^\s]+)/g)) fields[match[1]] = match[2];
+  const agentId = String(fields.agent || "").slice(0, 80);
+  const path = String(fields.path || "").slice(0, 120);
+  const hash = String(fields.hash || "").slice(0, 100);
+  const evidence = String(fields.evidence || "").slice(0, 100);
+  if (!agentId || !/^\/kv\/osa-reputation\/[a-z0-9][a-z0-9_-]{0,47}$/.test(path) || !/^[a-f0-9]{64}$/.test(hash) || !/^[a-f0-9]{64}$/.test(evidence)) return null;
+  return { agent_id: agentId, path, hash, evidence_hash: evidence, node_id: String(fields.node || "").slice(0, 100), node_did: String(fields.did || "").slice(0, 150) };
+}
+
+function projectionFromReputationRecord(record, verified, rejectionReason, provenance) {
+  const payload = record?.payload || {};
+  const refs = normalizePublicReputationEvidenceRefs(payload.evidence?.refs || {});
+  const key = `${payload.node_id || provenance?.from || "unknown"}\x00${payload.agent_id || provenance?.agent_id || "unknown"}\x00${payload.identity?.did || "unknown"}\x00${record?.kv_path || provenance?.path || ""}`;
+  return {
+    id: `reputation-${createHash("sha256").update(key).digest("hex").slice(0, 24)}`,
+    source: payload.node_id === nodeIdentity.nodeId ? "local" : "technocore",
+    agent_id: String(payload.agent_id || provenance?.agent_id || "").slice(0, 80),
+    name: String(payload.identity?.name || payload.agent_id || provenance?.agent_id || "Agent").slice(0, 80),
+    did: String(payload.identity?.did || record?.signer_did || "").slice(0, 150),
+    node_id: String(payload.node_id || provenance?.node_id || "").slice(0, 100),
+    node_did: String(payload.node_did || provenance?.from || "").slice(0, 150),
+    kv_path: String(record?.kv_path || provenance?.path || "").slice(0, 120),
+    payload_hash: String(record?.payload_hash || provenance?.hash || "").slice(0, 100),
+    evidence_hash: String(payload.evidence?.evidence_hash || provenance?.evidence_hash || "").slice(0, 100),
+    verified,
+    rejection_reason: verified ? null : rejectionReason,
+    counts: normalizeReputationCounts(payload.projection?.counts || reputationCountsFromEvidence(refs)),
+    evidence_refs: refs,
+    first_seen_at: now(),
+    last_seen_at: now(),
+    stale: false,
+    provenance
+  };
+}
+
+function upsertReputationProjection(incoming) {
+  store.reputationProjection = normalizeReputationProjection(store.reputationProjection || []);
+  const key = `${incoming.node_id}\x00${incoming.agent_id}\x00${incoming.did}\x00${incoming.kv_path}`;
+  const index = store.reputationProjection.findIndex((item) => `${item.node_id}\x00${item.agent_id}\x00${item.did}\x00${item.kv_path}` === key);
+  if (index >= 0) {
+    const existing = store.reputationProjection[index];
+    store.reputationProjection[index] = normalizeReputationProjection([{
+      ...incoming,
+      first_seen_at: existing.first_seen_at || incoming.first_seen_at
+    }])[0];
+  } else {
+    store.reputationProjection.unshift(incoming);
+  }
+  store.reputationProjection = normalizeReputationProjection(store.reputationProjection);
+}
+
+async function scanReputationRegistry() {
+  if (!technocoreEnabled) {
+    store.reputationSync = normalizeReputationSync({ ...(store.reputationSync || {}), enabled: false, last_scan_at: now(), last_scan_status: "disabled" });
+    await saveStore();
+    return publicReputationStatus();
+  }
+  const discovered = [];
+  const rejected = [];
+  const seenPointers = new Set();
+  try {
+    for (const room of reputationRegistryScanRooms) {
+      const view = await fetchTechnocoreRoomJson(`/r/${room}`, { format: "json", limit: reputationRegistryRoomLimit });
+      for (const message of Array.isArray(view?.messages) ? view.messages : []) {
+        if (seenPointers.size >= reputationRegistryPointerLimit) break;
+        const pointer = parseReputationAnnouncement(message.text);
+        if (!pointer) continue;
+        const from = String(message.from || "").slice(0, 150);
+        const signed = verifyTechnocoreDidMessage(room, { from, nonce: message.nonce, sig: message.sig, text: String(message.text || "") });
+        const provenance = {
+          room,
+          seq: finitePositiveNumber(message.seq),
+          from,
+          announced_at: validIsoTimestamp(message.ts) || now(),
+          agent_id: pointer.agent_id,
+          path: pointer.path,
+          hash: pointer.hash,
+          evidence_hash: pointer.evidence_hash,
+          node_id: pointer.node_id
+        };
+        const pointerKey = `${pointer.path}\x00${pointer.hash}`;
+        if (seenPointers.has(pointerKey)) continue;
+        seenPointers.add(pointerKey);
+        if (!signed) {
+          rejected.push(projectionFromReputationRecord({ kv_path: pointer.path, payload_hash: pointer.hash, payload: { agent_id: pointer.agent_id, node_id: pointer.node_id, node_did: pointer.node_did, identity: { did: from }, evidence: { evidence_hash: pointer.evidence_hash } } }, false, "announcement_sig_unverified", provenance));
+          continue;
+        }
+        let record;
+        try {
+          const raw = await fetchTechnocoreText(pointer.path, technocoreTimeoutMs);
+          const value = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) || "";
+          record = JSON.parse(value);
+        } catch (error) {
+          rejected.push(projectionFromReputationRecord({ kv_path: pointer.path, payload_hash: pointer.hash, payload: { agent_id: pointer.agent_id, node_id: pointer.node_id, node_did: pointer.node_did, identity: { did: from }, evidence: { evidence_hash: pointer.evidence_hash } } }, false, `kv_read_or_parse_failed:${String(error.message || "failed").slice(0, 80)}`, provenance));
+          continue;
+        }
+        const verification = verifyReputationRecord(record, {
+          expectedAgentId: pointer.agent_id,
+          expectedPath: pointer.path,
+          expectedHash: pointer.hash,
+          announcedFrom: from
+        });
+        const projection = projectionFromReputationRecord(record, verification.ok, verification.reason, provenance);
+        if (verification.ok) discovered.push(projection);
+        else rejected.push(projection);
+      }
+    }
+    for (const item of [...discovered, ...rejected]) upsertReputationProjection(item);
+    markReputationProjectionStaleness();
+    store.reputationSync = normalizeReputationSync({
+      ...(store.reputationSync || {}),
+      enabled: true,
+      rooms: reputationRegistryScanRooms,
+      last_scan_at: now(),
+      last_scan_status: "live",
+      last_error: null,
+      discovered_count: store.reputationProjection.length,
+      verified_count: store.reputationProjection.filter((item) => item.verified).length,
+      rejected_count: store.reputationProjection.filter((item) => !item.verified).length
+    });
+    await saveStore();
+    return publicReputationStatus();
+  } catch (error) {
+    markReputationProjectionStaleness();
+    store.reputationSync = normalizeReputationSync({
+      ...(store.reputationSync || {}),
+      enabled: true,
+      rooms: reputationRegistryScanRooms,
+      last_scan_at: now(),
+      last_scan_status: "archive",
+      last_error: String(error?.message || "Reputation scan failed").slice(0, 300),
+      discovered_count: store.reputationProjection.length,
+      verified_count: store.reputationProjection.filter((item) => item.verified).length,
+      rejected_count: store.reputationProjection.filter((item) => !item.verified).length
+    });
+    await saveStore();
+    return publicReputationStatus();
+  }
+}
+
+function markReputationProjectionStaleness() {
+  const timestamp = Date.now();
+  store.reputationProjection = normalizeReputationProjection(store.reputationProjection || []).map((item) => ({
+    ...item,
+    stale: Number.isFinite(Date.parse(item.last_seen_at || "")) ? timestamp - Date.parse(item.last_seen_at) > reputationRegistryStaleMs : true
+  }));
+}
+
+function publicReputationStatus() {
+  const local = normalizeReputationRecords(store.reputationRecords || []).map(publicReputationRecord);
+  const discovered = normalizeReputationProjection(store.reputationProjection || [])
+    .filter((item) => item.node_id !== nodeIdentity.nodeId)
+    .map(publicDiscoveredReputation);
+  const verifiedCount = discovered.filter((item) => item.verified).length;
+  const rejectedCount = discovered.filter((item) => !item.verified).length;
+  const sync = normalizeReputationSync(store.reputationSync || {});
+  return {
+    schema: reputationRegistrySchema,
+    version: 1,
+    generated_at: now(),
+    status: {
+      enabled: technocoreEnabled,
+      kv_namespace: reputationRegistryNamespace,
+      scan_rooms: reputationRegistryScanRooms,
+      stale_after_ms: reputationRegistryStaleMs,
+      last_publish_at: sync.last_publish_at,
+      last_scan_at: sync.last_scan_at,
+      last_scan_status: sync.last_scan_status,
+      last_error: sync.last_error,
+      local_count: local.length,
+      discovered_count: discovered.length,
+      verified_count: verifiedCount,
+      rejected_count: rejectedCount
+    },
+    local,
+    discovered
+  };
+}
+
+function scheduleReputationPublishForAgent(agentId, delayMs = 250) {
+  const normalized = String(agentId || "").slice(0, 80);
+  if (!normalized || !agentGuiProfileById(normalized)) return;
+  if (reputationPublishTimers.has(normalized)) clearTimeout(reputationPublishTimers.get(normalized));
+  const timer = setTimeout(() => {
+    reputationPublishTimers.delete(normalized);
+    const agent = agentGuiProfileById(normalized);
+    if (!agent) return;
+    publishReputationForAgent(agent, { announce: true }).then(() => saveStore()).catch((error) => console.warn(`Reputation publish failed for ${normalized}: ${error.message}`));
+  }, delayMs);
+  timer.unref?.();
+  reputationPublishTimers.set(normalized, timer);
+}
+
+function scheduleReputationPublishForDeal(deal) {
+  if (!deal || !terminalPaperDealStatuses().has(deal.status)) return;
+  const agentId = deal.agentProfileId || (deal.localAgentDid ? agentGuiAgents().find((agent) => agentDidForProfile(agent.id) === deal.localAgentDid)?.id : null);
+  if (agentId) scheduleReputationPublishForAgent(agentId);
+}
+
+function startReputationRegistrySync() {
+  publishLocalReputations().catch((error) => console.warn(`Reputation publish failed: ${error.message}`));
+  scanReputationRegistry().catch((error) => console.warn(`Reputation scan failed: ${error.message}`));
+  setInterval(() => publishLocalReputations().catch((error) => console.warn(`Reputation publish failed: ${error.message}`)), 60 * 60 * 1000).unref?.();
+  setInterval(() => scanReputationRegistry().catch((error) => console.warn(`Reputation scan failed: ${error.message}`)), reputationRegistryScanMs).unref?.();
 }
 
 async function writeTechnocoreNote(namespace, key, value) {
@@ -9906,6 +10622,38 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     }
   }
 
+  if (method === "GET" && path === "/api/reputation") {
+    markReputationProjectionStaleness();
+    return sendJson(res, 200, publicReputationStatus());
+  }
+
+  if (method === "POST" && path === "/api/reputation/publish") {
+    try {
+      const body = await readJson(req);
+      const requestedAgentId = body.agent_id ? String(body.agent_id).slice(0, 80) : null;
+      if (requestedAgentId) {
+        const agent = agentGuiProfileById(requestedAgentId);
+        if (!agent) return sendJson(res, 404, { detail: "Unknown local agent profile" });
+        const result = await publishReputationForAgent(agent, { announce: body.announce !== false });
+        await saveStore();
+        return sendJson(res, 200, { ok: result.status !== "failed", result, reputation: publicReputationStatus() });
+      }
+      const results = await publishLocalReputations({ announce: body.announce !== false });
+      return sendJson(res, 200, { ok: results.every((item) => item.status !== "failed"), results, reputation: publicReputationStatus() });
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to publish reputation" });
+    }
+  }
+
+  if (method === "POST" && path === "/api/reputation/scan") {
+    try {
+      const reputation = await scanReputationRegistry();
+      return sendJson(res, 200, { ok: true, reputation });
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to scan reputation" });
+    }
+  }
+
   if (method === "GET" && path.match(/^\/api\/agents\/([^/]+)\/did$/)) {
     const agentId = decodeURIComponent(path.match(/^\/api\/agents\/([^/]+)\/did$/)[1]);
     const profile = (store.agentCapabilities || []).find((p) => p.agent_id === agentId);
@@ -10011,80 +10759,59 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     const jobs = normalizeJobClaims(store.jobClaims || []);
     const results = normalizeJobResults(store.jobResults || []);
     const deals = normalizeProtocolPaperDeals(store.protocolPaperDeals || []);
-    const uniqueCounterparties = new Set();
-    for (const d of deals) {
-      if (d.counterpartyDid) uniqueCounterparties.add(d.counterpartyDid);
-    }
+    const reputation = publicReputationStatus();
+    const localCounts = reputation.local.reduce((acc, item) => {
+      acc.accepted_results += item.counts.accepted_results;
+      acc.verified_job_results += item.counts.verified_job_results;
+      acc.claimed_deals += item.counts.claimed_deals;
+      acc.refunded_deals += item.counts.refunded_deals;
+      acc.disputed_deals += item.counts.disputed_deals;
+      for (const hash of item.evidence_refs.counterparty_hashes || []) acc.counterparties.add(hash);
+      return acc;
+    }, { accepted_results: 0, verified_job_results: 0, claimed_deals: 0, refunded_deals: 0, disputed_deals: 0, counterparties: new Set() });
     const completedResults = results.filter((r) => r.verified);
     const completedDeals = deals.filter((d) => d.status === "claimed" || d.status === "refunded");
     const refundedDeals = deals.filter((d) => d.status === "refunded");
-
-    // Local top builders
-    const localAgentCounts = {};
-    for (const r of results) {
-      localAgentCounts[r.agent_id] = (localAgentCounts[r.agent_id] || 0) + 1;
-    }
-    const localBuilders = Object.entries(localAgentCounts).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([agent_id, count]) => ({ agent_id, verified_results: count, source: "local" }));
-
-    // (Cross-Node) Read osa-network room for trust data from other OSA nodes
-    let federatedBuilders = [];
-    if (technocoreEnabled && technocorePublicRoom) {
-      try {
-        const room = technocorePublicRoom;
-        const query = { format: "json", limit: 30 };
-        const view = await fetchTechnocoreRoomJson(`/r/${room}`, query);
-        const messages = Array.isArray(view?.messages) ? view.messages : [];
-        const selfDid = technocoreDid || "";
-        const federatedAgentCounts = {};
-        for (const msg of messages) {
-          const text = String(msg.text || "").trim();
-          const from = String(msg.from || "").trim();
-          // Skip our own messages and unsigned messages
-          if (from === selfDid || from === technocoreNick) continue;
-          // Look for OSA TRUST summary format: OSA TRUST v1: { ... }
-          const trustMatch = text.match(/^OSA\s+TRUST\s+v\d+:\s*(\{.+?\})/i);
-          if (!trustMatch) continue;
-          try {
-            const trustData = JSON.parse(trustMatch[1]);
-            if (trustData.top && Array.isArray(trustData.top)) {
-              for (const b of trustData.top) {
-                const key = `${b.agent_id}:${from}`;
-                federatedAgentCounts[key] = (federatedAgentCounts[key] || 0) + (b.verified_results || 0);
-              }
-            }
-          } catch { /* skip malformed */ }
-        }
-        federatedBuilders = Object.entries(federatedAgentCounts).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([key, count]) => {
-          const parts = key.split(":");
-          return { agent_id: parts[0], verified_results: count, source: "federated" };
-        });
-      } catch {
-        /* Technocore read failed; return local only */
-      }
-    }
-
-    // Merge: local first, then federated (append unique)
-    const merged = [...localBuilders];
-    const localIds = new Set(localBuilders.map((b) => b.agent_id));
-    for (const fb of federatedBuilders) {
-      if (!localIds.has(fb.agent_id)) {
-        merged.push(fb);
-        localIds.add(fb.agent_id);
-      }
-    }
+    const evidenceRows = [...reputation.local.map((item) => ({ ...item, source: "local" })), ...reputation.discovered]
+      .sort((a, b) => (b.verified === true) - (a.verified === true) || (b.counts.accepted_results + b.counts.verified_job_results) - (a.counts.accepted_results + a.counts.verified_job_results))
+      .slice(0, 50);
+    const topBuilders = evidenceRows
+      .filter((item) => item.verified && !item.stale)
+      .map((item) => ({
+        agent_id: item.agent_id,
+        name: item.name,
+        did: item.did,
+        node_id: item.node_id,
+        source: item.source,
+        verified: item.verified,
+        stale: item.stale === true,
+        accepted_results: item.counts.accepted_results,
+        verified_results: item.counts.verified_job_results,
+        claimed_deals: item.counts.claimed_deals,
+        refunded_deals: item.counts.refunded_deals,
+        unique_counterparties: item.counts.unique_counterparties,
+        payload_hash: item.payload_hash,
+        evidence_hash: item.evidence_hash,
+        kv_path: item.kv_path
+      }));
 
     return sendJson(res, 200, {
       summary: {
         total_jobs: jobs.length,
         total_results: results.length,
         verified_results: completedResults.length,
-        unique_counterparties: uniqueCounterparties.size,
+        accepted_results: localCounts.accepted_results,
+        verified_job_results: localCounts.verified_job_results,
+        unique_counterparties: localCounts.counterparties.size,
         total_deals: deals.length,
         completed_deals: completedDeals.length,
+        claimed_deals: localCounts.claimed_deals,
         refunded_deals: refundedDeals.length,
+        disputed_deals: localCounts.disputed_deals,
         completion_rate: deals.length > 0 ? ((completedDeals.length / deals.length) * 100).toFixed(1) + "%" : "0%"
       },
-      top_builders: merged,
+      top_builders: topBuilders,
+      reputation,
       generated_at: now()
     });
   }
@@ -10990,6 +11717,9 @@ async function handleApi(req, res, url) {
         capabilityRegistryRecords: [],
         capabilityRegistryProjection: [],
         capabilityRegistrySync: {},
+        reputationRecords: [],
+        reputationProjection: [],
+        reputationSync: {},
         delegations: [],
         jobClaims: [],
         jobResults: [],
@@ -11759,6 +12489,7 @@ function finalizeAcceptedResult(result, review) {
   // Auto-submit job result if this task was created from a Work claim
   autoSubmitJobResultForTask(task, result);
   autoDeliverTclkResultForTask(task, result);
+  scheduleReputationPublishForAgent(task?.agentGuiAgent || result.agentId);
 }
 
 function tclkResultHash(result) {
@@ -11843,6 +12574,7 @@ function autoSubmitJobResultForTask(task, result) {
     store.jobResults = normalizeJobResults([jobResult, ...(store.jobResults || [])]);
     claim.status = "completed";
     claim.updated_at = now();
+    scheduleReputationPublishForAgent(claim.claimed_by || result.agentId);
     event("job_result_auto_submitted", `Auto-submitted result for claimed job ${claim.job_id}`, {
       jobId: claim.job_id,
       taskId: task.id,
@@ -11971,6 +12703,7 @@ function autoClaimTclkDealForTask(task) {
         console.warn(`TCLK auto-claim receipt failed: ${receiptError.message}`);
       }
       await saveStore();
+      scheduleReputationPublishForDeal(deal);
       event("tclk_deal_auto_claimed", `Auto-claimed TCLK deal ${deal.id} after task completion`, {
         dealId: deal.id,
         taskId: task.id,
@@ -12513,10 +13246,8 @@ server.listen(port, host, () => {
   }).catch((error) => {
     console.warn(`Technocore agent DIDs ensure failed: ${error.message}`);
   });
-  // Share local trust summary to Technocore for cross-node federation
-  shareTrustToTechnocore().catch(() => {});
-  setInterval(() => shareTrustToTechnocore().catch(() => {}), 60 * 60 * 1000).unref?.();
   startCapabilityRegistrySync();
+  startReputationRegistrySync();
   // Scan Technocore rooms for available JOB frames and bridge them into the Dashboard
   syncTechnocoreJobRooms().catch(() => {});
   setInterval(() => syncTechnocoreJobRooms().catch(() => {}), 60_000).unref?.();

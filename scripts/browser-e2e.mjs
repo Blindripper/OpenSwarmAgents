@@ -631,6 +631,11 @@ try {
   await page.getByRole("button", { name: "OSA Activity" }).click();
   await expectText(page, "body", "OSA shares");
   await expectText(page, "body", "Network chat message");
+  await page.getByRole("button", { name: "Trust", exact: true }).click();
+  await expectText(page, "body", "Federated Reputation");
+  await expectText(page, "body", "Accepted Results");
+  await expectText(page, "body", "Counterparties");
+  await expectText(page, "body", "technocore-specialist");
   const floatingChatInput = page.getByPlaceholder("Message osa-network");
   if (!(await floatingChatInput.isVisible())) await page.getByTitle("Open chat").click();
   await floatingChatInput.fill("Browser chat from the floating window.");

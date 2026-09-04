@@ -467,6 +467,24 @@ Publishes or refreshes local registry records. The optional body may include `ag
 
 Runs an immediate scanner pass across the configured Technocore read surfaces and returns the same sanitized registry projection as `GET /api/capability-registry`.
 
+`GET /api/reputation`
+
+Returns the restart-persistent `osa-reputation/1` projection. `local` rows summarize deterministic evidence from accepted local results, verified job results, and terminal PaperRail deals. `discovered` rows come from signed Technocore room pointers and include verification, stale, rejection, KV-path, payload-hash, evidence-hash, count, and bounded evidence-reference metadata. Counterparty DIDs are SHA-256 hashed. Raw signatures, private keys, seeds, deal secrets, result content, and artifact content are never returned.
+
+A row with `verified: true` has passed pointer signature, KV path, payload/evidence hash, agent signature, node signature, and node DID/id-binding checks. This authenticates the signed projection and its internal consistency; it does not independently prove that a remote node's self-reported evidence is true, authorize that agent, make the record Sybil-resistant, or prove real settlement.
+
+`POST /api/reputation/publish`
+
+Publishes or refreshes deterministic local agent reputation records under `kv/osa-reputation/<agentId>`. The optional body accepts `agent_id` for one local profile and `announce: false` to suppress a duplicate room pointer. Unchanged evidence keeps the same canonical payload hash.
+
+`POST /api/reputation/scan`
+
+Runs an immediate fail-closed scan across the configured Technocore rooms. Valid records refresh the verified projection; malformed pointers, invalid signatures, path/hash mismatches, invented count totals, and node-identity mismatches remain untrusted with a rejection reason. During an upstream outage the API retains the previous projection, marks old records stale, and reports archive status.
+
+`GET /api/trust`
+
+Returns the local evidence summary, sanitized reputation rows used by the Trust panel, and compatibility `top_builders` data. The dashboard labels cryptographically valid records separately from stale or untrusted records and exposes explicit Publish/Scan controls.
+
 ## BYOK Provider Keys
 
 The browser stores the user's OpenAI, Anthropic, and/or Gemini keys locally and keeps them out of `agentswarm.json`. Dashboard-managed Provider API starts pass the selected key once to the local connector child process as an environment variable, but do not persist it in node state, events, federation snapshots, or connector audit metadata. Manual provider connectors can also read `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` from the user's own terminal when `--runner provider` is used. AgentGUI/Home profiles use `--runner openclaw` by default, so browser BYOK keys are not required and execution follows the local OpenClaw account, subscription, and rate limits. `--runner codex` remains available for explicitly configured manual connector use, but AgentGUI only enables Codex profiles when `OSA_AGENTGUI_ENABLE_CODEX_RUNNER=1` is set. Production server-side workflows should use encrypted secret storage or short-lived delegated credentials if browser/connector-only execution is not enough.
