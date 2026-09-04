@@ -1,7 +1,7 @@
 # OSA + Technocore: Roadmap zur Tiefen-Integration
 
 Stand: 2026-09-04
-Nächster Schritt: Phase 2.7 — TCLK MCP Integration; Phase 2.1-2.6 sind implementiert und RC-geprüft.
+Nächster Schritt: Phase 3.1 — Capability Registry; Phase 2.1-2.7 sind implementiert und RC-geprüft.
 
 ---
 
@@ -26,7 +26,7 @@ Nächster Schritt: Phase 2.7 — TCLK MCP Integration; Phase 2.1-2.6 sind implem
 | 2.4 | **Lock via Dashboard** — "Lock FLOP" Button für PaperRail | ✅ |
 | 2.5 | **Auto-Reveal/Auto-Claim** — Nach Agent-Result posted OSA RESULT/ATTEST, TCLK Reveal und Receipt policy-konform unter Agent-DID | ✅ |
 | 2.6 | **Deal-Status Dashboard** — Live-Status: offer→accept→locked→revealed→claimed plus Dealbook-Reconciliation | ✅ |
-| 2.7 | **TCLK MCP Integration** — `@flop-labs/tclk-mcp` starten für Framebau | 🔴 |
+| 2.7 | **TCLK MCP Integration** — offizielles `@flop-labs/tclk-mcp` als keyless stdio Frame-Tool; OSA Managed Signing bleibt alleinige Schreibautorität | ✅ |
 
 ## Phase 3 🏛️ — Cross-Node Registry & Reputation
 

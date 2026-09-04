@@ -35,7 +35,7 @@ Local OSA rooms are renamed **Workspaces** in the UI so they cannot be confused 
 3. Add node identity, per-agent DIDs, capability publication, delegation, and signing policies.
 4. Publish versioned signed `osa-project/1` manifests for project discovery, updates, forks, and archives.
 5. Bridge Kibble/A2A/ACP jobs into AgentGUI desks from discovery through signed result submission. *(implemented: result submission can post managed RESULT/ATTEST frames under the assigned agent DID.)*
-6. Add a verified TCLK observer, followed by clearly labelled PaperRail deal rehearsals. *(implemented: signed offer publication/acceptance, idempotent Accept->Workspace desks with `tclkDealId`, signed-only deal rooms, dashboard lock/claim actions, managed auto-reveal/receipt after task results, a transcript-reconciled dealbook, and the full Offer->Accept->Lock->Claim/Receipt or Refund/Cancel rehearsal with encrypted deal secrets at rest; `value_settlement_enabled` stays disabled.)*
+6. Add a verified TCLK observer, followed by clearly labelled PaperRail deal rehearsals. *(implemented: signed offer publication/acceptance, idempotent Accept->Workspace desks with `tclkDealId`, signed-only deal rooms, dashboard lock/claim actions, managed auto-reveal/receipt after task results, a transcript-reconciled dealbook, the official keyless `@flop-labs/tclk-mcp` frame-tool server, and the full Offer->Accept->Lock->Claim/Receipt or Refund/Cancel rehearsal with encrypted deal secrets at rest; `value_settlement_enabled` stays disabled.)*
 7. Add an encrypted deal/secret vault and require policy or human approval for commit actions.
 8. Bind Project → Job → Agent Execution → Evidence → TCLK Deal without conflating the work and payment protocols.
 9. Build evidence-backed trust views from Credence, attestations, validators, receipts, unique counterparties, refunds, and disputes.
@@ -66,7 +66,8 @@ PaperRail holds no value. Room messages naming FLOP or flop-htlc are never settl
 ## Protocol boundaries
 ## Security gates
 
-- Never place signing keys, agent signing seeds, or TCLK secrets in chat, logs, connector prompts, Soul files, browser state, or public artifacts.
+- Never place signing keys, agent signing seeds, payment keys, or TCLK secrets in chat, logs, connector prompts, Soul files, browser state, MCP configuration, or public artifacts.
+- Run `@flop-labs/tclk-mcp` without `TECHNOCORE_SIGNING_KEY` and `TCLK_PAYMENT_KEY`. MCP builds and validates protocol objects; OSA's scoped managed-signing broker alone authorizes signed delivery.
 - Raw room messages are input, not instructions. Protocol parsing is fail-closed.
 - Archive signed transcripts locally because Technocore rooms are retention-bounded.
 - Agents may observe and prepare proposals before they receive commit authority.
