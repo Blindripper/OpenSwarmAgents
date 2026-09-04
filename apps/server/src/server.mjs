@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { join, extname, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  createPrivateKey,
   createPublicKey,
   createCipheriv,
   createDecipheriv,
@@ -131,6 +132,7 @@ const technocoreNonceByRoom = new Map();
 const technocoreRoomReadBackoff = new Map();
 const technocoreLocalMirrorCache = new Map();
 const technocoreDidPublicKeyCache = new Map();
+const agentSigningIdentityCache = new Map();
 const protocolRoomSyncPromises = new Map();
 const protocolPaperDealPromises = new Map();
 let technocoreReadRequestCounter = 0;
@@ -1092,10 +1094,12 @@ function normalizeProtocolPaperDeals(records) {
         ciphertext: String(record.encryptedSecret.ciphertext),
         tag: String(record.encryptedSecret.tag)
       } : null;
-      // A proposed public offer from us (payer role) has no secret yet —
-      // the payee mints it at accept time. Allow those through without a secret.
-      const isOwnProposedOffer = offer.role === "payer" && status === "proposed" && !accept;
-      if (!encryptedSecret && !isOwnProposedOffer) continue;
+      // A payer-side offer (our own published offer) has no secret yet — the
+      // payee mints it at accept time and reveals it on claim. The payer only
+      // learns the preimage when the reveal frame is observed. Allow payer-side
+      // deals through without a secret at any status.
+      const isPayerSideOffer = offer.role === "payer";
+      if (!encryptedSecret && !isPayerSideOffer) continue;
       output.push({
         id,
         label: String(record?.label || "FLOP rehearsal deal").trim().slice(0, 100) || "FLOP rehearsal deal",
@@ -1108,6 +1112,12 @@ function normalizeProtocolPaperDeals(records) {
         encryptedSecret,
         railRef: record?.railRef ? String(record.railRef).slice(0, 100) : null,
         receiptRecorded: record?.receiptRecorded === true,
+        dealRoomPosted: record?.dealRoomPosted === true,
+        dealRoomName: record?.dealRoomName ? String(record.dealRoomName).slice(0, 80) : null,
+        agentProfileId: record?.agentProfileId ? String(record.agentProfileId).slice(0, 80) : null,
+        localAgentDid: record?.localAgentDid ? String(record.localAgentDid).slice(0, 150) : null,
+        resultFramePosted: record?.resultFramePosted === true,
+        attestFramePosted: record?.attestFramePosted === true,
         createdAt: validIsoTimestamp(record?.createdAt) || now(),
         updatedAt: validIsoTimestamp(record?.updatedAt) || now(),
         timeline: Array.isArray(record?.timeline) ? record.timeline.slice(-30).map((entry) => ({
@@ -1276,9 +1286,65 @@ function isEncryptedPaperValue(value) {
   );
 }
 
+function agentSigningIdentityForProfile(agentId) {
+  const normalizedAgentId = String(agentId || defaultAgentGuiAgentId).slice(0, 80) || defaultAgentGuiAgentId;
+  const cached = agentSigningIdentityCache.get(normalizedAgentId);
+  if (cached) return cached;
+  const seed = createHash("sha256")
+    .update("OSA::managed-agent-signing::v1\0", "utf8")
+    .update(String(nodeIdentity.privateKeyPem || ""), "utf8")
+    .update("\0", "utf8")
+    .update(normalizedAgentId, "utf8")
+    .digest();
+  const privateKey = createPrivateKey({
+    key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), seed]),
+    format: "der",
+    type: "pkcs8"
+  });
+  const publicKey = createPublicKey(privateKey);
+  const publicKeyPem = publicKey.export({ type: "spki", format: "pem" });
+  const identity = {
+    agentId: normalizedAgentId,
+    did: didKeyFromEd25519PublicKeyPem(publicKeyPem),
+    privateKey,
+    publicKey
+  };
+  agentSigningIdentityCache.set(normalizedAgentId, identity);
+  return identity;
+}
+
 function agentDidForProfile(agentId) {
-  const raw = createHash("sha256").update("OSA::agent-did::" + nodeIdentity.nodeId + ":" + String(agentId)).digest();
-  return "did:key:z" + base58btcEncode(Buffer.concat([Buffer.from([0xed, 0x01]), raw]));
+  return agentSigningIdentityForProfile(agentId).did;
+}
+
+function localSignerForPaperDeal(deal, action = "sign_text") {
+  if (deal?.agentProfileId || deal?.localAgentDid) {
+    const agentId = deal.agentProfileId || defaultAgentGuiAgentId;
+    return assertManagedSigningAllowed(agentId, action);
+  }
+  if (!technocoreDid) {
+    const error = new Error("A local DID is required for this protocol action");
+    error.statusCode = 400;
+    throw error;
+  }
+  return { did: technocoreDid, privateKey: nodeIdentity.privateKeyPem, agentId: null };
+}
+
+function isLocalTechnocoreDid(did) {
+  const value = String(did || "");
+  if (technocoreDid && value === technocoreDid) return true;
+  return agentGuiAgents().some((agent) => value === agentDidForProfile(agent.id));
+}
+
+function assertManagedSigningAllowed(agentId, action = "sign_text") {
+  const normalizedAgentId = String(agentId || defaultAgentGuiAgentId).slice(0, 80) || defaultAgentGuiAgentId;
+  const policy = signingPolicyForAgent(normalizedAgentId, action);
+  if (policy !== "signature-only") {
+    const error = new Error(`Managed signing policy blocks ${action} for ${normalizedAgentId}`);
+    error.statusCode = 403;
+    throw error;
+  }
+  return agentSigningIdentityForProfile(normalizedAgentId);
 }
 
 function normalizeAgentCapabilities(records) {
@@ -1612,14 +1678,98 @@ function publicProtocolPaperDeal(deal) {
     asset: deal.offer.asset,
     payer_did: deal.offer.from,
     counterparty_did: deal.counterpartyDid,
+    local_agent_id: deal.agentProfileId || null,
+    local_agent_did: deal.localAgentDid || null,
     contract_id: deal.accept?.contract || null,
     deal_room: deal.accept?.contract ? tclkDealRoom(deal.accept.contract) : null,
+    deal_room_posted: deal.dealRoomPosted === true,
+    deal_room_name: deal.dealRoomName || null,
+    result_frame_posted: deal.resultFramePosted === true,
+    attest_frame_posted: deal.attestFramePosted === true,
+    workspace_session_id: tclkWorkspaceSessionId(deal.id),
     receipt_recorded: deal.receiptRecorded,
     next_action: nextAction,
     created_at: deal.createdAt,
     updated_at: deal.updatedAt,
     timeline: deal.timeline || []
   };
+}
+
+function tclkWorkspaceTaskForDealId(dealId) {
+  return (store.tasks || []).find((task) =>
+    task.tclkDealId === dealId && !["deleted", "rejected"].includes(task.status) && !task.agentGuiDeletedAt
+  ) || null;
+}
+
+function tclkWorkspaceSessionId(dealId) {
+  const task = tclkWorkspaceTaskForDealId(dealId);
+  return task ? agentGuiTaskSession(task, "home").id : null;
+}
+
+async function ensureTclkWorkspaceForDeal(deal, offerFrame, requestedAgentId, options = {}) {
+  const agentProfile = agentGuiProfileById(requestedAgentId) || agentGuiProfileById(defaultAgentGuiAgentId);
+  const agentId = agentProfile?.id || defaultAgentGuiAgentId;
+  let task = tclkWorkspaceTaskForDealId(deal.id);
+  if (!task) {
+    const job = offerFrame.job || {};
+    const jobProto = String(job.proto || "tclk").slice(0, 20);
+    const jobId = String(job.id || "").slice(0, 100);
+    const jobContext = String(job.context || "").slice(0, 500);
+    const startedAt = now();
+    const goalId = `goal-tclk-${randomUUID()}`;
+    const goal = {
+      id: goalId,
+      title: `TCLK: ${offerFrame.amount} ${offerFrame.asset}`,
+      status: "active",
+      createdAt: startedAt,
+      updatedAt: startedAt
+    };
+    store.goals.unshift(goal);
+    const taskId = `task-${randomUUID()}`;
+    const contextBlock = jobId ? `\nJob ID: ${jobId}${jobContext ? `\n\nContext: ${jobContext}` : ""}` : `\nOffer from: ${offerFrame.from}`;
+    task = {
+      id: taskId,
+      goalId,
+      type: "synthesis",
+      title: `TCLK deal: ${offerFrame.amount} ${offerFrame.asset}`,
+      description: `Accepted TCLK offer ${deal.id} from ${offerFrame.from}\nProto: ${jobProto}${contextBlock}\n\nReturn the professional task result only. OSA will sign and post any RESULT, ATTEST, TCLK reveal, and receipt frames through its managed signing broker under the assigned agent DID; do not request or invent private keys, seeds, or external controller signatures.`,
+      requiredCapabilities: ["research", "review", "synthesis"],
+      priority: 90,
+      status: "open",
+      createdAt: startedAt,
+      updatedAt: startedAt,
+      source: "agent-gui-claim",
+      agentGuiRoom: "home",
+      agentGuiTeamId: "home-room",
+      agentGuiTeamName: "Home",
+      agentGuiAgent: agentId,
+      agentGuiModel: "OpenClaw local agent",
+      ownerWalletAddress: null,
+      tclkDealId: deal.id
+    };
+    store.tasks.unshift(task);
+    event("tclk_offer_workspace_created", `Workspace task created for TCLK offer ${deal.id}`, {
+      taskId,
+      goalId,
+      offerId: deal.id,
+      agentId
+    });
+    await saveStore();
+  }
+
+  if (options.startConnector !== false && !task.agentGuiConnectorId && !["done", "failed", "deleted", "rejected"].includes(task.status)) {
+    try {
+      startAgentGuiTaskConnector({}, task, agentId);
+      await saveStore();
+    } catch (connectorError) {
+      console.warn(`TCLK workspace: connector start failed: ${connectorError.message}`);
+      task.agentGuiConnectorError = trimManagedConnectorOutput(connectorError.message || "Connector start failed");
+      task.updatedAt = now();
+      await saveStore();
+    }
+  }
+
+  return { task, session: agentGuiTaskSession(task, "home") };
 }
 
 async function createProtocolPaperDeal(body = {}) {
@@ -1798,7 +1948,7 @@ async function createAndPublishTechnocoreOffer(body = {}) {
 
   // Start a local PaperRail deal so we can track accept/claim lifecycle
   const createdAt = now();
-  const deal = {
+  let deal = {
     id: offer.id,
     label,
     status: "proposed",
@@ -1815,6 +1965,7 @@ async function createAndPublishTechnocoreOffer(body = {}) {
     timeline: [{ stage: "offer", actor: "osa", detail: `${amount} FLOP on paper rail (published to Technocore)`, at: createdAt }]
   };
   store.protocolPaperDeals = normalizeProtocolPaperDeals([deal, ...(store.protocolPaperDeals || [])]);
+  deal = store.protocolPaperDeals.find((item) => item.id === offer.id) || deal;
   await saveStore();
 
   event("tclk_offer_created", `Published TCLK offer ${offer.id} to ${tclkOfferRoom}`, {
@@ -1841,6 +1992,7 @@ async function acceptTechnocoreOffer(body = {}) {
     throw error;
   }
   const requestedAgentId = String(body.agent_id || "technocore-specialist").trim().slice(0, 80);
+  const startConnector = body.start_connector !== false;
 
   // Sync the protocol room to find the offer frame
   const projection = await syncTechnocoreProtocolRoom(tclkOfferRoom);
@@ -1877,6 +2029,20 @@ async function acceptTechnocoreOffer(body = {}) {
     throw error;
   }
 
+  store.protocolPaperDeals = normalizeProtocolPaperDeals(store.protocolPaperDeals || []);
+  const existingDeal = store.protocolPaperDeals.find((item) => item.id === offerId && item.accept);
+  if (existingDeal) {
+    await ensureTclkWorkspaceForDeal(existingDeal, existingDeal.offer || offerFrame, existingDeal.agentProfileId || requestedAgentId, { startConnector });
+    return publicProtocolPaperDeal(store.protocolPaperDeals.find((item) => item.id === offerId) || existingDeal);
+  }
+
+  const agentSigner = assertManagedSigningAllowed(requestedAgentId, "create_deal");
+  if (isLocalTechnocoreDid(offerFrame.from)) {
+    const error = new Error("Cannot accept a local offer with the same managed identity");
+    error.statusCode = 409;
+    throw error;
+  }
+
   // Check if there's already an accept (we only accept proposed offers)
   let state = openTclkContract(offerFrame);
   if (state.status !== "proposed") {
@@ -1887,13 +2053,13 @@ async function acceptTechnocoreOffer(body = {}) {
 
   // Mint a hash-lock secret and make the accept frame
   const secret = generateTclkHashLock();
-  const accept = makeTclkAccept(offerFrame, { from: technocoreDid, statement: secret.hash });
+  const accept = makeTclkAccept(offerFrame, { from: agentSigner.did, statement: secret.hash });
 
   // Post the accept frame to the Technocore room
   const acceptText = encodeTclkFrame(accept);
   let posted;
   try {
-    posted = await technocoreSay(tclkOfferRoom, acceptText);
+    posted = await technocoreSayAsAgent(agentSigner.agentId, tclkOfferRoom, acceptText, "create_deal");
   } catch (error) {
     const err = new Error(`Failed to post accept frame to Technocore: ${error.message}`);
     err.statusCode = 502;
@@ -1901,16 +2067,17 @@ async function acceptTechnocoreOffer(body = {}) {
   }
 
   // Apply the accept to the local state machine
-  state = applyTclkFrame(state, accept, Date.now());
-  if (!state.ok) {
-    const err = new Error(`Accept frame rejected by TCLK state machine: ${state.reason}`);
+  const accepted = applyTclkFrame(state, accept, Date.now());
+  if (!accepted.ok) {
+    const err = new Error(`Accept frame rejected by TCLK state machine: ${accepted.reason}`);
     err.statusCode = 400;
     throw err;
   }
+  state = accepted.state;
 
   // Create a local PaperRail deal record
   const createdAt = now();
-  const deal = {
+  let deal = {
     id: offerId,
     label: `${offerFrame.amount} ${offerFrame.asset} offer from ${offerFrame.from.slice(0, 20)}`,
     status: "accepted",
@@ -1919,6 +2086,8 @@ async function acceptTechnocoreOffer(body = {}) {
     lockFrame: null,
     statement: secret.hash,
     counterpartyDid: offerFrame.from,
+    agentProfileId: agentSigner.agentId,
+    localAgentDid: agentSigner.did,
     encryptedSecret: encryptPaperValue(secret.preimage),
     railRef: null,
     receiptRecorded: false,
@@ -1926,10 +2095,11 @@ async function acceptTechnocoreOffer(body = {}) {
     updatedAt: createdAt,
     timeline: [
       { stage: "offer", actor: offerFrame.from, detail: `${offerFrame.amount} ${offerFrame.asset} on ${offerFrame.rails.join(",")}`, at: offerRecord?.createdAt || createdAt },
-      { stage: "accept", actor: "osa", detail: `Accepted with signed hash-lock statement`, at: createdAt }
+      { stage: "accept", actor: agentSigner.did, detail: `Accepted with signed hash-lock statement`, at: createdAt }
     ]
   };
   store.protocolPaperDeals = normalizeProtocolPaperDeals([deal, ...(store.protocolPaperDeals || [])]);
+  deal = store.protocolPaperDeals.find((item) => item.id === offerId) || deal;
   await saveStore();
 
   event("tclk_offer_accepted", `Accepted TCLK offer ${offerId}`, {
@@ -1940,64 +2110,34 @@ async function acceptTechnocoreOffer(body = {}) {
     agentId: requestedAgentId
   });
 
-  // Create a workspace task so the agent can work on this deal
-  {
-    try {
-      const job = offerFrame.job || {};
-      const jobProto = String(job.proto || "tclk").slice(0, 20);
-      const jobId = String(job.id || "").slice(0, 100);
-      const jobContext = String(job.context || "").slice(0, 500);
-      const startedAt = now();
-      const goalId = `goal-tclk-${randomUUID()}`;
-      const goal = {
-        id: goalId,
-        title: `TCLK: ${offerFrame.amount} ${offerFrame.asset}`,
-        status: "active",
-        createdAt: startedAt,
-        updatedAt: startedAt
-      };
-      store.goals.unshift(goal);
-      const taskId = `task-${randomUUID()}`;
-      const contextBlock = jobId ? `\nJob ID: ${jobId}${jobContext ? `\n\nContext: ${jobContext}` : ""}` : `\nOffer from: ${offerFrame.from}`;
-      const task = {
-        id: taskId,
-        goalId,
-        type: "synthesis",
-        title: `TCLK deal: ${offerFrame.amount} ${offerFrame.asset}`,
-        description: `Accepted TCLK offer ${offerId} from ${offerFrame.from}\nProto: ${jobProto}${contextBlock}`,
-        requiredCapabilities: ["research", "review", "synthesis"],
-        priority: 90,
-        status: "open",
-        createdAt: startedAt,
-        updatedAt: startedAt,
-        source: "agent-gui-claim",
-        agentGuiRoom: "home",
-        agentGuiTeamId: "home-room",
-        agentGuiAgent: requestedAgentId,
-        agentGuiModel: "OpenClaw local agent",
-        ownerWalletAddress: null,
-        tclkDealId: deal.id
-      };
-      store.tasks.unshift(task);
-      startAgentGuiTaskConnector({}, task, requestedAgentId);
-      event("tclk_offer_workspace_created", `Workspace task created for TCLK offer ${offerId}`, {
-        taskId,
-        goalId,
-        offerId,
-        agentId: requestedAgentId
-      });
-    } catch (workspaceError) {
-      console.warn(`TCLK offer: workspace task creation failed: ${workspaceError.message}`);
-    }
+  // Phase 2.3: Announce the deal in its private Technocore deal room.
+  // The room name is derived from the contract id (mb-p-tclk-<hex>) and
+  // created implicitly by the first signed write. Non-fatal on failure.
+  try {
+    const dealRoomName = tclkDealRoom(state.contract);
+    const dealRoomNote = `TCLK deal ${offerId} accepted by ${agentSigner.did} - contract ${state.contract} (PaperRail, no value).`;
+    const dealRoomPost = await technocoreSayAsAgent(agentSigner.agentId, dealRoomName, dealRoomNote, "create_deal");
+    deal.dealRoomPosted = dealRoomPost?.signed === true || dealRoomPost?.duplicate === true;
+    deal.dealRoomName = dealRoomName;
+    await saveStore();
+    event("tclk_deal_room_posted", `Announced accepted deal in private room ${dealRoomName}`, {
+      offerId,
+      contract: state.contract,
+      dealRoom: dealRoomName
+    });
+  } catch (dealRoomError) {
+    console.warn(`TCLK offer: deal room post failed: ${dealRoomError.message}`);
   }
+
+  await ensureTclkWorkspaceForDeal(deal, offerFrame, requestedAgentId, { startConnector });
 
   return publicProtocolPaperDeal(store.protocolPaperDeals.find((item) => item.id === deal.id));
 }
 
 async function claimTechnocoreOffer(body = {}) {
-  const dealId = String(body.deal_id || "").trim();
+  const dealId = String(body.deal_id || body.offer_id || "").trim();
   if (!dealId) {
-    const error = new Error("deal_id is required");
+    const error = new Error("deal_id or offer_id is required");
     error.statusCode = 400;
     throw error;
   }
@@ -2010,31 +2150,36 @@ async function claimTechnocoreOffer(body = {}) {
     throw error;
   }
 
-  if (deal.status !== "accepted") {
-    const error = new Error(`Deal is in "${deal.status}" state, expected "accepted"`);
+  if (deal.status !== "accepted" && deal.status !== "locked") {
+    const error = new Error(`Deal is in "${deal.status}" state, expected "accepted" or "locked"`);
     error.statusCode = 400;
     throw error;
   }
 
-  // Sync the room to see if the payer has posted a lock frame
-  const projection = await syncTechnocoreProtocolRoom(tclkOfferRoom);
-  const records = projection.records;
-
-  // Find a lock frame that references this contract
+  // Reconstruct the local state. If we already recorded the lock locally
+  // (e.g. this node locked its own offer), reuse that frame instead of
+  // scanning the room again.
   let state = reconstructPaperDealState(deal);
-  let lockFrame = null;
-  for (const record of records) {
-    if (record.protocol !== "tclk/1" || record.frameType !== "lock") continue;
-    const inspection = inspectProtocolTranscript(record.room, {
-      from: record.from,
-      nonce: record.nonce,
-      sig: record.signature,
-      text: record.text
-    });
-    if (!inspection.valid || !inspection.frame) continue;
-    if (inspection.frame.contract !== state.contract) continue;
-    lockFrame = inspection.frame;
-    break;
+  let lockFrame = deal.lockFrame || null;
+  if (!lockFrame) {
+    // Sync the room to see if the payer has posted a lock frame
+    const projection = await syncTechnocoreProtocolRoom(tclkOfferRoom);
+    const records = projection.records;
+
+    // Find a lock frame that references this contract
+    for (const record of records) {
+      if (record.protocol !== "tclk/1" || record.frameType !== "lock") continue;
+      const inspection = inspectProtocolTranscript(record.room, {
+        from: record.from,
+        nonce: record.nonce,
+        sig: record.signature,
+        text: record.text
+      });
+      if (!inspection.valid || !inspection.frame) continue;
+      if (inspection.frame.contract !== state.contract) continue;
+      lockFrame = inspection.frame;
+      break;
+    }
   }
 
   if (!lockFrame) {
@@ -2043,20 +2188,36 @@ async function claimTechnocoreOffer(body = {}) {
     throw error;
   }
 
-  // Apply the lock to local state
-  const locked = applyTclkFrame(state, lockFrame, Date.now());
-  if (!locked.ok) {
-    const error = new Error(`Lock frame rejected: ${locked.reason}`);
-    error.statusCode = 400;
+  // Apply the lock to local state (a stored lock was already applied by
+  // reconstructPaperDealState, so only apply when we discovered it fresh).
+  if (deal.status === "accepted") {
+    const locked = applyTclkFrame(state, lockFrame, Date.now());
+    if (!locked.ok) {
+      const error = new Error(`Lock frame rejected: ${locked.reason}`);
+      error.statusCode = 400;
+      throw error;
+    }
+    state = locked.state;
+  }
+
+  // Decrypt the secret and reveal. Only the payee holds the secret and may
+  // reveal it to claim; the payer of our own published offer must wait for
+  // the counterparty's reveal (tracked by the deal reconciliation).
+  if (isLocalTechnocoreDid(deal.offer?.from)) {
+    const error = new Error("You are the payer of this deal — the payee must reveal to claim. Watch the dealbook for the claim.");
+    error.statusCode = 403;
     throw error;
   }
-  state = locked.state;
-
-  // Decrypt the secret and reveal
+  if (!deal.encryptedSecret) {
+    const error = new Error("No local claim secret is available for this deal. Only the payee side can reveal.");
+    error.statusCode = 403;
+    throw error;
+  }
   const secret = decryptPaperValue(deal.encryptedSecret);
+  const signer = localSignerForPaperDeal(deal, "claim");
   const reveal = decodeTclkFrame(encodeTclkFrame({
     type: "reveal",
-    from: technocoreDid,
+    from: signer.did,
     contract: state.contract,
     secret
   }));
@@ -2064,7 +2225,8 @@ async function claimTechnocoreOffer(body = {}) {
   // Post the reveal to the room
   const revealText = encodeTclkFrame(reveal);
   try {
-    await technocoreSay(tclkOfferRoom, revealText);
+    if (signer.agentId) await technocoreSayAsAgent(signer.agentId, tclkOfferRoom, revealText, "claim");
+    else await technocoreSay(tclkOfferRoom, revealText);
   } catch (error) {
     const err = new Error(`Failed to post reveal frame: ${error.message}`);
     err.statusCode = 502;
@@ -2082,8 +2244,30 @@ async function claimTechnocoreOffer(body = {}) {
 
   deal.status = state.status;
   deal.lockFrame = lockFrame;
+  deal.railRef = deal.railRef || lockFrame.ref || null;
   deal.updatedAt = now();
-  appendPaperDealStage(deal, "claim", "osa", `Claimed via PaperRail with hash-lock reveal`);
+  appendPaperDealStage(deal, "claim", signer.did, `Claimed via PaperRail with hash-lock reveal`);
+
+  const receipt = decodeTclkFrame(encodeTclkFrame({
+    type: "receipt",
+    from: signer.did,
+    contract: state.contract,
+    outcome: "claimed",
+    rail: "paper",
+    ref: deal.railRef || lockFrame.ref
+  }));
+  try {
+    const receiptText = encodeTclkFrame(receipt);
+    if (signer.agentId) await technocoreSayAsAgent(signer.agentId, tclkOfferRoom, receiptText, "receipt");
+    else await technocoreSay(tclkOfferRoom, receiptText);
+    const receipted = applyTclkFrame(state, receipt, Date.now());
+    if (receipted.ok) {
+      deal.receiptRecorded = true;
+      appendPaperDealStage(deal, "receipt", signer.did, "Terminal receipt posted via managed signing");
+    }
+  } catch (receiptError) {
+    console.warn(`TCLK claim: receipt post failed: ${receiptError.message}`);
+  }
 
   await saveStore();
 
@@ -2091,6 +2275,107 @@ async function claimTechnocoreOffer(body = {}) {
     offerId: dealId,
     amount: deal.offer?.amount,
     asset: deal.offer?.asset
+  });
+
+  return publicProtocolPaperDeal(deal);
+}
+
+async function lockTechnocoreOffer(body = {}) {
+  if (!technocoreDid) {
+    const error = new Error("A local DID is required to lock TCLK offers");
+    error.statusCode = 400;
+    throw error;
+  }
+  const offerId = String(body.offer_id || body.deal_id || "").trim();
+  if (!offerId) {
+    const error = new Error("offer_id is required");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  store.protocolPaperDeals = normalizeProtocolPaperDeals(store.protocolPaperDeals || []);
+  let deal = store.protocolPaperDeals.find((item) => item.id === offerId);
+  if (!deal) {
+    const error = new Error("Deal not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  // Phase 2.6: fold any verified accept frame from the room into the local
+  // deal before locking, so an offer accepted on another node advances here.
+  try {
+    const projection = await syncTechnocoreProtocolRoom(tclkOfferRoom);
+    await reconcilePaperDealTranscript(projection.records);
+    store.protocolPaperDeals = normalizeProtocolPaperDeals(store.protocolPaperDeals || []);
+    deal = store.protocolPaperDeals.find((item) => item.id === offerId) || deal;
+  } catch (reconcileError) {
+    console.warn(`TCLK lock: reconciliation failed: ${reconcileError.message}`);
+  }
+
+  // Only the payer (offer owner) can lock funds on the rail.
+  if (deal.offer?.from !== technocoreDid) {
+    const error = new Error("Only the offer payer can lock this deal");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  // The offer must already be accepted (a signed accept frame exists and the
+  // TCLK state machine reached the accepted state with a contract id).
+  if (deal.status !== "accepted") {
+    const error = new Error(`Deal is in "${deal.status}" state, expected "accepted"`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let state = reconstructPaperDealState(deal);
+  if (!state.contract) {
+    const error = new Error("No contract id available yet — the offer has not been accepted");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Record a paper lock on the local rehearsal rail, then post the signed
+  // lock frame to the Technocore offer room so the payee can claim.
+  const rail = new PaperRail(persistentPaperNoteStore(), () => Date.now());
+  const terms = tclkLockTerms(state);
+  const railRef = await rail.lock(terms);
+  const lockFrame = decodeTclkFrame(encodeTclkFrame({
+    type: "lock",
+    from: state.payerDid,
+    contract: state.contract,
+    rail: "paper",
+    ref: railRef
+  }));
+
+  const lockText = encodeTclkFrame(lockFrame);
+  try {
+    await technocoreSay(tclkOfferRoom, lockText);
+  } catch (error) {
+    const err = new Error(`Failed to post lock frame to Technocore: ${error.message}`);
+    err.statusCode = 502;
+    throw err;
+  }
+
+  const locked = applyTclkFrame(state, lockFrame, Date.now());
+  if (!locked.ok) {
+    const error = new Error(`Lock frame rejected: ${locked.reason}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  state = locked.state;
+
+  deal.railRef = railRef;
+  deal.lockFrame = lockFrame;
+  deal.status = state.status;
+  deal.updatedAt = now();
+  appendPaperDealStage(deal, "lock", "osa", "Funds locked on PaperRail via signed lock frame");
+  await saveStore();
+
+  event("tclk_offer_locked", `Locked TCLK offer ${offerId} on PaperRail`, {
+    offerId,
+    amount: deal.offer?.amount,
+    asset: deal.offer?.asset,
+    contract: state.contract
   });
 
   return publicProtocolPaperDeal(deal);
@@ -2401,6 +2686,7 @@ function normalizeConnectorTokens(tokens) {
     providers: token.providers || [],
     capabilities: token.capabilities || [],
     models: token.models || [],
+    taskId: token.taskId || null,
     useCount: Number(token.useCount || 0),
     lastUsedAt: token.lastUsedAt || null,
     lastUsedMethod: token.lastUsedMethod || null,
@@ -2845,7 +3131,7 @@ function securityHeaders(options = {}) {
   const styleSrc = options.allowInlineStyles ? "style-src 'self' 'unsafe-inline'" : "style-src 'self'";
   const connectSrc = options.allowWebSockets ? "connect-src 'self' ws: wss:" : "connect-src 'self'";
   const extSrc = options.allowMetaMask ? "chrome-extension: moz-extension:" : "";
-  const scriptSrc = options.allowMetaMask ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'" : "script-src 'self'";
+  const scriptSrc = "script-src 'self'";
   const defaultSrc = options.allowMetaMask ? "default-src 'self' " + extSrc : "default-src 'self'";
   const finalConnect = extSrc ? connectSrc + " " + extSrc : connectSrc;
   return {
@@ -4586,6 +4872,7 @@ function publicConnectorToken(token) {
     id: token.id,
     mode: token.mode,
     goalId: token.goalId,
+    taskId: token.taskId || null,
     goalTitle: goal?.title || (token.mode === "voting" ? "Voting Pool" : "Unknown project"),
     agentId: token.agentId || null,
     name: token.name,
@@ -5245,6 +5532,12 @@ function createConnectorToken(auth, body) {
     const goal = store.goals.find((item) => item.id === goalId);
     if (!goal) throw new Error("Unknown goalId");
     if (goal.status === "completed") throw new Error("Goal is already completed");
+    const taskId = body.taskId ? String(body.taskId).slice(0, 140) : null;
+    if (taskId) {
+      const task = store.tasks.find((item) => item.id === taskId);
+      if (!task) throw new Error("Unknown taskId");
+      if (task.goalId !== goalId) throw new Error("Connector taskId is outside the scoped goal");
+    }
     const activeToken = store.connectorTokens.find(
       (token) => token.userId === auth.user.id && token.mode === "worker" && token.status === "active"
     );
@@ -5273,6 +5566,7 @@ function createConnectorToken(auth, body) {
     userId: auth.user.id,
     mode,
     goalId,
+    taskId: mode === "worker" && body.taskId ? String(body.taskId).slice(0, 140) : null,
     agentId: null,
     name: String(body.name || (mode === "voting" ? "Voting Agent" : "Worker Agent")).slice(0, 80),
     tokenHash: hashToken(rawToken),
@@ -5439,8 +5733,14 @@ function validateArtifactRefs(auth, connector, body) {
       error.statusCode = 403;
       throw error;
     }
+    if (connector.token.taskId && refs.taskId && refs.taskId !== connector.token.taskId) {
+      const error = new Error("Artifact taskId is not scoped to this connector token");
+      error.statusCode = 403;
+      throw error;
+    }
     refs.agentId = connector.token.agentId || null;
     refs.goalId = connector.token.goalId || null;
+    refs.taskId = connector.token.taskId || refs.taskId;
   }
 
   if (refs.agentId) {
@@ -7158,20 +7458,33 @@ async function ensureAgentDidsOnTechnocore() {
 /** Ensure every default agent has a local capability record so Vault shows them as published. */
 function ensureAgentCapabilitiesPublished() {
   const defaultAgents = ["technocore-specialist", "coder", "bugfixer", "info-guy", "coinexpert", "graphicsexpert", "moneymaker", "security-expert", "explorer"];
-  // Conservative default capabilities: critical actions (lock/claim/settle/refund)
-  // stay require-human unless the user explicitly grants them via the Vault UI.
-  const defaultCapabilities = ["sign_text", "create_deal"];
-  const existing = store.agentCapabilities || [];
+  // Conservative default capabilities: managed, no-value protocol delivery is
+  // autonomous; real settlement, transfer, delegate, refund, and lock remain
+  // require-human unless explicitly granted.
+  const defaultCapabilities = ["sign_text", "create_deal", "request_work", "submit_result", "attest_result", "claim", "receipt"];
+  let changed = false;
   for (const agentId of defaultAgents) {
-    const record = existing.find((p) => p.agent_id === agentId);
+    const record = (store.agentCapabilities || []).find((profile) => profile.agent_id === agentId);
     if (record) {
-      // Migration: records minted with the old full list are downgraded so
-      // critical actions require human approval again.
-      const caps = record.capabilities || [];
-      const hadFullDefaults = ["sign_text", "create_deal", "lock", "claim", "settle"].every((c) => caps.includes(c));
-      if (hadFullDefaults && caps.length <= 5) {
-        record.capabilities = defaultCapabilities;
+      // Migrate older default-profile records to the managed no-value signing
+      // baseline without granting lock, settlement, transfer, delegation, or
+      // refund authority. Explicit policy overrides still win.
+      const caps = Array.isArray(record.capabilities) ? record.capabilities : [];
+      const hadLegacyCriticalDefaults = ["sign_text", "create_deal", "lock", "claim", "settle"].every((capability) => caps.includes(capability)) && caps.length <= 5;
+      const retainedCapabilities = hadLegacyCriticalDefaults
+        ? caps.filter((capability) => !["lock", "settle"].includes(capability))
+        : caps;
+      const migratedCapabilities = [...new Set([...retainedCapabilities, ...defaultCapabilities])];
+      if (migratedCapabilities.length !== caps.length || migratedCapabilities.some((capability, index) => capability !== caps[index])) {
+        record.capabilities = migratedCapabilities;
         record.updated_at = now();
+        changed = true;
+      }
+      const managedDid = agentDidForProfile(agentId);
+      if (record.did !== managedDid) {
+        record.did = managedDid;
+        record.updated_at = now();
+        changed = true;
       }
       continue;
     }
@@ -7180,7 +7493,9 @@ function ensureAgentCapabilitiesPublished() {
       { agent_id: agentId, did, capabilities: [...defaultCapabilities], published_at: now(), updated_at: now() },
       ...(store.agentCapabilities || [])
     ]);
+    changed = true;
   }
+  return changed;
 }
 
 /** Share local trust summary to Technocore osa-network for cross-node federation. */
@@ -7687,6 +8002,127 @@ function publicProtocolTimelineRecord(record) {
   };
 }
 
+async function reconcilePaperDealTranscript(records) {
+  // Replays verified TCLK frames from the offer-room transcript against local
+  // PaperRail deals so the dealbook reflects remote accept/lock/reveal/
+  // receipt/refund/cancel activity without a manual step. Handles both sides:
+  // payee-side deals (we accepted, secret stored) and payer-side deals (we
+  // published the offer, the counterparty accepted remotely).
+  const deals = normalizeProtocolPaperDeals(store.protocolPaperDeals || []);
+  if (!deals.length) return false;
+
+  const framesByContract = new Map();
+  const acceptsByRef = new Map();
+  for (const record of records) {
+    if (record.protocol !== "tclk/1") continue;
+    const inspection = inspectProtocolTranscript(record.room, {
+      from: record.from,
+      nonce: record.nonce,
+      sig: record.signature,
+      text: record.text
+    });
+    if (!inspection.valid || !inspection.frame) continue;
+    const entry = {
+      frame: inspection.frame,
+      seq: Number(record.sequence || 0),
+      at: record.createdAt
+    };
+    if (inspection.frame.type === "accept" && inspection.frame.ref) {
+      const ref = String(inspection.frame.ref);
+      if (!acceptsByRef.has(ref)) acceptsByRef.set(ref, []);
+      acceptsByRef.get(ref).push(entry);
+    } else if (inspection.frame.contract) {
+      const contract = String(inspection.frame.contract);
+      if (!framesByContract.has(contract)) framesByContract.set(contract, []);
+      framesByContract.get(contract).push(entry);
+    }
+  }
+  if (!acceptsByRef.size && !framesByContract.size) return false;
+
+  let changed = false;
+  const updated = deals.map((deal) => {
+    // Candidate accept frames referencing this offer (remote or stored).
+    const acceptFrames = (acceptsByRef.get(deal.offer?.id || "") || []).sort((a, b) => a.seq - b.seq);
+    if (!deal.accept && !acceptFrames.length) return deal;
+
+    let state;
+    try {
+      state = openTclkContract(deal.offer);
+    } catch {
+      return deal;
+    }
+
+    // Apply an accept: prefer the stored one, otherwise the earliest remote.
+    const acceptFrame = deal.accept || acceptFrames[0]?.frame || null;
+    if (!acceptFrame) return deal;
+    const acceptAt = deal.accept ? (Date.parse(deal.createdAt) || Date.now()) + 1 : (Date.parse(acceptFrames[0]?.at) || Date.now());
+    const accepted = applyTclkFrame(state, acceptFrame, acceptAt);
+    if (!accepted.ok) return deal;
+    state = accepted.state;
+
+    // Then replay every post-accept frame for the resulting contract.
+    const frameEntries = (framesByContract.get(state.contract || "") || [])
+      .filter((item) => item.frame.type !== "accept")
+      .sort((a, b) => a.seq - b.seq);
+    const applied = [];
+    for (const item of frameEntries) {
+      const step = applyTclkFrame(state, item.frame, Date.parse(item.at) || Date.now());
+      if (!step.ok) continue;
+      state = step.state;
+      applied.push(item.frame);
+    }
+    if (deal.accept && !applied.length && state.status === deal.status) return deal;
+
+    const next = { ...deal };
+    const staged = [];
+    if (!deal.accept && acceptFrame) {
+      next.accept = acceptFrame;
+      next.counterpartyDid = acceptFrame.from;
+      next.statement = acceptFrame.statement || next.statement;
+      staged.push({ stage: "accept", actor: acceptFrame.from, detail: "Accept frame observed on Technocore" });
+    }
+    for (const frame of applied) {
+      if (frame.type === "lock" && !next.lockFrame) {
+        next.lockFrame = frame;
+        staged.push({ stage: "lock", actor: frame.from, detail: "Lock frame observed on Technocore; PaperRail lock recorded" });
+      } else if (frame.type === "reveal") {
+        staged.push({ stage: "claim", actor: frame.from, detail: "Reveal observed on Technocore; claim recorded" });
+      } else if (frame.type === "receipt" && !next.receiptRecorded) {
+        next.receiptRecorded = true;
+        staged.push({ stage: "receipt", actor: frame.from, detail: "Terminal receipt observed on Technocore" });
+      } else if (frame.type === "refund") {
+        staged.push({ stage: "refund", actor: frame.from, detail: "Refund frame observed on Technocore" });
+      } else if (frame.type === "cancel") {
+        staged.push({ stage: "cancel", actor: frame.from, detail: "Cancel frame observed on Technocore" });
+      }
+    }
+
+    const oldStatus = deal.status;
+    const oldReceipt = deal.receiptRecorded;
+    const oldLock = Boolean(deal.lockFrame);
+    next.status = state.status;
+    next.updatedAt = now();
+    if (staged.length) {
+      // Skip stages we already recorded so refreshes do not duplicate entries.
+      const existingStages = new Set((deal.timeline || []).map((entry) => entry.stage));
+      const fresh = staged.filter((entry) => !existingStages.has(entry.stage));
+      if (fresh.length) {
+        next.timeline = [...(next.timeline || []), ...fresh.map((entry) => ({ ...entry, at: now() }))].slice(-30);
+      }
+    }
+    if (next.status !== oldStatus || next.receiptRecorded !== oldReceipt || Boolean(next.lockFrame) !== oldLock || !deal.accept) {
+      changed = true;
+    }
+    return next;
+  });
+
+  if (changed) {
+    store.protocolPaperDeals = normalizeProtocolPaperDeals(updated);
+    await saveStore();
+  }
+  return changed;
+}
+
 async function technocoreProtocolOverview() {
   const observedAt = now();
   const overview = {
@@ -7745,6 +8181,15 @@ async function technocoreProtocolOverview() {
   overview.room_sync = projection.sync;
   overview.timeline = records.slice().reverse().slice(0, 100).map(publicProtocolTimelineRecord);
   overview.tclk.observed_message_count = records.length;
+
+  // Phase 2.6: fold verified remote lock/reveal/receipt frames into local
+  // PaperRail deals so the dealbook stays live without manual steps.
+  try {
+    await reconcilePaperDealTranscript(records);
+    overview.paper.deals = normalizeProtocolPaperDeals(store.protocolPaperDeals || []).map(publicProtocolPaperDeal);
+  } catch (reconcileError) {
+    console.warn(`Protocol overview: deal reconciliation failed: ${reconcileError.message}`);
+  }
 
   const validFrames = [];
   for (const record of records) {
@@ -7965,19 +8410,37 @@ async function technocoreSayUnsigned(room, text) {
 }
 
 async function technocoreSaySigned(room, text) {
+  return technocoreSaySignedWithIdentity(room, text, { did: technocoreDid, privateKey: nodeIdentity.privateKeyPem });
+}
+
+async function technocoreSayAsAgent(agentId, room, text, action = "sign_text") {
+  if (!technocoreSignedMessages) {
+    const error = new Error("Technocore managed signing is disabled");
+    error.statusCode = 400;
+    throw error;
+  }
+  const identity = assertManagedSigningAllowed(agentId, action);
+  return await technocoreWriteWithRetry(() => technocoreSaySignedWithIdentity(room, text, identity), {
+    signed: true,
+    from: identity.did,
+    agentId: identity.agentId
+  });
+}
+
+async function technocoreSaySignedWithIdentity(room, text, identity) {
   const nonce = nextTechnocoreNonce(room);
   // Technocore normalizes newlines to spaces before verifying the signature,
   // so we must do the same when constructing the payload to sign.
   const singleLine = text.replace(/\r?\n/g, " ").slice(0, 4096);
   const payload = `${room}|${nonce}|${singleLine}`;
-  const sig = signPayload(null, Buffer.from(payload, "utf8"), nodeIdentity.privateKeyPem).toString("base64url");
+  const sig = signPayload(null, Buffer.from(payload, "utf8"), identity.privateKey).toString("base64url");
   const response = await fetchTechnocoreWrite(`/r/${room}`, {
     method: "POST",
     headers: {
       accept: "application/json",
       "content-type": "application/json"
     },
-    body: JSON.stringify({ did: technocoreDid, sig, nonce, text: singleLine })
+    body: JSON.stringify({ did: identity.did, sig, nonce, text: singleLine })
   });
   if (!response.ok) throw technocoreWriteHttpError(response.status);
   let view = null;
@@ -7989,7 +8452,7 @@ async function technocoreSaySigned(room, text) {
   const posted = view?.posted && typeof view.posted === "object" ? view.posted : null;
   return {
     signed: true,
-    from: technocoreDid,
+    from: identity.did,
     seq: finitePositiveNumber(posted?.seq),
     createdAt: validIsoTimestamp(posted?.ts)
   };
@@ -8379,6 +8842,7 @@ function startAgentGuiTaskConnector(req, task, agentId) {
   const { rawToken, connector } = createConnectorToken(auth, {
     mode: "worker",
     goalId: task.goalId,
+    taskId: task.id,
     name: profile?.name || (runner === "codex" ? "Codex CLI Agent" : "Codex OpenClaw Agent"),
     capabilities: task.requiredCapabilities || ["research", "review", "synthesis"],
     models: [`connector:${runner}`],
@@ -8794,16 +9258,26 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     }
   }
 
+  if (method === "POST" && path === "/api/protocol/offers/lock") {
+    try {
+      const body = await readJson(req);
+      return sendJson(res, 200, await lockTechnocoreOffer(body));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to lock TCLK offer" });
+    }
+  }
+
   // Phase 3: Agent DID / Capabilities / Delegation
   if (method === "GET" && path === "/api/agents/dids") {
     const profiles = normalizeAgentCapabilities(store.agentCapabilities || []);
     const defaultAgents = ["technocore-specialist", "coder", "bugfixer", "info-guy", "coinexpert", "graphicsexpert", "moneymaker", "security-expert", "explorer"];
+    const managedCapabilities = ["sign_text", "create_deal", "request_work", "submit_result", "attest_result", "claim", "receipt"];
     const output = defaultAgents.map((id) => {
       const existing = profiles.find((p) => p.agent_id === id);
       return {
         agent_id: id,
         did: existing?.did || agentDidForProfile(id),
-        capabilities: existing?.capabilities || ["sign_text"],
+        capabilities: existing?.capabilities || managedCapabilities,
         published: Boolean(existing)
       };
     });
@@ -8822,12 +9296,13 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     const agentId = decodeURIComponent(path.match(/^\/api\/agents\/([^/]+)\/capabilities$/)[1]);
     const body = await readJson(req);
     const caps = Array.isArray(body.capabilities) ? body.capabilities.slice(0, 50).map((c) => String(c || "").slice(0, 60).trim()).filter(Boolean) : ["sign_text"];
+    const did = agentDidForProfile(agentId);
     store.agentCapabilities = normalizeAgentCapabilities([
-      { agent_id: agentId, did: body.did || agentDidForProfile(agentId), capabilities: caps, published_at: now(), updated_at: now() },
+      { agent_id: agentId, did, capabilities: caps, published_at: now(), updated_at: now() },
       ...(store.agentCapabilities || [])
     ]);
     await saveStore();
-    return sendJson(res, 200, { ok: true, agent_id: agentId, did: agentDidForProfile(agentId), capabilities: caps });
+    return sendJson(res, 200, { ok: true, agent_id: agentId, did, capabilities: caps });
   }
 
   if (method === "GET" && path === "/api/delegations") {
@@ -9485,7 +9960,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       const profile = createAgentGuiProfile(body);
       await saveStore();
       // Register the new agent DID on Technocore in the background and publish locally.
-      ensureAgentCapabilitiesPublished();
+      if (ensureAgentCapabilitiesPublished()) await saveStore();
       ensureAgentDidsOnTechnocore().catch(() => {});
       return sendJson(res, 201, { ok: true, agent: publicAgentGuiProfile(profile) });
     } catch (error) {
@@ -9917,6 +10392,10 @@ async function handleApi(req, res, url) {
       if (connector && connector.token.mode !== "worker") return forbidden(res, "Connector token is not scoped to the Worker Pool");
       const actorUser = auth?.user || connector?.user || null;
       const requestedGoalId = connector?.token.goalId || body.goalId;
+      if (connector?.token.taskId) {
+        const scopedTask = store.tasks.find((item) => item.id === connector.token.taskId);
+        if (!scopedTask || scopedTask.goalId !== requestedGoalId) return forbidden(res, "Connector token task scope is invalid");
+      }
       const goal = store.goals.find((item) => item.id === requestedGoalId);
       if (!goal) return badRequest(res, "Unknown goalId");
       if (goal.status === "completed") return badRequest(res, "Goal is already completed");
@@ -10161,6 +10640,7 @@ async function handleApi(req, res, url) {
       const task = store.tasks
         .filter((item) => item.status === "open")
         .filter((item) => item.goalId === goalId)
+        .filter((item) => !access.connector?.token.taskId || item.id === access.connector.token.taskId)
         .filter((item) => store.goals.some((goal) => goal.id === item.goalId && goal.status !== "completed"))
         .filter((item) => !item.assignedReviewerId || item.assignedReviewerId === agent.id)
         .filter((item) => agentCanRun(agent, item))
@@ -10196,6 +10676,7 @@ async function handleApi(req, res, url) {
       if (!enforceRateLimit(req, res, "result-submit", `agent:${agent.id}`, { limit: 30, windowMs: 60 * 60 * 1000 })) {
         return;
       }
+      if (access.connector?.token.taskId && task.id !== access.connector.token.taskId) return forbidden(res, "Connector token is not scoped to this task");
       if (task.assignedAgentId !== agent.id) return badRequest(res, "Task is not leased to this agent");
       const artifacts = normalizeResultArtifacts(body.artifacts, task, agent, access);
 
@@ -10638,6 +11119,70 @@ function finalizeAcceptedResult(result, review) {
   
   // Auto-submit job result if this task was created from a Work claim
   autoSubmitJobResultForTask(task, result);
+  autoDeliverTclkResultForTask(task, result);
+}
+
+function tclkResultHash(result) {
+  return createHash("sha256")
+    .update(String(result?.summary || ""), "utf8")
+    .update("\0", "utf8")
+    .update(String(result?.content || ""), "utf8")
+    .digest("hex");
+}
+
+function tclkResultRoomForDeal(deal) {
+  return deal.dealRoomName || (deal.accept?.contract ? tclkDealRoom(deal.accept.contract) : tclkOfferRoom);
+}
+
+function autoDeliverTclkResultForTask(task, result) {
+  if (!task?.tclkDealId || !store.protocolPaperDeals) return;
+  (async () => {
+    try {
+      store.protocolPaperDeals = normalizeProtocolPaperDeals(store.protocolPaperDeals || []);
+      const deal = store.protocolPaperDeals.find((item) => item.id === task.tclkDealId);
+      if (!deal) return;
+      const agentId = deal.agentProfileId || task.agentGuiAgent || defaultAgentGuiAgentId;
+      const signer = assertManagedSigningAllowed(agentId, "submit_result");
+      const room = tclkResultRoomForDeal(deal);
+      const hash = tclkResultHash(result);
+      const summary = String(result?.summary || result?.content || "").replace(/\s+/g, " ").trim().slice(0, 220);
+
+      if (!deal.resultFramePosted) {
+        const resultText = `RESULT v1: ${deal.id} task:${task.id} result:${result.id} hash:${hash.slice(0, 32)} summary:${summary}`;
+        await technocoreSayAsAgent(signer.agentId, room, resultText, "submit_result");
+        deal.resultFramePosted = true;
+        appendPaperDealStage(deal, "result", signer.did, "Result frame posted via managed signing");
+        event("tclk_result_frame_posted", "RESULT frame posted for TCLK deal", {
+          dealId: deal.id,
+          taskId: task.id,
+          resultId: result.id,
+          room,
+          agentDid: signer.did
+        });
+      }
+
+      if (!deal.attestFramePosted) {
+        assertManagedSigningAllowed(agentId, "attest_result");
+        const attestText = `ATTEST v1: ${deal.id} result:${result.id} agent:${signer.did} verified:true hash:${hash.slice(0, 32)}`;
+        await technocoreSayAsAgent(signer.agentId, room, attestText, "attest_result");
+        deal.attestFramePosted = true;
+        appendPaperDealStage(deal, "attest", signer.did, "ATTEST frame posted via managed signing");
+        event("tclk_attest_frame_posted", "ATTEST frame posted for TCLK deal", {
+          dealId: deal.id,
+          taskId: task.id,
+          resultId: result.id,
+          room,
+          agentDid: signer.did
+        });
+      }
+
+      deal.updatedAt = now();
+      await saveStore();
+      await autoClaimTclkDealForTask(task);
+    } catch (error) {
+      console.warn(`TCLK managed result delivery failed: ${error.message}`);
+    }
+  })();
 }
 
 function autoSubmitJobResultForTask(task, result) {
@@ -10674,20 +11219,25 @@ function autoSubmitJobResultForTask(task, result) {
           // otherwise use the claim.room field
           const parts = String(claim.job_id).split(":");
           const targetRoom = parts.length >= 2 && /^[a-z][a-z0-9_-]{0,47}$/.test(parts[0]) ? parts[0] : claim.room;
+          const profileId = task.agentGuiAgent || defaultAgentGuiAgentId;
+          const signer = assertManagedSigningAllowed(profileId, "submit_result");
           const resultText = `RESULT v1: ${claim.job_id} summary: ${summary.replace(/\n/g, " ").slice(0, 200)}`;
-          await technocoreSay(targetRoom, resultText);
+          await technocoreSayAsAgent(signer.agentId, targetRoom, resultText, "submit_result");
           event("technocore_result_posted", "RESULT frame posted to Technocore room", {
             jobId: claim.job_id,
             room: targetRoom,
-            summary: summary.slice(0, 80)
+            summary: summary.slice(0, 80),
+            agentDid: signer.did
           });
           // Post ATTEST frame confirming the result is verified
-          const attestText = `ATTEST v1: ${claim.job_id} verified by ${technocoreDid || technocoreNick} hash: ${jobResult.output_hash.slice(0, 16)}`;
-          await technocoreSay(targetRoom, attestText);
+          const attestText = `ATTEST v1: ${claim.job_id} verified by ${signer.did} hash: ${jobResult.output_hash.slice(0, 16)}`;
+          assertManagedSigningAllowed(profileId, "attest_result");
+          await technocoreSayAsAgent(signer.agentId, targetRoom, attestText, "attest_result");
           event("technocore_attest_posted", "ATTEST frame posted to Technocore room", {
             jobId: claim.job_id,
             room: targetRoom,
-            hash: jobResult.output_hash.slice(0, 16)
+            hash: jobResult.output_hash.slice(0, 16),
+            agentDid: signer.did
           });
         } catch (error) {
           console.warn(`Post RESULT/ATTEST frames to Technocore failed: ${error.message}`);
@@ -10698,54 +11248,58 @@ function autoSubmitJobResultForTask(task, result) {
     console.warn(`Auto-submit job result failed: ${error.message}`);
   }
   
-  // If this task was created from a TCLK deal, trigger the reveal/claim
-  autoClaimTclkDealForTask(task);
 }
 
 function autoClaimTclkDealForTask(task) {
   if (!task || !task.tclkDealId || !store.protocolPaperDeals) return;
-  const deal = store.protocolPaperDeals.find((d) => d.id === task.tclkDealId && d.status === "accepted");
+  const deal = store.protocolPaperDeals.find((d) => d.id === task.tclkDealId && (d.status === "accepted" || d.status === "locked"));
   if (!deal) return;
   
   // Try to sync the lock and claim
   (async () => {
     try {
-      const projection = await syncTechnocoreProtocolRoom(tclkOfferRoom);
-      const records = projection.records;
       let state = reconstructPaperDealState(deal);
-      let lockFrame = null;
-      for (const record of records) {
-        if (record.protocol !== "tclk/1" || record.frameType !== "lock") continue;
-        const inspection = inspectProtocolTranscript(record.room, {
-          from: record.from,
-          nonce: record.nonce,
-          sig: record.signature,
-          text: record.text
-        });
-        if (!inspection.valid || !inspection.frame) continue;
-        if (inspection.frame.contract !== state.contract) continue;
-        lockFrame = inspection.frame;
-        break;
+      let lockFrame = deal.lockFrame || null;
+      if (!lockFrame) {
+        const projection = await syncTechnocoreProtocolRoom(tclkOfferRoom);
+        const records = projection.records;
+        for (const record of records) {
+          if (record.protocol !== "tclk/1" || record.frameType !== "lock") continue;
+          const inspection = inspectProtocolTranscript(record.room, {
+            from: record.from,
+            nonce: record.nonce,
+            sig: record.signature,
+            text: record.text
+          });
+          if (!inspection.valid || !inspection.frame) continue;
+          if (inspection.frame.contract !== state.contract) continue;
+          lockFrame = inspection.frame;
+          break;
+        }
       }
       if (!lockFrame) {
         console.warn(`TCLK auto-claim: no lock frame found for deal ${deal.id}, can't auto-claim yet`);
         return;
       }
-      const locked = applyTclkFrame(state, lockFrame, Date.now());
-      if (!locked.ok) {
-        console.warn(`TCLK auto-claim: lock frame rejected: ${locked.reason}`);
-        return;
+      if (deal.status === "accepted") {
+        const locked = applyTclkFrame(state, lockFrame, Date.now());
+        if (!locked.ok) {
+          console.warn(`TCLK auto-claim: lock frame rejected: ${locked.reason}`);
+          return;
+        }
+        state = locked.state;
       }
-      state = locked.state;
       const secret = decryptPaperValue(deal.encryptedSecret);
+      const signer = localSignerForPaperDeal(deal, "claim");
       const reveal = decodeTclkFrame(encodeTclkFrame({
         type: "reveal",
-        from: technocoreDid,
+        from: signer.did,
         contract: state.contract,
         secret
       }));
       const revealText = encodeTclkFrame(reveal);
-      await technocoreSay(tclkOfferRoom, revealText);
+      if (signer.agentId) await technocoreSayAsAgent(signer.agentId, tclkOfferRoom, revealText, "claim");
+      else await technocoreSay(tclkOfferRoom, revealText);
       const revealed = applyTclkFrame(state, reveal, Date.now());
       if (!revealed.ok) {
         console.warn(`TCLK auto-claim: reveal rejected: ${revealed.reason}`);
@@ -10753,8 +11307,30 @@ function autoClaimTclkDealForTask(task) {
       }
       deal.status = revealed.state.status;
       deal.lockFrame = lockFrame;
+      deal.railRef = deal.railRef || lockFrame.ref || null;
       deal.updatedAt = now();
-      appendPaperDealStage(deal, "claim", "osa", "Auto-claimed via task completion");
+      appendPaperDealStage(deal, "claim", signer.did, "Auto-claimed via managed signing after task completion");
+
+      const receipt = decodeTclkFrame(encodeTclkFrame({
+        type: "receipt",
+        from: signer.did,
+        contract: revealed.state.contract,
+        outcome: "claimed",
+        rail: "paper",
+        ref: deal.railRef
+      }));
+      try {
+        const receiptText = encodeTclkFrame(receipt);
+        if (signer.agentId) await technocoreSayAsAgent(signer.agentId, tclkOfferRoom, receiptText, "receipt");
+        else await technocoreSay(tclkOfferRoom, receiptText);
+        const receipted = applyTclkFrame(revealed.state, receipt, Date.now());
+        if (receipted.ok) {
+          deal.receiptRecorded = true;
+          appendPaperDealStage(deal, "receipt", signer.did, "Terminal receipt posted via managed signing");
+        }
+      } catch (receiptError) {
+        console.warn(`TCLK auto-claim receipt failed: ${receiptError.message}`);
+      }
       await saveStore();
       event("tclk_deal_auto_claimed", `Auto-claimed TCLK deal ${deal.id} after task completion`, {
         dealId: deal.id,
@@ -11258,7 +11834,7 @@ const server = createServer(async (req, res) => {
       if (!fileStat.isFile()) return notFound(res);
       res.writeHead(200, {
         "content-type": "text/html; charset=utf-8",
-        "content-security-policy": "default-src 'self' 'unsafe-inline' 'unsafe-eval' chrome-extension: moz-extension:; img-src 'self' data:; connect-src 'self' ws: wss: chrome-extension: moz-extension:; frame-src 'self' chrome-extension: moz-extension:",
+        "content-security-policy": "default-src 'self' chrome-extension: moz-extension:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss: chrome-extension: moz-extension:; frame-src 'self' chrome-extension: moz-extension:",
         "x-content-type-options": "nosniff",
         "referrer-policy": "strict-origin-when-cross-origin",
         "x-frame-options": "DENY"
@@ -11285,7 +11861,7 @@ server.listen(port, host, () => {
   console.log(`OpenSwarmAgents node listening on http://${host}:${port}`);
   startFederationPeerSync();
   // Publish all default agent capability records so Vault shows them as published
-  ensureAgentCapabilitiesPublished();
+  if (ensureAgentCapabilitiesPublished()) saveStore().catch((error) => console.warn(`Unable to save agent capability defaults: ${error.message}`));
   
   ensureTechnocorePublicRoomTopic().catch((error) => {
     console.warn(`Technocore public room topic ensure failed: ${error.message}`);

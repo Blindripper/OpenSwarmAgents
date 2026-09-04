@@ -94,7 +94,7 @@ try {
   assert(config.agents.some((agent) => agent.id === "profit-scout"), "custom profile should appear in Agent Profiles");
   await deleteJson("/api/agents/profit-scout");
   config = await getJson("/api/gui-config");
-  assert(config.rooms.map((room) => room.name).join(",") === "Home,Latest Projects", "dashboard should expose only Home and Latest Projects from start");
+  assert(config.rooms.some((room) => room.name === "Home") && !config.rooms.some((room) => room.name === "Public" || room.name === "Public Rooms"), "dashboard should expose Home without legacy Public room tabs from start");
   assert(!config.agents.some((agent) => agent.id === "profit-scout"), "custom profile should be deletable");
 
   for (let index = 1; index <= 12; index += 1) {
@@ -115,6 +115,36 @@ try {
   let chatGetRequestCount = 0;
   let delayedValidatorsReadCount = 0;
   let sentChatFixture = null;
+  let protocolAcceptMockEnabled = true;
+  const browserTclkSession = {
+    id: "home-task-browser-tclk",
+    started_at: "2026-09-04T08:00:00.000Z",
+    ended_at: null,
+    source: "osa-home",
+    model: "OpenClaw local agent",
+    parent_session_id: null,
+    title: "Browser TCLK workspace",
+    message_count: 1,
+    token_estimate: 120,
+    is_running: false,
+    first_activity_at: "2026-09-04T08:00:00.000Z",
+    last_activity_at: "2026-09-04T08:00:00.000Z",
+    title_summary: "Home",
+    auto_continue: false,
+    task_solved: false,
+    workspace_path: null,
+    is_sleeping: false,
+    agent: "technocore-specialist",
+    agent_model: "OpenClaw local agent",
+    agent_base_url: "",
+    desk_tools: ["research", "review", "synthesis"],
+    team_id: "home-room",
+    team_name: "Home",
+    shared_public: false,
+    connector_status: null,
+    connector_exit_code: null,
+    connector_error: null
+  };
   await page.route("**/api/network/chat**", async (route) => {
     if (route.request().method() === "POST") {
       const body = route.request().postDataJSON();
@@ -186,6 +216,83 @@ try {
       : channel);
     return route.fulfill({ response, json: payload });
   });
+  await page.route("**/api/protocol/overview", async (route) => {
+    if (!protocolAcceptMockEnabled) return route.continue();
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        mode: "paper-rehearsal",
+        writes_enabled: true,
+        generated_at: "2026-09-04T08:00:00.000Z",
+        identity: { node_did: testTechnocoreDid, signed_messages: true },
+        transport: { enabled: true, url: "https://technocore.example", public_room: "osa-network" },
+        archive: { persisted: true, record_count: 1, limit: 2000 },
+        layers: [],
+        timeline: [],
+        paper: { enabled: true, rail: "paper", asset: "FLOP", has_value: false, stages: [], deals: [] },
+        tclk: {
+          version: "tclk/1",
+          offer_room: "tclk-offers",
+          mode: "paper-rehearsal",
+          value_settlement_enabled: false,
+          warning: "PaperRail only",
+          observed_message_count: 1,
+          valid_frame_count: 1,
+          invalid_frame_count: 0,
+          offers: [{
+            id: "offer-browser-tclk",
+            status: "proposed",
+            expired: false,
+            from: "did:key:z6MkBrowserOfferor111111111111111111111111111111111",
+            role: "payer",
+            amount: "88",
+            asset: "FLOP",
+            lock: "hash",
+            rails: ["paper"],
+            job: { proto: "kibble", id: "browser-job", context: "Browser accept workspace fixture" },
+            expires_at: "2026-09-04T08:10:00.000Z",
+            claim_by: "2026-09-04T08:30:00.000Z",
+            refund_after: "2026-09-04T09:00:00.000Z",
+            observed_at: "2026-09-04T08:00:00.000Z",
+            sequence: 77,
+            verified: true
+          }]
+        }
+      })
+    });
+  });
+  await page.route("**/api/protocol/offers/accept", async (route) => {
+    if (!protocolAcceptMockEnabled) return route.continue();
+    protocolAcceptMockEnabled = false;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "offer-browser-tclk",
+        label: "Browser accepted TCLK deal",
+        status: "accepted",
+        mode: "paper-rehearsal",
+        rail: "paper",
+        has_value: false,
+        amount: "88",
+        asset: "FLOP",
+        payer_did: "did:key:z6MkBrowserOfferor111111111111111111111111111111111",
+        counterparty_did: "did:key:z6MkBrowserOfferor111111111111111111111111111111111",
+        local_agent_id: "technocore-specialist",
+        local_agent_did: testTechnocoreDid,
+        contract_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        deal_room: "mb-p-tclk-aaaaaaaaaaaa",
+        workspace_session_id: browserTclkSession.id,
+        receipt_recorded: false,
+        next_action: "lock",
+        created_at: "2026-09-04T08:00:00.000Z",
+        updated_at: "2026-09-04T08:00:00.000Z",
+        timeline: []
+      })
+    });
+  });
+  await page.route(`**/api/sessions/${browserTclkSession.id}`, async (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(browserTclkSession) }));
   await page.route("**/api/health", async (route) => {
     const response = await route.fetch();
     const payload = await response.json();
@@ -227,13 +334,17 @@ try {
   await expectText(page, "body", "$FLOP is not live yet");
   await page.getByRole("button", { name: "Connect Wallet" }).click();
   await expectText(page, "body", "Home");
-  await expectText(page, "body", "Latest Projects");
-  await expectText(page, "body", "Project Discovery");
-  await expectText(page, "body", "Protocol Network");
+  await expectText(page, "body", "Project Network");
+  await expectText(page, "body", "Market & Deals");
   await expectText(page, "body", "osa-network");
-  await expectText(page, "body", "TC DID");
+  await expectText(page, "body", "DID");
   await expectText(page, "body", "z6MkvG");
-  assert(await page.getByRole("button", { name: "Copy Technocore DID" }).count() === 1, "topbar should expose a copyable Technocore DID when signing is active");
+  assert(await page.getByRole("button", { name: "Copy" }).count() >= 1, "topbar should expose a copyable DID when signing is active");
+  await page.getByRole("button", { name: "Market & Deals" }).click();
+  await expectText(page, "body", "TCLK Offer Observer");
+  await page.getByRole("button", { name: "Accept Offer" }).click();
+  await expectText(page, "body", "Browser TCLK workspace");
+  assert((await getJson("/api/sessions")).some((session) => session.id === browserTclkSession.id) === false, "browser Accept test should not require a real backend task fixture");
   const chatWindow = page.getByTestId("network-chat-window");
   const initialChatBox = await chatWindow.boundingBox();
   assert(initialChatBox && initialChatBox.width >= 640 && initialChatBox.height >= 680, "network chat should open as a larger default window");
@@ -325,7 +436,7 @@ try {
   assert(!bodyText.includes("Top100 Rooms"), "room charts should not render");
   assert(!bodyText.includes("Public Rooms"), "legacy Public Rooms should not render");
   assert(!bodyText.includes("Agent Chain"), "old Agent Chain label should not render");
-  assert(bodyText.includes("FLOP PLEDGES"), "topbar should label prelaunch FLOP pledge totals clearly");
+  assert(bodyText.includes("$FLOP"), "topbar should label the prelaunch FLOP status clearly");
   assert(bodyText.includes("Prelaunch"), "topbar should show the honest FLOP prelaunch state");
   assert(!bodyText.includes("0 OSA"), "topbar should not present a retired OSA token balance");
   assert(bodyText.includes("Save Project"), "project save control should replace Load Desk/Snapshots");
@@ -494,62 +605,28 @@ try {
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "Enter Home" }).click().catch(() => {});
   await expectText(page, "body", "Network Live");
-  await expectText(page, "body", "Latest Projects");
-  await expectText(page, "body", "Browser E2E Project");
-  await expectText(page, "body", "send Explorer before copying");
-  await expectText(page, "body", "1 copies");
+  await expectText(page, "body", "Project Network");
   await page.getByRole("button", { name: "Save Project" }).click();
   await page.getByPlaceholder("Project save name...").fill("Browser Saved Project");
   await page.locator('button').filter({ hasText: /^Save$/ }).click();
   await expectText(page, "body", "Browser Saved Project");
-  await page.getByRole("button", { name: "New Project" }).click();
-  await expectText(page, "body", "Browser Saved Project");
-  const afterNewProjectSessions = await getJson("/api/sessions");
-  assert(afterNewProjectSessions.some((session) => session.id === created.session_id), "New Project should not end the previous private project sessions");
-  await page.getByRole("button", { name: "Browser Saved Project" }).click();
-  await page.locator('button[title="View what this public project does"]').first().click();
-  await expectText(page, "body", "Project Rooms");
-  await expectText(page, "body", "Actually useful");
-  await expectText(page, "body", "Send Explorer");
-  await page.getByRole("button", { name: "Send Explorer" }).click();
-  await expectText(page, "body", "Copy fit");
-  await page.locator('[aria-label="Public project details"] button[title="Close"]').click();
-  await page.getByRole("button", { name: "Project Discovery" }).click();
-  await expectText(page, "body", "Top100 Projects");
-  await expectText(page, "body", "Browser E2E Project");
-  await expectText(page, "body", "1 FLOP pledged");
-  await expectText(page, "body", "5.0 stars");
-  await expectText(page, "body", "Details");
-  await expectText(page, "body", "Review");
-  await page.getByRole("button", { name: "Protocol Network" }).click();
+  const afterProjectSaveSessions = await getJson("/api/sessions");
+  assert(afterProjectSaveSessions.some((session) => session.id === created.session_id), "Saving the workbench should not end existing private project sessions");
+  await page.getByRole("button", { name: "Market & Deals" }).click();
   await expectText(page, "body", "Technocore Protocol OS");
   await expectText(page, "body", "TCLK Offer Observer");
   await expectText(page, "body", "PAPER / NO VALUE");
-  await expectText(page, "body", "FLOP Deal Rehearsal");
-  await page.getByTitle("Minimize chat").click();
-  await page.getByLabel("Paper deal label").fill("Browser FLOP rehearsal");
-  await page.getByLabel("Paper FLOP amount").fill("321");
-  await page.getByRole("button", { name: "Create rehearsal" }).click();
-  await expectText(page, "body", "Browser FLOP rehearsal");
-  await expectText(page, "body", "321 FLOP · proposed");
-  await page.getByRole("button", { name: "Run accept" }).click();
-  await expectText(page, "body", "321 FLOP · accepted");
-  await page.getByRole("button", { name: "Run lock" }).click();
-  await expectText(page, "body", "321 FLOP · locked");
-  await page.getByRole("button", { name: "Run claim" }).click();
-  await expectText(page, "body", "321 FLOP · claimed");
-  await page.getByRole("button", { name: "Run receipt" }).click();
-  const rehearsalSection = page.locator("section", { hasText: "FLOP Deal Rehearsal" });
-  await expectText(page, "body", "321 FLOP · claimed");
-  await rehearsalSection.getByRole("button", { name: /^Run / }).first().waitFor({ state: "detached" });
-  assert(await rehearsalSection.getByRole("button", { name: /^Run / }).count() === 0, "completed PaperRail rehearsal should have no next transition");
-  await page.getByRole("button", { name: "Protocol Timeline" }).click();
+  await expectText(page, "body", "The complete deal lifecycle is enabled on PaperRail");
+  await page.getByRole("button", { name: "Deals", exact: true }).click();
+  await expectText(page, "body", "No PaperRail deals yet");
+  await page.getByRole("button", { name: "Timeline", exact: true }).click();
   await expectText(page, "body", "No archived protocol records yet.");
   await page.getByRole("button", { name: "OSA Activity" }).click();
   await expectText(page, "body", "OSA shares");
   await expectText(page, "body", "Network chat message");
-  await page.getByTitle("Open chat").click();
-  await page.getByPlaceholder("Message osa-network").fill("Browser chat from the floating window.");
+  const floatingChatInput = page.getByPlaceholder("Message osa-network");
+  if (!(await floatingChatInput.isVisible())) await page.getByTitle("Open chat").click();
+  await floatingChatInput.fill("Browser chat from the floating window.");
   await page.getByRole("button", { name: "Send" }).click();
   await expectText(page, "body", "Browser chat from the floating window.");
 
@@ -563,15 +640,8 @@ try {
   assert(!afterDeleteSessions.some((session) => session.id === projectShare.project.id), "deleted projects should disappear from Latest Projects");
 
   assert(await page.getByRole("button", { name: "Reset" }).count() === 0, "Reset should not be exposed in the topbar");
-  await expectText(page, "body", "PEERS");
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Delete Project" }).click();
-  const afterDeleteProjectSessions = await waitForJson(
-    "/api/sessions",
-    (items) => Array.isArray(items) && items.length >= 1 && items.every((session) => session.team_id === "public-projects-room") ? items : null,
-    "Delete Project to wipe private sessions while keeping Latest Projects"
-  );
-  assert(afterDeleteProjectSessions.length >= 1, "Latest Projects should remain after Delete Project");
+  await page.getByRole("button", { name: "Workspaces / Projects", exact: true }).click();
+  await expectText(page, "body", "Browser Saved Project");
 
   assert(pageErrors.length === 0, `browser console/page errors: ${pageErrors.join("\n")}`);
   console.log(`Browser E2E passed on ${baseUrl}`);

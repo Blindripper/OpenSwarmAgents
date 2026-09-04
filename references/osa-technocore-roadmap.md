@@ -1,7 +1,7 @@
 # OSA + Technocore: Roadmap zur Tiefen-Integration
 
-Stand: 2026-09-03
-Nächster Schritt: Phase 1.1 — Technocore-Job-Scanner
+Stand: 2026-09-04
+Nächster Schritt: Phase 2.7 — TCLK MCP Integration; Phase 2.1-2.6 sind implementiert und RC-geprüft.
 
 ---
 
@@ -20,12 +20,12 @@ Nächster Schritt: Phase 1.1 — Technocore-Job-Scanner
 
 | # | Schritt | Status |
 |---|---------|--------|
-| 2.1 | **Own Offers erstellen** — `POST /api/protocol/offers/create` → signed OFFER Frame | 🔴 |
-| 2.2 | **Accept-Button wieder aktivieren** — Offer Accept → Workspace-Task mit tclkDealId | ✅ `d0b5417` |
-| 2.3 | **Accept → Deal-Room** — Privaten `e-p-<contract>` Deal-Room erstellen | 🔴 |
-| 2.4 | **Lock via Dashboard** — "Lock FLOP" Button für PaperRail | 🔴 |
-| 2.5 | **Auto-Reveal/Auto-Claim** — ✅ Schon da (`autoClaimTclkDealForTask`), Fix für tclkDealId | 🟡 |
-| 2.6 | **Deal-Status Dashboard** — Live-Status: offer→accept→locked→revealed→claimed | 🔴 |
+| 2.1 | **Own Offers erstellen** — `POST /api/protocol/offers/create` → signed OFFER Frame | ✅ `5857ce7` |
+| 2.2 | **Accept-Button wieder aktivieren** — Offer Accept → privater Workspace-Task mit Agent und `tclkDealId`; Retry bleibt idempotent | ✅ |
+| 2.3 | **Accept → Deal-Room** — Offiziellen signed-only `mb-p-tclk-<contract>` Deal-Room erstellen | ✅ |
+| 2.4 | **Lock via Dashboard** — "Lock FLOP" Button für PaperRail | ✅ |
+| 2.5 | **Auto-Reveal/Auto-Claim** — Nach Agent-Result posted OSA RESULT/ATTEST, TCLK Reveal und Receipt policy-konform unter Agent-DID | ✅ |
+| 2.6 | **Deal-Status Dashboard** — Live-Status: offer→accept→locked→revealed→claimed plus Dealbook-Reconciliation | ✅ |
 | 2.7 | **TCLK MCP Integration** — `@flop-labs/tclk-mcp` starten für Framebau | 🔴 |
 
 ## Phase 3 🏛️ — Cross-Node Registry & Reputation

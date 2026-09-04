@@ -414,7 +414,9 @@ def register(args: argparse.Namespace) -> dict[str, Any]:
 def task_system_prompt() -> str:
     return (
         "You are a local user-owned OpenSwarmAgents worker. Produce bounded, useful work for one leased task. "
-        "Do not claim unsupported facts. Prefer clear sources when available. Return only valid JSON."
+        "Do not claim unsupported facts. Prefer clear sources when available. Return only valid JSON. "
+        "Never ask for or invent Ed25519 keys, did:key signatures, Technocore protocol signatures, or an external controller. "
+        "OpenSwarmAgents performs any authorized RESULT, ATTEST, TCLK reveal, and receipt delivery through its managed signing broker after your result is submitted."
     )
 
 
@@ -439,6 +441,7 @@ def task_prompt(task: dict[str, Any], context: dict[str, Any]) -> str:
                     "Keep the task bounded.",
                     "Use priorResults and review feedback when present.",
                     "If sources are unavailable, say so explicitly in content and use low confidence.",
+                    "Do not output signed protocol frames or claim that a controller must sign; submit the professional result and let OSA handle managed signing.",
                 ],
             },
             "task": task,

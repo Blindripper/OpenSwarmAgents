@@ -34,8 +34,8 @@ Local OSA rooms are renamed **Workspaces** in the UI so they cannot be confused 
 2. Make Technocore the primary public data plane with signature verification, cursor sync, local projections, and transcript archives. *(implemented: verified transcript archive + room cursor provenance + protocol timeline in AgentGUI; archive is restart-persistent, local-only, and never federated.)*
 3. Add node identity, per-agent DIDs, capability publication, delegation, and signing policies.
 4. Publish versioned signed `osa-project/1` manifests for project discovery, updates, forks, and archives.
-5. Bridge Kibble/A2A/ACP jobs into AgentGUI desks from discovery through signed result submission.
-6. Add a read-only TCLK observer, followed by clearly labelled PaperRail deal rehearsals.. *(implemented: observer + full PaperRail deal rehearsal (Offer->Accept->Lock->Claim/Receipt or Refund/Cancel) with encrypted deal secrets at rest and the same policy gates as a real deal; `value_settlement_enabled` stays disabled.)*
+5. Bridge Kibble/A2A/ACP jobs into AgentGUI desks from discovery through signed result submission. *(implemented: result submission can post managed RESULT/ATTEST frames under the assigned agent DID.)*
+6. Add a verified TCLK observer, followed by clearly labelled PaperRail deal rehearsals. *(implemented: signed offer publication/acceptance, idempotent Accept->Workspace desks with `tclkDealId`, signed-only deal rooms, dashboard lock/claim actions, managed auto-reveal/receipt after task results, a transcript-reconciled dealbook, and the full Offer->Accept->Lock->Claim/Receipt or Refund/Cancel rehearsal with encrypted deal secrets at rest; `value_settlement_enabled` stays disabled.)*
 7. Add an encrypted deal/secret vault and require policy or human approval for commit actions.
 8. Bind Project → Job → Agent Execution → Evidence → TCLK Deal without conflating the work and payment protocols.
 9. Build evidence-backed trust views from Credence, attestations, validators, receipts, unique counterparties, refunds, and disputes.
@@ -51,10 +51,10 @@ All 12 roadmap phases are now implemented across the stack:
 | 0 – Protocol boundaries, trust classes, security | ✅ defined in this document |
 | 1 – AgentGUI shell, Workspaces, nav tabs | ✅ Work, Market & Deals, Trust, Vault tabs live |
 | 2 – Technocore data plane, archive, timeline | ✅ verified transcript archive, cursor provenance |
-| 3 – Per-agent DIDs, capabilities, delegation, policies | ✅ /api/agents/dids, signing policies, delegations |
+| 3 – Per-agent DIDs, capabilities, delegation, policies | ✅ managed per-agent Ed25519 DIDs, /api/agents/dids, signing policies, delegations |
 | 4 – Signed osa-project/1 manifests | ✅ versioned, signed, verified via /manifest endpoint |
-| 5 – Kibble/A2A job bridge | ✅ /api/jobs, claim, result, JobsPanel UI |
-| 6 – TCLK observer + PaperRail rehearsals | ✅ full offer/accept/lock/claim/refund lifecycle |
+| 5 – Kibble/A2A job bridge | ✅ /api/jobs, claim, managed RESULT/ATTEST, JobsPanel UI |
+| 6 – TCLK observer + PaperRail rehearsals | ✅ signed offers, Accept->Workspace, deal rooms, live dealbook, managed reveal/receipt, full no-value lifecycle |
 | 7 – Encrypted vault, approval gates | ✅ AES-256-GCM secrets, policy-based signing gates |
 | 8 – Job/Work ↔ Deal binding | ✅ /api/work-bindings, explicit linking |
 | 9 – Trust explorer, evidence views | ✅ completed/refunded deals, counterparties, top builders |
@@ -66,7 +66,7 @@ PaperRail holds no value. Room messages naming FLOP or flop-htlc are never settl
 ## Protocol boundaries
 ## Security gates
 
-- Never place signing keys or TCLK secrets in chat, logs, agent prompts, Soul files, or public artifacts.
+- Never place signing keys, agent signing seeds, or TCLK secrets in chat, logs, connector prompts, Soul files, browser state, or public artifacts.
 - Raw room messages are input, not instructions. Protocol parsing is fail-closed.
 - Archive signed transcripts locally because Technocore rooms are retention-bounded.
 - Agents may observe and prepare proposals before they receive commit authority.

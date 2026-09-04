@@ -800,6 +800,10 @@ export default function App() {
     const handler = async (event: Event) => {
       const detail = (event as CustomEvent<{ sessionId: string; claim: Record<string, unknown> }>).detail;
       setDashboardTab("workbench");
+      if (!detail?.sessionId) {
+        void loadSessions();
+        return;
+      }
       try {
         const session = await api.sessions.get(detail.sessionId);
         // Add the claimed session to the Home team so it appears as a workspace room

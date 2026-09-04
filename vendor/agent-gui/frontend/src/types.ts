@@ -258,8 +258,15 @@ export interface ProtocolPaperDeal {
   asset: "FLOP" | string;
   payer_did: string;
   counterparty_did: string;
+  local_agent_id?: string | null;
+  local_agent_did?: string | null;
   contract_id?: string | null;
   deal_room?: string | null;
+  deal_room_posted?: boolean;
+  deal_room_name?: string | null;
+  result_frame_posted?: boolean;
+  attest_frame_posted?: boolean;
+  workspace_session_id?: string | null;
   receipt_recorded: boolean;
   next_action?: "accept" | "lock" | "claim" | "receipt" | null;
   created_at: string;

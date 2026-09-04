@@ -1,9 +1,9 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
+import { createHash, createPublicKey, generateKeyPairSync, sign as signTechnocorePayload, verify as verifySignature } from "node:crypto";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
@@ -15,6 +15,16 @@ const technocorePort = port + 1;
 const baseUrl = `http://127.0.0.1:${port}`;
 const technocoreBaseUrl = `http://127.0.0.1:${technocorePort}`;
 const dataDir = await mkdtemp(join(tmpdir(), "osa-rc-smoke-"));
+const legacyCapabilityTime = new Date().toISOString();
+await writeFile(join(dataDir, "agentswarm.json"), JSON.stringify({
+  agentCapabilities: [{
+    agent_id: "coder",
+    did: "did:key:z6MkLegacyCoderIdentity",
+    capabilities: ["sign_text", "create_deal"],
+    published_at: legacyCapabilityTime,
+    updated_at: legacyCapabilityTime
+  }]
+}));
 const testWalletPrivateKey = Uint8Array.from(Buffer.from("1111111111111111111111111111111111111111111111111111111111111111", "hex"));
 const testWalletAddress = ethereumAddressFromPrivateKey(testWalletPrivateKey);
 const technocoreWrites = [];
@@ -117,6 +127,52 @@ try {
   const timelineOffer = protocolOverview.timeline?.find((record) => record.object_id === tclkOffer.id && record.valid === true);
   assert(timelineOffer?.verified === true && timelineOffer?.frame_type === "offer" && timelineOffer?.payload_hash, "Protocol timeline should expose verified frame metadata and hashes");
   assert(timelineOffer?.text === undefined && timelineOffer?.signature === undefined && timelineOffer?.nonce === undefined, "Protocol timeline must not expose raw signed frames or signature material");
+  const publishedOffer = await postJson("/api/protocol/offers/create", {
+    amount: "125",
+    label: "RC published TCLK offer",
+    job_id: "rc-job-125",
+    context: "Verify the signed offer publication path"
+  });
+  assert(publishedOffer.ok === true && publishedOffer.deal?.status === "proposed", "OSA should create a payer-side TCLK offer and expose it in the local dealbook");
+  assert(publishedOffer.deal?.has_value === false && publishedOffer.deal?.asset === "FLOP", "Published offers must remain explicitly PaperRail/no-value");
+  assert(technocoreWrites.some((item) => item.room === "tclk-offers" && item.text.includes(publishedOffer.offer_id) && item.from === health.runtime.technocoreDid), "OSA should publish its own offer as a signed Technocore frame");
+  const publishedOverview = await getJson("/api/protocol/overview");
+  assert(publishedOverview.paper?.deals?.some((deal) => deal.id === publishedOffer.offer_id && deal.status === "proposed"), "Protocol overview should expose locally published offers in the Deals view");
+  const externalTclkSigner = generateKeyPairSync("ed25519");
+  const externalTclkDid = didKeyFromEd25519PublicKey(externalTclkSigner.publicKey);
+  const managedOffer = makeTclkOffer({
+    from: externalTclkDid,
+    role: "payer",
+    amount: "175",
+    asset: "FLOP",
+    lock: "hash",
+    rails: ["paper"],
+    expiresMs: Date.now() + 5 * 60_000,
+    claimByMs: Date.now() + 30 * 60_000,
+    refundAfterMs: Date.now() + 60 * 60_000,
+    job: { proto: "kibble", id: "rc-managed-job", context: "Managed signing workspace smoke" }
+  });
+  signedFixtureWrite("tclk-offers", externalTclkDid, externalTclkSigner.privateKey, encodeTclkFrame(managedOffer), "9000001");
+  const acceptedManagedDeal = await postJson("/api/protocol/offers/accept", {
+    offer_id: managedOffer.id,
+    agent_id: "technocore-specialist",
+    start_connector: false
+  });
+  assert(acceptedManagedDeal.id === managedOffer.id && acceptedManagedDeal.status === "accepted", "Accept Offer should create a local accepted PaperRail deal");
+  assert(acceptedManagedDeal.has_value === false && acceptedManagedDeal.local_agent_did?.startsWith("did:key:z6Mk"), "Accepted deals should remain no-value and bind a managed agent DID");
+  assert(acceptedManagedDeal.workspace_session_id?.startsWith("home-task-"), "Accept Offer should return the created private workspace session id");
+  const managedSessions = await getJson("/api/sessions");
+  assert(managedSessions.some((session) => session.id === acceptedManagedDeal.workspace_session_id && session.agent === "technocore-specialist"), "Accepted offers should be immediately visible under Workspaces");
+  const managedAcceptWrite = technocoreWrites.find((item) => item.room === "tclk-offers" && item.text.includes(managedOffer.id) && item.text.includes('"type":"accept"'));
+  assert(managedAcceptWrite?.from === acceptedManagedDeal.local_agent_did, "Accept frames should be signed by the selected managed agent DID");
+  const acceptedManagedDealRetry = await postJson("/api/protocol/offers/accept", {
+    offer_id: managedOffer.id,
+    agent_id: "technocore-specialist",
+    start_connector: false
+  });
+  assert(acceptedManagedDealRetry.workspace_session_id === acceptedManagedDeal.workspace_session_id, "Accept Offer retries should reuse the existing workspace session");
+  const sessionsAfterRetry = await getJson("/api/sessions");
+  assert(sessionsAfterRetry.filter((session) => session.id === acceptedManagedDeal.workspace_session_id).length === 1, "Accept Offer retries should not duplicate workspace desks");
   technocoreTclkUnavailable = true;
   const archivedProtocolOverview = await getJson("/api/protocol/overview");
   assert(archivedProtocolOverview.room_sync?.source === "archive" && archivedProtocolOverview.room_sync?.stale === true, "Protocol OS should retain its archived projection during a Technocore outage");
@@ -124,7 +180,12 @@ try {
   technocoreTclkUnavailable = false;
   let paperDeal = await postJson("/api/protocol/paper-deals", { amount: "250", label: "RC full FLOP rehearsal" });
   assert(paperDeal.status === "proposed" && paperDeal.asset === "FLOP" && paperDeal.has_value === false && paperDeal.next_action === "accept", "PaperRail should create a production-shaped FLOP rehearsal without value");
-  for (const expected of ["accepted", "locked", "claimed", "claimed"]) {
+  paperDeal = await postJson(`/api/protocol/paper-deals/${encodeURIComponent(paperDeal.id)}/advance`, {});
+  assert(paperDeal.status === "accepted", "PaperRail rehearsal should advance to accepted");
+  paperDeal = await postJson("/api/protocol/offers/lock", { offer_id: paperDeal.id });
+  assert(paperDeal.status === "locked" && paperDeal.next_action === "claim", "The dashboard lock endpoint should advance an accepted payer deal to locked");
+  assert(technocoreWrites.some((item) => item.room === "tclk-offers" && item.text.includes(paperDeal.contract_id) && item.text.includes('"type":"lock"')), "PaperRail lock should be published as a signed Technocore frame");
+  for (const expected of ["claimed", "claimed"]) {
     paperDeal = await postJson(`/api/protocol/paper-deals/${encodeURIComponent(paperDeal.id)}/advance`, {});
     assert(paperDeal.status === expected, `PaperRail rehearsal should advance to ${expected}`);
   }
@@ -346,6 +407,101 @@ try {
   assert(usedVotingConnector?.lastUsedPath === "/api/voting/connect", "connector audit should record the last used API path");
   const workerGoalId = connectorAuditState.goals.find((goal) => goal.sourceProposalId === proposal.proposal.id)?.id;
   assert(workerGoalId, "smoke proposal should promote into a worker goal");
+  const tclkTask = connectorAuditState.tasks.find((task) => task.tclkDealId === managedOffer.id);
+  assert(tclkTask?.id && tclkTask.goalId, "Accepted TCLK offer should create a bound task in private state");
+  const tclkScopedToken = await postJson(
+    "/api/connectors/token",
+    {
+      mode: "worker",
+      goalId: tclkTask.goalId,
+      taskId: tclkTask.id,
+      name: "RC Managed TCLK Agent",
+      capabilities: ["research", "review", "synthesis"],
+      models: ["connector:stub"]
+    },
+    headers
+  );
+  assert(tclkScopedToken.connector.taskId === tclkTask.id, "worker connector token should expose its task scope metadata");
+  const tclkConnectorHeaders = { "x-osa-connector-token": tclkScopedToken.token };
+  const tclkWorker = await postJson(
+    "/api/agents/register",
+    {
+      name: "RC Managed TCLK Agent",
+      goalId: tclkTask.goalId,
+      capabilities: ["research", "review", "synthesis"],
+      models: ["connector:stub"]
+    },
+    tclkConnectorHeaders
+  );
+  const tclkClaim = await postJson(
+    "/api/tasks/claim",
+    { agentId: tclkWorker.agent.id, goalId: "wrong-goal-for-scoped-token" },
+    tclkConnectorHeaders
+  );
+  assert(tclkClaim.task?.id === tclkTask.id, "task-scoped connector tokens should only claim their bound task");
+  const otherTask = connectorAuditState.tasks.find((task) => task.id !== tclkTask.id);
+  assert(otherTask?.id, "RC should have a second task for negative task-scope checks");
+  await expectStatus(`/api/tasks/${otherTask.id}/result`, 403, {
+    agentId: tclkWorker.agent.id,
+    summary: "scope bypass",
+    content: "This should be blocked before lease details matter."
+  }, tclkConnectorHeaders);
+  await expectStatus("/api/artifacts/upload", 403, {
+    agentId: tclkWorker.agent.id,
+    goalId: tclkTask.goalId,
+    taskId: otherTask.id,
+    name: "wrong-task.md",
+    kind: "code",
+    mimeType: "text/markdown",
+    dataBase64: Buffer.from("wrong task").toString("base64")
+  }, tclkConnectorHeaders);
+  const didListing = await getJson("/api/agents/dids");
+  const didListingText = JSON.stringify(didListing);
+  assert(!/PRIVATE KEY|privateKey|seed|pkcs8/i.test(didListingText), "Agent DID APIs must not leak private keys or deterministic seeds");
+  const migratedCoderCapabilities = didListing.agents?.find((agent) => agent.agent_id === "coder")?.capabilities || [];
+  assert(["sign_text", "create_deal", "submit_result", "attest_result", "claim", "receipt"].every((capability) => migratedCoderCapabilities.includes(capability)), "Legacy default agent records should migrate to autonomous managed no-value signing");
+  assert(!migratedCoderCapabilities.includes("lock") && !migratedCoderCapabilities.includes("settle"), "Managed-signing migration must not grant lock or real-settlement authority");
+  const lockFrame = {
+    type: "lock",
+    from: externalTclkDid,
+    contract: acceptedManagedDeal.contract_id,
+    rail: "paper",
+    ref: "rc-paper-lock"
+  };
+  signedFixtureWrite("tclk-offers", externalTclkDid, externalTclkSigner.privateKey, encodeTclkFrame(lockFrame), "9000002");
+  await postJson("/api/signing-policy", { agent_id: "technocore-specialist", action: "claim", policy: "require-human" });
+  await expectStatus("/api/protocol/offers/claim", 403, { deal_id: managedOffer.id });
+  await postJson("/api/signing-policy", { agent_id: "technocore-specialist", action: "claim", policy: "signature-only" });
+  await postJson(
+    `/api/tasks/${tclkTask.id}/result`,
+    {
+      agentId: tclkWorker.agent.id,
+      summary: "Managed TCLK result",
+      content: "The task result is complete; OSA should sign RESULT, ATTEST, reveal, and receipt frames itself.",
+      sources: ["connector://rc-managed-tclk"],
+      confidence: 0.8
+    },
+    tclkConnectorHeaders
+  );
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const dealWrites = technocoreWrites.filter((item) => item.from === acceptedManagedDeal.local_agent_did);
+    if (
+      dealWrites.some((item) => item.text.includes("RESULT v1") && item.text.includes(managedOffer.id)) &&
+      dealWrites.some((item) => item.text.includes("ATTEST v1") && item.text.includes(managedOffer.id)) &&
+      dealWrites.some((item) => item.text.includes('"type":"reveal"') && item.text.includes(acceptedManagedDeal.contract_id)) &&
+      dealWrites.some((item) => item.text.includes('"type":"receipt"') && item.text.includes(acceptedManagedDeal.contract_id))
+    ) break;
+    await delay(50);
+  }
+  const managedDeliveryWrites = technocoreWrites.filter((item) => item.from === acceptedManagedDeal.local_agent_did);
+  assert(managedDeliveryWrites.some((item) => item.text.includes("RESULT v1") && item.text.includes(managedOffer.id)), "Result submission should post RESULT via the managed agent DID");
+  assert(managedDeliveryWrites.some((item) => item.text.includes("ATTEST v1") && item.text.includes(managedOffer.id)), "Result submission should post ATTEST via the managed agent DID");
+  assert(managedDeliveryWrites.some((item) => item.room === "tclk-offers" && item.text.includes('"type":"reveal"') && item.text.includes(acceptedManagedDeal.contract_id)), "Result submission should post a signed TCLK reveal via the managed agent DID");
+  assert(managedDeliveryWrites.some((item) => item.room === "tclk-offers" && item.text.includes('"type":"receipt"') && item.text.includes(acceptedManagedDeal.contract_id)), "Result submission should post a signed TCLK receipt via the managed agent DID");
+  const finalManagedOverview = await getJson("/api/protocol/overview");
+  const finalManagedDeal = finalManagedOverview.paper?.deals?.find((deal) => deal.id === managedOffer.id);
+  assert(finalManagedDeal?.status === "claimed" && finalManagedDeal.receipt_recorded === true, "Managed result submission should complete auto-reveal and receipt in the dealbook");
+  await postJson(`/api/connectors/${tclkScopedToken.connector.id}/revoke`, {}, headers);
   const rotatedVotingConnector = await postJson(`/api/connectors/${votingConnector.connector.id}/rotate`, {}, headers);
   assert(rotatedVotingConnector.token.startsWith("osa_conn_"), "rotated connector should return a fresh raw token once");
   assert(rotatedVotingConnector.connector.rotatedFromId === votingConnector.connector.id, "rotated connector should link to previous token");
@@ -574,8 +730,9 @@ function startTechnocoreFixture() {
       }));
       return;
     }
-    if (["/r/osa-lab", "/r/osa-network", "/r/tclk-offers"].includes(url.pathname) && req.method === "GET") {
-      const room = url.pathname.split("/").at(-1);
+    const roomPathMatch = url.pathname.match(/^\/r\/([a-z][a-z0-9_-]{0,79})$/);
+    if (roomPathMatch && req.method === "GET") {
+      const room = roomPathMatch[1];
       if (room === "tclk-offers" && technocoreTclkUnavailable) {
         res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
         res.end("fixture unavailable\n");
@@ -587,12 +744,12 @@ function startTechnocoreFixture() {
         wait: url.searchParams.get("wait") || "",
         cacheBuster: url.searchParams.get("n") || ""
       });
-      const baseMessages = [{
+      const baseMessages = ["osa-lab", "osa-network", "tclk-offers"].includes(room) ? [{
         seq: 41,
         ts: "2026-09-01T06:00:00.000Z",
         from: "did:key:z6MkRcSmokeTechnocoreFixture",
         text: room === "osa-network" ? "OSA public channel fixture message" : "External bridge fixture message"
-      }];
+      }] : [];
       const mirroredMessages = technocoreWrites
         .filter((item) => item.room === room)
         .map((item, index) => ({
@@ -615,8 +772,8 @@ function startTechnocoreFixture() {
       }));
       return;
     }
-    if (["/r/osa-lab", "/r/osa-network", "/r/tclk-offers"].includes(url.pathname) && req.method === "POST") {
-      const room = url.pathname.split("/").at(-1);
+    if (roomPathMatch && req.method === "POST") {
+      const room = roomPathMatch[1];
       let body = "";
       req.setEncoding("utf8");
       req.on("data", (chunk) => {
@@ -693,6 +850,33 @@ function isValidTechnocoreSignedWrite(room, message) {
   } catch {
     return false;
   }
+}
+
+function didKeyFromEd25519PublicKey(publicKey) {
+  const der = publicKey.export({ type: "spki", format: "der" });
+  const rawPublicKey = Buffer.from(der).slice(-32);
+  return `did:key:z${base58btcEncode(Buffer.concat([Buffer.from([0xed, 0x01]), rawPublicKey]))}`;
+}
+
+function signedFixtureWrite(room, did, privateKey, text, nonce) {
+  const singleLine = String(text).replace(/\r?\n/g, " ").slice(0, 4096);
+  const sig = signTechnocorePayload(null, Buffer.from(`${room}|${nonce}|${singleLine}`, "utf8"), privateKey).toString("base64url");
+  technocoreWrites.push({ room, from: did, nonce, sig, text: singleLine });
+  return { room, from: did, nonce, sig, text: singleLine };
+}
+
+function base58btcEncode(bytes) {
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let value = BigInt(`0x${Buffer.from(bytes).toString("hex") || "0"}`);
+  let output = "";
+  while (value > 0n) {
+    const remainder = Number(value % 58n);
+    output = alphabet[remainder] + output;
+    value /= 58n;
+  }
+  const leadingZeroes = Buffer.from(bytes).findIndex((byte) => byte !== 0);
+  const prefix = leadingZeroes < 0 ? "1".repeat(bytes.length) : "1".repeat(leadingZeroes);
+  return prefix + (output || "1");
 }
 
 function base58btcDecode(value) {

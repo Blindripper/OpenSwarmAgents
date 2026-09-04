@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { NetworkEvent } from "../api/client";
 import { api } from "../api/client";
-import type { ProtocolLayerStatus, ProtocolOverview, ProtocolTimelineEntry, TclkOfferProjection } from "../types";
+import type { ProtocolLayerStatus, ProtocolOverview, ProtocolPaperDeal, ProtocolTimelineEntry, TclkOfferProjection } from "../types";
 import { NetworkActivityPanel } from "./NetworkActivityPanel";
 
 interface Props {
@@ -136,6 +136,94 @@ function TimelineRecord({ record }: { record: ProtocolTimelineEntry }) {
   );
 }
 
+function dealStatusColor(status: string): string {
+  if (["claimed", "cancelled"].includes(status)) return "#7ee0c2";
+  if (status === "locked") return "#facc15";
+  if (status === "accepted") return "#38bdf8";
+  if (status === "refunded") return "#fca5a5";
+  return "#94a3b8";
+}
+
+function DealCard({ deal, onLock, onClaim, busy }: { deal: ProtocolPaperDeal; onLock?: (deal: ProtocolPaperDeal) => void; onClaim?: (deal: ProtocolPaperDeal) => void; busy?: boolean }) {
+  const canLock = deal.status === "accepted" && deal.next_action === "lock" && Boolean(onLock);
+  const canClaim = deal.status === "locked" && deal.next_action === "claim" && Boolean(onClaim);
+  return (
+    <article style={{
+      border: `1px solid ${canLock ? "#2a8c72" : "#273453"}`,
+      borderRadius: 10,
+      padding: 14,
+      background: "linear-gradient(145deg, rgba(18,24,40,.96), rgba(10,18,31,.96))",
+      display: "grid",
+      gap: 10,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <strong style={{ fontSize: 18 }}>{deal.amount} {deal.asset}</strong>
+            <span style={{
+              borderRadius: 999,
+              padding: "3px 10px",
+              border: `1px solid ${dealStatusColor(deal.status)}`,
+              color: dealStatusColor(deal.status),
+              fontSize: 12,
+              fontWeight: 900,
+              textTransform: "uppercase",
+            }}>{deal.status}</span>
+            <span style={{ color: "#7ee0c2", fontSize: 12, fontWeight: 900 }}>PAPER RAIL</span>
+          </div>
+          <div style={{ marginTop: 6, color: "var(--text-dim)", fontSize: 13 }}>{deal.label}</div>
+          <div title={deal.payer_did} style={{ marginTop: 4, color: "var(--text-dim)", fontSize: 12 }}>payer {shortIdentity(deal.payer_did)}</div>
+          {deal.counterparty_did && <div title={deal.counterparty_did} style={{ marginTop: 2, color: "var(--text-dim)", fontSize: 12 }}>payee {shortIdentity(deal.counterparty_did)}</div>}
+        </div>
+        <div style={{ textAlign: "right", color: "var(--text-dim)", fontSize: 12 }}>
+          <div>updated {deadlineLabel(deal.updated_at)}</div>
+          {deal.next_action && <div style={{ marginTop: 4, color: "#fde047", fontWeight: 900, fontSize: 12, textTransform: "uppercase" }}>next: {deal.next_action}</div>}
+        </div>
+      </div>
+      {(deal.contract_id || deal.deal_room) && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {deal.contract_id && (
+            <span title={deal.contract_id} style={{ padding: "3px 8px", borderRadius: 6, background: "#241b3d", color: "#c4b5fd", fontSize: 12, fontWeight: 800, fontFamily: "ui-monospace,monospace" }}>
+              contract {shortIdentity(deal.contract_id)}
+            </span>
+          )}
+          {deal.deal_room && (
+            <span title={deal.deal_room_posted ? "Deal room announced on Technocore" : "Derived deal room name"} style={{ padding: "3px 8px", borderRadius: 6, background: "#172238", color: deal.deal_room_posted ? "#7ee0c2" : "#93c5fd", fontSize: 12, fontWeight: 800 }}>
+              #{deal.deal_room_name || deal.deal_room}{deal.deal_room_posted ? " · posted" : ""}
+            </span>
+          )}
+        </div>
+      )}
+      {(deal.timeline?.length || 0) > 0 && (
+        <details style={{ border: "1px solid #1e2a47", borderRadius: 8, padding: "8px 10px", background: "#0b1525" }}>
+          <summary style={{ cursor: "pointer", color: "#93c5fd", fontSize: 12, fontWeight: 800 }}>Timeline ({deal.timeline.length})</summary>
+          <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+            {deal.timeline.map((entry, index) => (
+              <div key={`${entry.stage}-${entry.at}-${index}`} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, color: "var(--text-dim)" }}>
+                <span style={{ padding: "2px 7px", borderRadius: 5, background: "#172238", color: "#93c5fd", fontWeight: 800, textTransform: "uppercase", fontSize: 10, whiteSpace: "nowrap" }}>{entry.stage}</span>
+                <span style={{ flex: 1 }}>{entry.detail} <span title={entry.actor} style={{ color: "#64748b" }}>· {shortIdentity(entry.actor)}</span></span>
+                <span style={{ color: "#64748b", whiteSpace: "nowrap" }}>{deadlineLabel(entry.at)}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {canLock && (
+          <button type="button" disabled={busy} onClick={() => onLock?.(deal)} style={{ height: 32, padding: "0 14px", borderRadius: 6, border: "1px solid #a16207", background: "#3b2b0d", color: "#fde68a", fontWeight: 900, fontSize: 12, cursor: busy ? "default" : "pointer" }}>
+            {busy ? "Locking…" : "🔒 Lock FLOP (PaperRail)"}
+          </button>
+        )}
+        {canClaim && (
+          <button type="button" disabled={busy} onClick={() => onClaim?.(deal)} style={{ height: 32, padding: "0 14px", borderRadius: 6, border: "1px solid #a16207", background: "#3b2b0d", color: "#fde68a", fontWeight: 900, fontSize: 12, cursor: busy ? "default" : "pointer" }}>
+            {busy ? "Claiming…" : "Claim Reward"}
+          </button>
+        )}
+      </div>
+    </article>
+  );
+}
+
 
 async function apiProtocolCreateOffer(body: { amount: string; label?: string; job_id?: string; context?: string; expires_minutes?: number }): Promise<any> {
   const res = await fetch("/api/protocol/offers/create", {
@@ -156,7 +244,7 @@ async function apiProtocolAcceptOffer(offerId: string, agentId = "technocore-spe
     body: JSON.stringify({ offer_id: offerId, agent_id: agentId })
   });
   const body = await res.json();
-  if (body.id) { return { ok: true, deal: body }; }
+  if (body.id) { return { ok: true, deal: body, sessionId: body.workspace_session_id || null }; }
   if (body.detail) { return { ok: false, detail: body.detail }; }
   return { ok: false, detail: "Unexpected server response" };
 }
@@ -173,14 +261,27 @@ async function apiProtocolClaimOffer(offerId: string): Promise<any> {
   return { ok: false, detail: "Unexpected server response" };
 }
 
+async function apiProtocolLockOffer(offerId: string): Promise<any> {
+  const res = await fetch("/api/protocol/offers/lock", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ offer_id: offerId })
+  });
+  const body = await res.json();
+  if (body.id) { return { ok: true, deal: body }; }
+  if (body.detail) { return { ok: false, detail: body.detail }; }
+  return { ok: false, detail: "Unexpected server response" };
+}
+
 export function ProtocolOsPanel({ events, live, activityLoading = false, onRefreshActivity, onOpenProject }: Props) {
   const [view, setView] = useState<"protocols" | "activity">("protocols");
   const [overview, setOverview] = useState<ProtocolOverview | null>(null);
-  const [protocolView, setProtocolView] = useState<"offers" | "timeline">("offers");
+  const [protocolView, setProtocolView] = useState<"offers" | "dealbook" | "timeline">("offers");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [acceptBusy, setAcceptBusy] = useState<string | null>(null);
   const [claimBusy, setClaimBusy] = useState<string | null>(null);
+  const [lockBusy, setLockBusy] = useState<string | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
   const [createStatus, setCreateStatus] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -202,7 +303,7 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
     try {
       const data = await apiProtocolAcceptOffer(offer.id);
       if (data.deal) {
-        window.dispatchEvent(new CustomEvent("osa:tclk-accepted", { detail: { dealId: data.deal.id, offerId: offer.id } }));
+        window.dispatchEvent(new CustomEvent("osa:claim-job", { detail: { sessionId: data.sessionId || data.deal.workspace_session_id, claim: { dealId: data.deal.id, offerId: offer.id } } }));
       }
       if (!data.ok) throw new Error(data.detail || "Accept failed");
       setTimeout(() => void refresh(), 2000);
@@ -237,7 +338,7 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
     }
   }, [refresh]);
 
-  const handleClaim = useCallback(async (offer: TclkOfferProjection) => {
+  const handleClaim = useCallback(async (offer: { id: string }) => {
     setClaimBusy(offer.id);
     setError(null);
     try {
@@ -248,6 +349,20 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
       setError(cause instanceof Error ? cause.message : "Claim failed");
     } finally {
       setClaimBusy(null);
+    }
+  }, [refresh]);
+
+  const handleLock = useCallback(async (deal: ProtocolPaperDeal) => {
+    setLockBusy(deal.id);
+    setError(null);
+    try {
+      const data = await apiProtocolLockOffer(deal.id);
+      if (!data.ok) throw new Error(data.detail || "Lock failed");
+      setTimeout(() => void refresh(), 2000);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Lock failed");
+    } finally {
+      setLockBusy(null);
     }
   }, [refresh]);
 
@@ -310,9 +425,9 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
               <span style={{ border: "1px solid #854d0e", background: "#2b210c", color: "#fde047", borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 950 }}>PAPER / NO VALUE</span>
             </div>
             <div style={{ marginTop: 10, display: "flex", gap: 6 }}>
-              {(["offers", "timeline"] as const).map((candidate) => (
+              {(["offers", "dealbook", "timeline"] as const).map((candidate) => (
                 <button key={candidate} type="button" onClick={() => setProtocolView(candidate)} style={{ height: 30, padding: "0 10px", borderRadius: 6, border: `1px solid ${protocolView === candidate ? "#2563eb" : "#2a3558"}`, background: protocolView === candidate ? "#12213d" : "#101827", color: protocolView === candidate ? "#93c5fd" : "#94a3b8", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
-                  {candidate === "offers" ? "Offers" : "Protocol Timeline"}
+                  {candidate === "offers" ? "Offers" : candidate === "dealbook" ? "Deals" : "Timeline"}
                 </button>
               ))}
             </div>
@@ -323,11 +438,38 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
                 (overview?.timeline?.length || 0) === 0 ? (
                   <div style={{ minHeight: 180, display: "grid", placeItems: "center", textAlign: "center", color: "var(--text-dim)", fontSize: 14 }}>No archived protocol records yet.</div>
                 ) : overview?.timeline?.map((record) => <TimelineRecord key={record.id} record={record} />)
+              ) : protocolView === "dealbook" ? (
+                (overview?.paper?.deals?.length || 0) === 0 ? (
+                  <div style={{ minHeight: 180, display: "grid", placeItems: "center", textAlign: "center", color: "var(--text-dim)", fontSize: 14 }}>
+                    No PaperRail deals yet. Accept an offer to start one.
+                  </div>
+                ) : overview?.paper?.deals.map((deal) => {
+                  const nodeDid = overview?.identity?.node_did;
+                  const isPayer = Boolean(nodeDid && deal.payer_did === nodeDid);
+                  const isPayee = Boolean(deal.local_agent_did && deal.next_action === "claim");
+                  return (
+                    <DealCard
+                      key={deal.id}
+                      deal={deal}
+                      onLock={isPayer ? handleLock : undefined}
+                      onClaim={isPayee ? handleClaim : undefined}
+                      busy={lockBusy === deal.id || claimBusy === deal.id}
+                    />
+                  );
+                })
               ) : (overview?.tclk.offers.length || 0) === 0 ? (
                 <div style={{ minHeight: 180, display: "grid", placeItems: "center", textAlign: "center", color: "var(--text-dim)", fontSize: 14 }}>
                   No verified TCLK offers are visible in the current room window.
                 </div>
-              ) : overview?.tclk.offers.map((offer) => <OfferCard key={`${offer.id}-${offer.sequence}`} offer={offer} onAccept={handleAccept} onClaim={handleClaim} busy={acceptBusy === offer.id || claimBusy === offer.id} />)}
+              ) : overview?.tclk.offers.map((offer) => (
+                <OfferCard
+                  key={`${offer.id}-${offer.sequence}`}
+                  offer={offer}
+                  onAccept={handleAccept}
+                  onClaim={overview?.identity?.node_did && offer.from !== overview.identity.node_did ? handleClaim : undefined}
+                  busy={acceptBusy === offer.id || claimBusy === offer.id}
+                />
+              ))}
             </div>
           </div>
 
