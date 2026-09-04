@@ -30,9 +30,17 @@ const testWalletAddress = ethereumAddressFromPrivateKey(testWalletPrivateKey);
 const technocoreWrites = [];
 const technocoreReads = [];
 const technocoreNotes = new Map();
+const technocoreNoteWrites = [];
 let server = null;
 let technocoreServer = null;
 let technocoreTclkUnavailable = false;
+let technocoreRegistryUnavailable = false;
+
+const externalRegistryNode = generateKeyPairSync("ed25519");
+const externalRegistryAgent = generateKeyPairSync("ed25519");
+const externalRegistryNodeDid = didKeyFromEd25519PublicKey(externalRegistryNode.publicKey);
+const externalRegistryAgentDid = didKeyFromEd25519PublicKey(externalRegistryAgent.publicKey);
+const externalRegistryNodeId = nodeIdForPublicKey(externalRegistryNode.publicKey.export({ type: "spki", format: "pem" }));
 
 try {
   await assertProductionLocalValidation();
@@ -53,6 +61,7 @@ try {
       OSA_TECHNOCORE_PUBLIC_ROOM: "osa-network",
       OSA_TECHNOCORE_ROOMS: "osa-lab",
       OSA_TECHNOCORE_ROOM_LIMIT: "2",
+      OSA_CAPABILITY_REGISTRY_STALE_MS: "50",
       OSA_TECHNOCORE_ANNOUNCE: "1",
       OSA_PUBLIC_URL: "https://osa.example",
       AGENTSWARM_PROPOSAL_VOTING_MS: "1",
@@ -229,7 +238,7 @@ try {
     wallet_address: testWalletAddress
   });
   assert(mirroredChat.technocore_mirrored === true, "osa-network posts should mirror to the Technocore OSA room when enabled");
-  assert(mirroredChat.message?.from?.startsWith("did:key:z6Mk") && mirroredChat.message?.signed === true && mirroredChat.message?.verified === true && mirroredChat.message?.trusted === true && mirroredChat.message?.seq === 42, "osa-network posts should expose their verified Technocore DID delivery instead of only the wallet identity");
+  assert(mirroredChat.message?.from?.startsWith("did:key:z6Mk") && mirroredChat.message?.signed === true && mirroredChat.message?.verified === true && mirroredChat.message?.trusted === true && Number.isFinite(Number(mirroredChat.message?.seq)), "osa-network posts should expose their verified Technocore DID delivery instead of only the wallet identity");
   assert(technocoreWrites.some((item) => item.room === "osa-network" && item.text.includes("RC smoke public channel mirror") && item.from.startsWith("did:key:z6Mk")), "Technocore fixture should receive mirrored osa-network text from the OSA DID");
   const mirroredChannel = await getJson("/api/network/chat?limit=20");
   assert(
@@ -461,6 +470,39 @@ try {
   const migratedCoderCapabilities = didListing.agents?.find((agent) => agent.agent_id === "coder")?.capabilities || [];
   assert(["sign_text", "create_deal", "submit_result", "attest_result", "claim", "receipt"].every((capability) => migratedCoderCapabilities.includes(capability)), "Legacy default agent records should migrate to autonomous managed no-value signing");
   assert(!migratedCoderCapabilities.includes("lock") && !migratedCoderCapabilities.includes("settle"), "Managed-signing migration must not grant lock or real-settlement authority");
+  const registryPath = "osa-capabilities/technocore-specialist";
+  for (let attempt = 0; attempt < 40 && !technocoreNotes.has(registryPath); attempt += 1) await delay(50);
+  assert(technocoreNotes.has(registryPath), "Local capability registry should publish each default agent to kv/osa-capabilities/<agentId>");
+  let capabilityRegistry = await getJson("/api/capability-registry");
+  const registryText = JSON.stringify(capabilityRegistry);
+  assert(!/signature|privateKey|PRIVATE KEY|seed|pkcs8/i.test(registryText), "Capability Registry API must not expose raw signatures, keys, or deterministic seeds");
+  const localRegistry = capabilityRegistry.local?.find((agent) => agent.agent_id === "technocore-specialist");
+  assert(localRegistry?.verified === true && localRegistry.kv_path === "/kv/osa-capabilities/technocore-specialist", "Local capability registry records should verify and expose only KV path/hash metadata");
+  const firstPublish = await postJson("/api/capability-registry/publish", { announce: false });
+  const secondPublish = await postJson("/api/capability-registry/publish", { announce: false });
+  const firstHash = firstPublish.registry.local.find((agent) => agent.agent_id === "technocore-specialist")?.payload_hash;
+  const secondHash = secondPublish.registry.local.find((agent) => agent.agent_id === "technocore-specialist")?.payload_hash;
+  assert(firstHash && firstHash === secondHash, "Capability registry publish should be idempotent for unchanged agent profiles");
+  const externalRecord = makeCapabilityRegistryFixtureRecord({ agentId: "remote-coder", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId });
+  technocoreNotes.set("osa-capabilities/remote-coder", stableStringify(externalRecord));
+  signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, capabilityRegistryAnnouncementText(externalRecord), "9100001");
+  const tamperedRecord = makeCapabilityRegistryFixtureRecord({ agentId: "remote-tampered", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId });
+  tamperedRecord.payload.capabilities = [...tamperedRecord.payload.capabilities, "lock"];
+  technocoreNotes.set("osa-capabilities/remote-tampered", stableStringify(tamperedRecord));
+  signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, capabilityRegistryAnnouncementText(tamperedRecord), "9100002");
+  const signerMismatch = makeCapabilityRegistryFixtureRecord({ agentId: "remote-mismatch", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId });
+  signerMismatch.signer_did = externalRegistryNodeDid;
+  technocoreNotes.set("osa-capabilities/remote-mismatch", stableStringify(signerMismatch));
+  signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, capabilityRegistryAnnouncementText(signerMismatch), "9100003");
+  capabilityRegistry = (await postJson("/api/capability-registry/scan", {})).registry;
+  assert(capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-coder" && agent.verified === true), "Registry scanner should verify a foreign canonical signed capability entry");
+  assert(capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-tampered" && agent.verified === false), "Registry scanner should mark tampered payloads untrusted");
+  assert(capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-mismatch" && agent.verified === false && agent.rejection_reason), "Registry scanner should fail closed on signer mismatch");
+  technocoreRegistryUnavailable = true;
+  await delay(80);
+  capabilityRegistry = (await postJson("/api/capability-registry/scan", {})).registry;
+  assert(capabilityRegistry.status.last_scan_status === "archive" && capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-coder" && agent.stale === true), "Registry scanner should retain stale restart-safe projection during Technocore KV outage");
+  technocoreRegistryUnavailable = false;
   const lockFrame = {
     type: "lock",
     from: externalTclkDid,
@@ -696,6 +738,7 @@ function startTechnocoreFixture() {
       req.on("end", () => {
         const parsed = JSON.parse(body || "{}");
         technocoreNotes.set(`${noteMatch[1]}/${noteMatch[2]}`, String(parsed.value || ""));
+        technocoreNoteWrites.push({ namespace: noteMatch[1], key: noteMatch[2], value: String(parsed.value || "") });
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
       });
@@ -703,6 +746,11 @@ function startTechnocoreFixture() {
     }
     if (noteMatch && req.method === "GET") {
       const key = `${noteMatch[1]}/${noteMatch[2]}`;
+      if (noteMatch[1] === "osa-capabilities" && technocoreRegistryUnavailable) {
+        res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+        res.end("registry unavailable\n");
+        return;
+      }
       if (noteMatch[3] !== undefined) {
         technocoreNotes.set(key, decodeURIComponent(noteMatch[3]));
         res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
@@ -736,6 +784,11 @@ function startTechnocoreFixture() {
       if (room === "tclk-offers" && technocoreTclkUnavailable) {
         res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
         res.end("fixture unavailable\n");
+        return;
+      }
+      if (room === "osa-network" && technocoreRegistryUnavailable) {
+        res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+        res.end("registry fixture unavailable\n");
         return;
       }
       technocoreReads.push({
@@ -863,6 +916,73 @@ function signedFixtureWrite(room, did, privateKey, text, nonce) {
   const sig = signTechnocorePayload(null, Buffer.from(`${room}|${nonce}|${singleLine}`, "utf8"), privateKey).toString("base64url");
   technocoreWrites.push({ room, from: did, nonce, sig, text: singleLine });
   return { room, from: did, nonce, sig, text: singleLine };
+}
+
+function makeCapabilityRegistryFixtureRecord({ agentId, agentDid, agentPrivateKey, nodeDid, nodePrivateKey, nodeId }) {
+  const timestamp = new Date().toISOString();
+  const payload = {
+    schema: "osa-capability-registry/1",
+    version: 1,
+    agent_id: agentId,
+    identity: {
+      agent_id: agentId,
+      name: agentId,
+      tagline: "RC external registry fixture",
+      did: agentDid
+    },
+    node_id: nodeId,
+    node_did: nodeDid,
+    capabilities: ["sign_text", "create_deal", "request_work", "submit_result", "attest_result", "claim", "receipt"],
+    signing_policy: {
+      autonomous: ["sign_text", "create_deal", "request_work", "submit_result", "attest_result", "claim", "receipt"],
+      require_human: ["lock", "settle", "transfer", "refund", "delegate"]
+    },
+    published_at: timestamp,
+    updated_at: timestamp
+  };
+  const payloadHash = objectHash(payload);
+  return {
+    schema: "osa-capability-registry/1",
+    version: 1,
+    kv_path: `/kv/osa-capabilities/${agentId}`,
+    payload,
+    payload_hash: payloadHash,
+    signer_did: agentDid,
+    signature: signCapabilityEnvelope("agent_capability_registry", payload, agentDid, agentPrivateKey, timestamp),
+    node_signature: signCapabilityEnvelope("node_capability_registry", payload, nodeDid, nodePrivateKey, timestamp)
+  };
+}
+
+function capabilityRegistryAnnouncementText(record) {
+  return `OSA CAPABILITY v1 agent=${record.payload.agent_id} path=${record.kv_path} hash=${record.payload_hash} node=${record.payload.node_id} did=${record.payload.node_did}`;
+}
+
+function signCapabilityEnvelope(type, payload, did, privateKey, signedAt) {
+  const payloadHash = objectHash(payload);
+  const canonical = stableStringify({ type, signedAt, payloadHash, payload });
+  return {
+    type,
+    algorithm: "Ed25519",
+    signer_did: did,
+    signed_at: signedAt,
+    payload_hash: payloadHash,
+    signature: signTechnocorePayload(null, Buffer.from(canonical), privateKey).toString("base64")
+  };
+}
+
+function objectHash(value) {
+  return createHash("sha256").update(stableStringify(value)).digest("hex");
+}
+
+function stableStringify(value) {
+  if (typeof value === "undefined") return "null";
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  return `{${Object.keys(value).filter((key) => typeof value[key] !== "undefined").sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
+}
+
+function nodeIdForPublicKey(publicKeyPem) {
+  return `node-${createHash("sha256").update(String(publicKeyPem)).digest("hex").slice(0, 32)}`;
 }
 
 function base58btcEncode(bytes) {

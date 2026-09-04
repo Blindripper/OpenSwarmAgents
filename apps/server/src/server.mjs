@@ -126,6 +126,20 @@ const technocoreNick = normalizeTechnocoreName(process.env.OSA_TECHNOCORE_NICK |
 const technocoreSignedMessages = process.env.OSA_TECHNOCORE_SIGNED !== "0";
 const technocoreProfileEnabled = process.env.OSA_TECHNOCORE_PROFILE !== "0";
 const technocoreProjectRepositoryUrl = "https://github.com/Blindripper/OpenSwarmAgents";
+const capabilityRegistrySchema = "osa-capability-registry/1";
+const capabilityRegistryNamespace = "osa-capabilities";
+const managedNoValueSigningActions = ["sign_text", "create_deal", "request_work", "submit_result", "attest_result", "claim", "receipt"];
+const humanRequiredSigningActions = ["lock", "settle", "transfer", "refund", "delegate"];
+const capabilityRegistryScanRooms = uniqueTechnocoreRooms([
+  technocorePublicRoom,
+  ...technocoreConfiguredRooms,
+  "agent-security",
+  "validators"
+]);
+const capabilityRegistryScanMs = Math.round(boundedNumber(process.env.OSA_CAPABILITY_REGISTRY_SCAN_MS, 5 * 60 * 1000, 30_000, 60 * 60 * 1000));
+const capabilityRegistryStaleMs = Math.round(boundedNumber(process.env.OSA_CAPABILITY_REGISTRY_STALE_MS, 24 * 60 * 60 * 1000, 1_000, 30 * 24 * 60 * 60 * 1000));
+const capabilityRegistryPointerLimit = Math.round(boundedNumber(process.env.OSA_CAPABILITY_REGISTRY_POINTER_LIMIT, 80, 5, 250));
+const capabilityRegistryRoomLimit = Math.round(boundedNumber(process.env.OSA_CAPABILITY_REGISTRY_ROOM_LIMIT, 80, 10, 200));
 const technocoreChannelsCache = { key: "", expiresAt: 0, channels: [], error: null };
 let technocoreChannelsRefreshPromise = null;
 const technocoreNonceByRoom = new Map();
@@ -251,6 +265,9 @@ async function loadStore() {
       protocolPaperNotes: {},
       projectManifests: [],
       agentCapabilities: [],
+      capabilityRegistryRecords: [],
+      capabilityRegistryProjection: [],
+      capabilityRegistrySync: {},
       delegations: [],
       jobClaims: [],
       jobResults: [],
@@ -302,6 +319,9 @@ function normalizeStore(input) {
     protocolPaperNotes: normalizeProtocolPaperNotes(input.protocolPaperNotes || {}),
     projectManifests: normalizeProjectManifests(input.projectManifests || []),
     agentCapabilities: normalizeAgentCapabilities(input.agentCapabilities || []),
+    capabilityRegistryRecords: normalizeCapabilityRegistryRecords(input.capabilityRegistryRecords || []),
+    capabilityRegistryProjection: normalizeCapabilityRegistryProjection(input.capabilityRegistryProjection || []),
+    capabilityRegistrySync: normalizeCapabilityRegistrySync(input.capabilityRegistrySync || {}),
     delegations: normalizeDelegations(input.delegations || []),
     jobClaims: normalizeJobClaims(input.jobClaims || []),
     jobResults: normalizeJobResults(input.jobResults || []),
@@ -1364,6 +1384,103 @@ function normalizeAgentCapabilities(records) {
   }));
 }
 
+function normalizeCapabilityRegistryRecords(records) {
+  if (!Array.isArray(records)) return [];
+  const byAgent = new Map();
+  for (const rec of records) {
+    const agentId = String(rec?.agent_id || rec?.record?.payload?.agent_id || "").slice(0, 80);
+    const record = rec?.record && typeof rec.record === "object" && !Array.isArray(rec.record) ? rec.record : null;
+    if (!agentId || !record) continue;
+    const item = {
+      agent_id: agentId,
+      kv_path: String(rec.kv_path || record.kv_path || technocoreCapabilityKvLocation(agentId).path).slice(0, 120),
+      payload_hash: String(rec.payload_hash || record.payload_hash || "").slice(0, 100),
+      signer_did: String(rec.signer_did || record.signer_did || record.payload?.identity?.did || "").slice(0, 150),
+      node_id: String(rec.node_id || record.payload?.node_id || nodeIdentity.nodeId).slice(0, 100),
+      record,
+      published_at: validIsoTimestamp(rec.published_at || record.payload?.published_at) || now(),
+      updated_at: validIsoTimestamp(rec.updated_at || record.payload?.updated_at) || now(),
+      last_publish_at: validIsoTimestamp(rec.last_publish_at) || null,
+      last_publish_status: ["pending", "published", "unchanged", "disabled", "failed"].includes(rec.last_publish_status) ? rec.last_publish_status : "pending",
+      last_publish_error: rec.last_publish_error ? String(rec.last_publish_error).slice(0, 300) : null,
+      last_announced_at: validIsoTimestamp(rec.last_announced_at) || null,
+      last_announced_hash: rec.last_announced_hash ? String(rec.last_announced_hash).slice(0, 100) : null
+    };
+    byAgent.set(agentId, item);
+  }
+  return [...byAgent.values()].sort((a, b) => a.agent_id.localeCompare(b.agent_id)).slice(0, 500);
+}
+
+function normalizeCapabilityRegistryProjection(records) {
+  if (!Array.isArray(records)) return [];
+  const byKey = new Map();
+  for (const rec of records) {
+    const agentId = String(rec?.agent_id || "").slice(0, 80);
+    const did = String(rec?.did || "").slice(0, 150);
+    const nodeId = String(rec?.node_id || "").slice(0, 100);
+    const kvPath = String(rec?.kv_path || "").slice(0, 120);
+    if (!agentId || !did || !nodeId || !kvPath) continue;
+    const verified = rec.verified === true;
+    const key = `${nodeId}\x00${agentId}\x00${did}\x00${kvPath}`;
+    byKey.set(key, {
+      id: String(rec.id || `capability-${createHash("sha256").update(key).digest("hex").slice(0, 24)}`).slice(0, 100),
+      source: rec.source === "local" ? "local" : "technocore",
+      agent_id: agentId,
+      name: String(rec.name || agentId).slice(0, 80),
+      tagline: String(rec.tagline || "").slice(0, 160),
+      did,
+      node_id: nodeId,
+      node_did: String(rec.node_did || "").slice(0, 150),
+      capabilities: sanitizeCapabilityList(rec.capabilities || []),
+      kv_path: kvPath,
+      payload_hash: String(rec.payload_hash || "").slice(0, 100),
+      verified,
+      status: verified ? "verified" : "untrusted",
+      rejection_reason: verified ? null : String(rec.rejection_reason || "unverified").slice(0, 240),
+      first_seen_at: validIsoTimestamp(rec.first_seen_at) || now(),
+      last_seen_at: validIsoTimestamp(rec.last_seen_at) || now(),
+      stale: rec.stale === true,
+      provenance: {
+        room: normalizeTechnocoreName(rec.provenance?.room) || null,
+        seq: finitePositiveNumber(rec.provenance?.seq),
+        from: rec.provenance?.from ? String(rec.provenance.from).slice(0, 150) : null,
+        announced_at: validIsoTimestamp(rec.provenance?.announced_at) || null
+      }
+    });
+  }
+  return [...byKey.values()]
+    .sort((a, b) => String(b.last_seen_at).localeCompare(String(a.last_seen_at)) || a.agent_id.localeCompare(b.agent_id))
+    .slice(0, 1000);
+}
+
+function normalizeCapabilityRegistrySync(input) {
+  const value = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  return {
+    enabled: value.enabled === true,
+    rooms: Array.isArray(value.rooms) ? value.rooms.map(normalizeTechnocoreName).filter(Boolean).slice(0, 20) : capabilityRegistryScanRooms,
+    last_publish_at: validIsoTimestamp(value.last_publish_at) || null,
+    last_scan_at: validIsoTimestamp(value.last_scan_at) || null,
+    last_scan_status: ["idle", "live", "archive", "disabled", "failed"].includes(value.last_scan_status) ? value.last_scan_status : "idle",
+    last_error: value.last_error ? String(value.last_error).slice(0, 300) : null,
+    discovered_count: Math.max(0, Number(value.discovered_count || 0)),
+    verified_count: Math.max(0, Number(value.verified_count || 0)),
+    rejected_count: Math.max(0, Number(value.rejected_count || 0))
+  };
+}
+
+function sanitizeCapabilityList(capabilities) {
+  const seen = new Set();
+  const output = [];
+  for (const capability of Array.isArray(capabilities) ? capabilities : []) {
+    const value = String(capability || "").toLowerCase().replace(/[^a-z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "").slice(0, 60);
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    output.push(value);
+    if (output.length >= 50) break;
+  }
+  return output;
+}
+
 function normalizeJobClaims(records) {
   if (!Array.isArray(records)) return [];
   return records.slice(0, 500).map((rec) => ({
@@ -1457,19 +1574,22 @@ function normalizeDelegations(records) {
 }
 
 function signingPolicyForAgent(agentId, action) {
+  const normalizedAction = String(action || "sign_text").slice(0, 40);
+  if (humanRequiredSigningActions.includes(normalizedAction)) return "require-human";
   // Check for explicit override first
-  const override = store.signingPolicyOverrides?.[`${agentId}:${action}`];
+  const override = store.signingPolicyOverrides?.[`${agentId}:${normalizedAction}`];
   if (override === "signature-only" || override === "require-human") return override;
+  if (managedNoValueSigningActions.includes(normalizedAction)) return "signature-only";
   const policy = (store.agentCapabilities || []).find((c) => c.agent_id === agentId);
   if (!policy) {
     // Default policy: critical actions require human approval
-    if (["settle", "lock", "claim", "refund", "delegate", "transfer"].includes(action)) return "require-human";
+    if (humanRequiredSigningActions.includes(normalizedAction)) return "require-human";
     return "signature-only";
   }
   const caps = policy.capabilities || [];
   if (caps.includes("admin")) return "signature-only";
-  if (caps.includes(action)) return "signature-only";
-  if (["settle", "lock", "claim", "refund"].includes(action)) return "require-human";
+  if (caps.includes(normalizedAction)) return "signature-only";
+  if (humanRequiredSigningActions.includes(normalizedAction)) return "require-human";
   return "signature-only";
 }
 
@@ -2888,6 +3008,9 @@ async function loadPostgresStore() {
       protocolPaperNotes: {},
     projectManifests: [],
     agentCapabilities: [],
+    capabilityRegistryRecords: [],
+    capabilityRegistryProjection: [],
+    capabilityRegistrySync: {},
     delegations: [],
     jobClaims: [],
     jobResults: [],
@@ -5213,6 +5336,11 @@ function publicRuntime() {
     technocoreDid: technocoreEnabled && technocoreDid ? technocoreDid : null,
     technocoreProfileEnabled: technocoreEnabled && technocoreProfileEnabled && technocoreSignedMessages && Boolean(technocoreDid),
     technocoreDidProfilePath: technocoreEnabled && technocoreProfileEnabled ? technocoreDidProfileLocation()?.path || null : null,
+    capabilityRegistryEnabled: technocoreEnabled,
+    capabilityRegistryNamespace,
+    capabilityRegistryScanRooms,
+    capabilityRegistryLastScanAt: normalizeCapabilityRegistrySync(store?.capabilityRegistrySync || {}).last_scan_at,
+    capabilityRegistryLastScanStatus: normalizeCapabilityRegistrySync(store?.capabilityRegistrySync || {}).last_scan_status,
     node: publicNodeIdentity(),
     oauthConfigured: Object.fromEntries(
       Object.keys(oauthProviderConfig).map((provider) => [provider, Boolean(providerCredentials(provider))])
@@ -7461,10 +7589,12 @@ function ensureAgentCapabilitiesPublished() {
   // Conservative default capabilities: managed, no-value protocol delivery is
   // autonomous; real settlement, transfer, delegate, refund, and lock remain
   // require-human unless explicitly granted.
-  const defaultCapabilities = ["sign_text", "create_deal", "request_work", "submit_result", "attest_result", "claim", "receipt"];
+  const defaultCapabilities = managedNoValueSigningActions;
   let changed = false;
-  for (const agentId of defaultAgents) {
+  const localAgents = [...new Set([...defaultAgents, ...agentGuiAgents().map((agent) => agent.id)])];
+  for (const agentId of localAgents) {
     const record = (store.agentCapabilities || []).find((profile) => profile.agent_id === agentId);
+    const isDefaultAgent = defaultAgents.includes(agentId);
     if (record) {
       // Migrate older default-profile records to the managed no-value signing
       // baseline without granting lock, settlement, transfer, delegation, or
@@ -7472,9 +7602,10 @@ function ensureAgentCapabilitiesPublished() {
       const caps = Array.isArray(record.capabilities) ? record.capabilities : [];
       const hadLegacyCriticalDefaults = ["sign_text", "create_deal", "lock", "claim", "settle"].every((capability) => caps.includes(capability)) && caps.length <= 5;
       const retainedCapabilities = hadLegacyCriticalDefaults
-        ? caps.filter((capability) => !["lock", "settle"].includes(capability))
+        ? caps.filter((capability) => !humanRequiredSigningActions.includes(capability))
         : caps;
-      const migratedCapabilities = [...new Set([...retainedCapabilities, ...defaultCapabilities])];
+      const migratedCapabilities = [...new Set([...(isDefaultAgent ? retainedCapabilities : sanitizeCapabilityList(retainedCapabilities)), ...defaultCapabilities])]
+        .filter((capability) => !humanRequiredSigningActions.includes(capability));
       if (migratedCapabilities.length !== caps.length || migratedCapabilities.some((capability, index) => capability !== caps[index])) {
         record.capabilities = migratedCapabilities;
         record.updated_at = now();
@@ -7496,6 +7627,458 @@ function ensureAgentCapabilitiesPublished() {
     changed = true;
   }
   return changed;
+}
+
+function technocoreCapabilityKvLocation(agentId) {
+  const normalized = String(agentId || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  const key = normalized && normalized.length <= 48
+    ? normalized
+    : `agent-${createHash("sha256").update(String(agentId || "")).digest("hex").slice(0, 16)}`;
+  return {
+    namespace: capabilityRegistryNamespace,
+    key,
+    path: `/kv/${capabilityRegistryNamespace}/${key}`
+  };
+}
+
+function localAgentCapabilities(agentId) {
+  const record = normalizeAgentCapabilities(store.agentCapabilities || []).find((item) => item.agent_id === agentId);
+  const caps = sanitizeCapabilityList(record?.capabilities?.length ? record.capabilities : managedNoValueSigningActions);
+  return [...new Set([...caps, ...managedNoValueSigningActions])]
+    .filter((capability) => !humanRequiredSigningActions.includes(capability))
+    .slice(0, 50);
+}
+
+function capabilityRegistryPayloadCore(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  return {
+    schema: payload.schema,
+    version: payload.version,
+    agent_id: payload.agent_id,
+    identity: payload.identity,
+    node_id: payload.node_id,
+    node_did: payload.node_did,
+    capabilities: payload.capabilities,
+    signing_policy: payload.signing_policy
+  };
+}
+
+function signCapabilityEnvelope(type, payload, identity, signedAt) {
+  const payloadHash = objectHash(payload);
+  const canonical = stableStringify({ type, signedAt, payloadHash, payload });
+  return {
+    type,
+    algorithm: "Ed25519",
+    signer_did: identity.did,
+    signed_at: signedAt,
+    payload_hash: payloadHash,
+    signature: signPayload(null, Buffer.from(canonical), identity.privateKey).toString("base64")
+  };
+}
+
+function verifyCapabilityEnvelope(type, envelope, payload, did) {
+  if (!envelope?.signature || envelope.type !== type || envelope.algorithm !== "Ed25519") return false;
+  if (envelope.signer_did !== did || envelope.payload_hash !== objectHash(payload)) return false;
+  const publicKey = ed25519PublicKeyFromDidKey(did);
+  if (!publicKey) return false;
+  const canonical = stableStringify({ type, signedAt: envelope.signed_at, payloadHash: envelope.payload_hash, payload });
+  return verifyPayload(null, Buffer.from(canonical), publicKey, Buffer.from(envelope.signature, "base64"));
+}
+
+function makeCapabilityRegistryRecord(agent) {
+  const profile = agentGuiProfileById(agent.id) || agent;
+  const did = agentDidForProfile(agent.id);
+  const nodeDid = technocoreDid || didKeyFromEd25519PublicKeyPem(nodeIdentity.publicKeyPem);
+  const location = technocoreCapabilityKvLocation(agent.id);
+  const existing = normalizeCapabilityRegistryRecords(store.capabilityRegistryRecords || []).find((item) => item.agent_id === agent.id);
+  const previousPayload = existing?.record?.payload || null;
+  const candidate = {
+    schema: capabilityRegistrySchema,
+    version: 1,
+    agent_id: agent.id,
+    identity: {
+      agent_id: agent.id,
+      name: String(profile.name || agent.id).slice(0, 80),
+      tagline: String(profile.tagline || "").slice(0, 160),
+      did
+    },
+    node_id: nodeIdentity.nodeId,
+    node_did: nodeDid,
+    capabilities: localAgentCapabilities(agent.id),
+    signing_policy: {
+      autonomous: managedNoValueSigningActions,
+      require_human: humanRequiredSigningActions
+    }
+  };
+  if (previousPayload && objectHash(capabilityRegistryPayloadCore(previousPayload)) === objectHash(candidate)) {
+    return existing.record;
+  }
+  const timestamp = now();
+  const payload = {
+    ...candidate,
+    published_at: previousPayload?.published_at || timestamp,
+    updated_at: timestamp
+  };
+  const agentIdentity = agentSigningIdentityForProfile(agent.id);
+  const nodeIdentityForSignature = { did: nodeDid, privateKey: nodeIdentity.privateKeyPem };
+  const payloadHash = objectHash(payload);
+  return {
+    schema: capabilityRegistrySchema,
+    version: 1,
+    kv_path: location.path,
+    payload,
+    payload_hash: payloadHash,
+    signer_did: did,
+    signature: signCapabilityEnvelope("agent_capability_registry", payload, agentIdentity, timestamp),
+    node_signature: signCapabilityEnvelope("node_capability_registry", payload, nodeIdentityForSignature, timestamp)
+  };
+}
+
+function verifyCapabilityRegistryRecord(record, options = {}) {
+  try {
+    if (!record || record.schema !== capabilityRegistrySchema || record.version !== 1) return { ok: false, reason: "wrong_schema" };
+    const payload = record.payload;
+    if (!payload || payload.schema !== capabilityRegistrySchema || payload.version !== 1) return { ok: false, reason: "invalid_payload" };
+    const expectedPath = technocoreCapabilityKvLocation(payload.agent_id).path;
+    if (record.kv_path !== expectedPath) return { ok: false, reason: "kv_path_agent_mismatch" };
+    if (options.expectedPath && record.kv_path !== options.expectedPath) return { ok: false, reason: "announcement_path_mismatch" };
+    if (options.expectedAgentId && payload.agent_id !== options.expectedAgentId) return { ok: false, reason: "announcement_agent_mismatch" };
+    if (record.payload_hash !== objectHash(payload)) return { ok: false, reason: "payload_hash_mismatch" };
+    if (options.expectedHash && record.payload_hash !== options.expectedHash) return { ok: false, reason: "announcement_hash_mismatch" };
+    if (record.signer_did !== payload.identity?.did) return { ok: false, reason: "signer_did_mismatch" };
+    if (!payload.node_did || !payload.node_id) return { ok: false, reason: "missing_node_identity" };
+    const nodePublicKey = ed25519PublicKeyFromDidKey(payload.node_did);
+    if (!nodePublicKey) return { ok: false, reason: "invalid_node_did" };
+    const nodePublicKeyPem = nodePublicKey.export({ type: "spki", format: "pem" });
+    if (nodeIdForPublicKey(nodePublicKeyPem) !== payload.node_id) return { ok: false, reason: "node_id_did_mismatch" };
+    if (options.announcedFrom && options.announcedFrom !== payload.node_did) return { ok: false, reason: "announcement_node_did_mismatch" };
+    if (!verifyCapabilityEnvelope("agent_capability_registry", record.signature, payload, payload.identity.did)) return { ok: false, reason: "agent_signature_invalid" };
+    if (!verifyCapabilityEnvelope("node_capability_registry", record.node_signature, payload, payload.node_did)) return { ok: false, reason: "node_signature_invalid" };
+    for (const blocked of humanRequiredSigningActions) {
+      if ((payload.capabilities || []).includes(blocked) || (payload.signing_policy?.autonomous || []).includes(blocked)) {
+        return { ok: false, reason: `blocked_capability_${blocked}` };
+      }
+    }
+    return { ok: true, reason: null };
+  } catch (error) {
+    return { ok: false, reason: String(error?.message || "verification_failed").replace(/\s+/g, "_").slice(0, 120) };
+  }
+}
+
+function publicCapabilityRegistryRecord(item) {
+  const payload = item.record?.payload || {};
+  const verification = verifyCapabilityRegistryRecord(item.record || {});
+  return {
+    agent_id: item.agent_id,
+    name: payload.identity?.name || item.agent_id,
+    tagline: payload.identity?.tagline || "",
+    did: payload.identity?.did || item.signer_did,
+    node_id: payload.node_id || item.node_id,
+    node_did: payload.node_did || null,
+    capabilities: sanitizeCapabilityList(payload.capabilities || []),
+    kv_path: item.kv_path,
+    payload_hash: item.payload_hash,
+    verified: verification.ok,
+    status: verification.ok ? (item.last_publish_status || "pending") : "invalid",
+    published_at: item.published_at,
+    updated_at: item.updated_at,
+    last_publish_at: item.last_publish_at,
+    last_publish_status: item.last_publish_status,
+    last_publish_error: item.last_publish_error,
+    last_announced_at: item.last_announced_at,
+    rejection_reason: verification.ok ? null : verification.reason
+  };
+}
+
+function publicDiscoveredCapability(record) {
+  const lastSeen = Date.parse(record.last_seen_at || "");
+  return {
+    ...record,
+    stale: record.stale === true || (Number.isFinite(lastSeen) && Date.now() - lastSeen > capabilityRegistryStaleMs),
+    provenance: record.provenance || null
+  };
+}
+
+function upsertCapabilityRegistryRecord(record, statusPatch = {}) {
+  store.capabilityRegistryRecords = normalizeCapabilityRegistryRecords(store.capabilityRegistryRecords || []);
+  const existingIndex = store.capabilityRegistryRecords.findIndex((item) => item.agent_id === record.payload.agent_id);
+  const existing = existingIndex >= 0 ? store.capabilityRegistryRecords[existingIndex] : null;
+  const next = {
+    ...(existing || {}),
+    agent_id: record.payload.agent_id,
+    kv_path: record.kv_path,
+    payload_hash: record.payload_hash,
+    signer_did: record.signer_did,
+    node_id: record.payload.node_id,
+    record,
+    published_at: record.payload.published_at,
+    updated_at: record.payload.updated_at,
+    ...statusPatch
+  };
+  if (existingIndex >= 0) store.capabilityRegistryRecords[existingIndex] = next;
+  else store.capabilityRegistryRecords.push(next);
+  store.capabilityRegistryRecords = normalizeCapabilityRegistryRecords(store.capabilityRegistryRecords);
+  return next;
+}
+
+async function publishCapabilityRegistryForAgent(agent, options = {}) {
+  const record = makeCapabilityRegistryRecord(agent);
+  let item = upsertCapabilityRegistryRecord(record);
+  const recordText = stableStringify(record);
+  if (!technocoreEnabled) {
+    item = upsertCapabilityRegistryRecord(record, { last_publish_status: "disabled", last_publish_error: null });
+    return { agent_id: agent.id, kv_path: record.kv_path, payload_hash: record.payload_hash, status: "disabled", announced: false };
+  }
+  const location = technocoreCapabilityKvLocation(agent.id);
+  let status = "published";
+  let announced = false;
+  try {
+    const existing = await fetchTechnocoreText(record.kv_path, technocoreTimeoutMs);
+    const existingValue = existing.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) || "";
+    if (existingValue === recordText) status = "unchanged";
+  } catch {
+    /* Missing or legacy capability note: publish canonical JSON below. */
+  }
+  try {
+    if (status !== "unchanged") await writeTechnocoreNote(location.namespace, location.key, recordText);
+    if (options.announce !== false && item.last_announced_hash !== record.payload_hash) {
+      await technocoreSay(technocorePublicRoom, capabilityRegistryAnnouncementText(record));
+      announced = true;
+    }
+    item = upsertCapabilityRegistryRecord(record, {
+      last_publish_at: now(),
+      last_publish_status: status,
+      last_publish_error: null,
+      last_announced_at: announced ? now() : item.last_announced_at,
+      last_announced_hash: announced ? record.payload_hash : item.last_announced_hash
+    });
+    return { agent_id: agent.id, kv_path: record.kv_path, payload_hash: record.payload_hash, status, announced };
+  } catch (error) {
+    upsertCapabilityRegistryRecord(record, {
+      last_publish_at: now(),
+      last_publish_status: "failed",
+      last_publish_error: error.message || "publish failed"
+    });
+    return { agent_id: agent.id, kv_path: record.kv_path, payload_hash: record.payload_hash, status: "failed", announced: false, error: error.message || "publish failed" };
+  }
+}
+
+function capabilityRegistryAnnouncementText(record) {
+  return [
+    "OSA CAPABILITY v1",
+    `agent=${record.payload.agent_id}`,
+    `path=${record.kv_path}`,
+    `hash=${record.payload_hash}`,
+    `node=${record.payload.node_id}`,
+    `did=${record.payload.node_did}`
+  ].join(" ").slice(0, 500);
+}
+
+async function publishLocalCapabilityRegistries(options = {}) {
+  const changed = ensureAgentCapabilitiesPublished();
+  if (changed) await saveStore();
+  const results = [];
+  for (const agent of agentGuiAgents()) {
+    results.push(await publishCapabilityRegistryForAgent(agent, options));
+  }
+  store.capabilityRegistrySync = normalizeCapabilityRegistrySync({
+    ...(store.capabilityRegistrySync || {}),
+    enabled: technocoreEnabled,
+    rooms: capabilityRegistryScanRooms,
+    last_publish_at: now()
+  });
+  await saveStore();
+  return results;
+}
+
+function parseCapabilityRegistryAnnouncement(text) {
+  const value = String(text || "").trim();
+  if (!/^OSA\s+CAPABILITY\s+v1\b/i.test(value)) return null;
+  const fields = {};
+  for (const match of value.matchAll(/\b(agent|path|hash|node|did)=([^\s]+)/g)) fields[match[1]] = match[2];
+  const agentId = String(fields.agent || "").slice(0, 80);
+  const path = String(fields.path || "").slice(0, 120);
+  const hash = String(fields.hash || "").slice(0, 100);
+  if (!agentId || !/^\/kv\/osa-capabilities\/[a-z0-9][a-z0-9_-]{0,47}$/.test(path) || !/^[a-f0-9]{64}$/.test(hash)) return null;
+  return { agent_id: agentId, path, hash, node_id: String(fields.node || "").slice(0, 100), node_did: String(fields.did || "").slice(0, 150) };
+}
+
+function projectionFromCapabilityRecord(record, verified, rejectionReason, provenance) {
+  const payload = record?.payload || {};
+  const key = `${payload.node_id || provenance?.from || "unknown"}\x00${payload.agent_id || provenance?.agent_id || "unknown"}\x00${payload.identity?.did || "unknown"}\x00${record?.kv_path || provenance?.path || ""}`;
+  return {
+    id: `capability-${createHash("sha256").update(key).digest("hex").slice(0, 24)}`,
+    source: payload.node_id === nodeIdentity.nodeId ? "local" : "technocore",
+    agent_id: String(payload.agent_id || provenance?.agent_id || "").slice(0, 80),
+    name: String(payload.identity?.name || payload.agent_id || provenance?.agent_id || "Agent").slice(0, 80),
+    tagline: String(payload.identity?.tagline || "").slice(0, 160),
+    did: String(payload.identity?.did || record?.signer_did || "").slice(0, 150),
+    node_id: String(payload.node_id || provenance?.node_id || "").slice(0, 100),
+    node_did: String(payload.node_did || provenance?.from || "").slice(0, 150),
+    capabilities: sanitizeCapabilityList(payload.capabilities || []),
+    kv_path: String(record?.kv_path || provenance?.path || "").slice(0, 120),
+    payload_hash: String(record?.payload_hash || provenance?.hash || "").slice(0, 100),
+    verified,
+    rejection_reason: verified ? null : rejectionReason,
+    first_seen_at: now(),
+    last_seen_at: now(),
+    stale: false,
+    provenance
+  };
+}
+
+function upsertCapabilityProjection(incoming) {
+  store.capabilityRegistryProjection = normalizeCapabilityRegistryProjection(store.capabilityRegistryProjection || []);
+  const key = `${incoming.node_id}\x00${incoming.agent_id}\x00${incoming.did}\x00${incoming.kv_path}`;
+  const index = store.capabilityRegistryProjection.findIndex((item) => `${item.node_id}\x00${item.agent_id}\x00${item.did}\x00${item.kv_path}` === key);
+  if (index >= 0) {
+    const existing = store.capabilityRegistryProjection[index];
+    store.capabilityRegistryProjection[index] = normalizeCapabilityRegistryProjection([{
+      ...incoming,
+      first_seen_at: existing.first_seen_at || incoming.first_seen_at
+    }])[0];
+  } else {
+    store.capabilityRegistryProjection.unshift(incoming);
+  }
+  store.capabilityRegistryProjection = normalizeCapabilityRegistryProjection(store.capabilityRegistryProjection);
+}
+
+async function scanCapabilityRegistry() {
+  if (!technocoreEnabled) {
+    store.capabilityRegistrySync = normalizeCapabilityRegistrySync({ ...(store.capabilityRegistrySync || {}), enabled: false, last_scan_at: now(), last_scan_status: "disabled" });
+    await saveStore();
+    return publicCapabilityRegistryStatus();
+  }
+  const discovered = [];
+  const rejected = [];
+  const seenPointers = new Set();
+  try {
+    for (const room of capabilityRegistryScanRooms) {
+      const view = await fetchTechnocoreRoomJson(`/r/${room}`, { format: "json", limit: capabilityRegistryRoomLimit });
+      for (const message of Array.isArray(view?.messages) ? view.messages : []) {
+        if (seenPointers.size >= capabilityRegistryPointerLimit) break;
+        const pointer = parseCapabilityRegistryAnnouncement(message.text);
+        if (!pointer) continue;
+        const from = String(message.from || "").slice(0, 150);
+        const signed = verifyTechnocoreDidMessage(room, { from, nonce: message.nonce, sig: message.sig, text: String(message.text || "") });
+        const provenance = {
+          room,
+          seq: finitePositiveNumber(message.seq),
+          from,
+          announced_at: validIsoTimestamp(message.ts) || now(),
+          agent_id: pointer.agent_id,
+          path: pointer.path,
+          hash: pointer.hash,
+          node_id: pointer.node_id
+        };
+        const pointerKey = `${pointer.path}\x00${pointer.hash}`;
+        if (seenPointers.has(pointerKey)) continue;
+        seenPointers.add(pointerKey);
+        if (!signed) {
+          rejected.push(projectionFromCapabilityRecord({ kv_path: pointer.path, payload_hash: pointer.hash, payload: { agent_id: pointer.agent_id, node_id: pointer.node_id, node_did: pointer.node_did, identity: { did: from } } }, false, "announcement_signature_unverified", provenance));
+          continue;
+        }
+        let record;
+        try {
+          const raw = await fetchTechnocoreText(pointer.path, technocoreTimeoutMs);
+          const value = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) || "";
+          record = JSON.parse(value);
+        } catch (error) {
+          rejected.push(projectionFromCapabilityRecord({ kv_path: pointer.path, payload_hash: pointer.hash, payload: { agent_id: pointer.agent_id, node_id: pointer.node_id, node_did: pointer.node_did, identity: { did: from } } }, false, `kv_read_or_parse_failed:${String(error.message || "failed").slice(0, 80)}`, provenance));
+          continue;
+        }
+        const verification = verifyCapabilityRegistryRecord(record, {
+          expectedAgentId: pointer.agent_id,
+          expectedPath: pointer.path,
+          expectedHash: pointer.hash,
+          announcedFrom: from
+        });
+        const projection = projectionFromCapabilityRecord(record, verification.ok, verification.reason, provenance);
+        if (verification.ok) discovered.push(projection);
+        else rejected.push(projection);
+      }
+    }
+    for (const item of [...discovered, ...rejected]) upsertCapabilityProjection(item);
+    markCapabilityProjectionStaleness();
+    store.capabilityRegistrySync = normalizeCapabilityRegistrySync({
+      ...(store.capabilityRegistrySync || {}),
+      enabled: true,
+      rooms: capabilityRegistryScanRooms,
+      last_scan_at: now(),
+      last_scan_status: "live",
+      last_error: null,
+      discovered_count: store.capabilityRegistryProjection.length,
+      verified_count: store.capabilityRegistryProjection.filter((item) => item.verified).length,
+      rejected_count: store.capabilityRegistryProjection.filter((item) => !item.verified).length
+    });
+    await saveStore();
+    return publicCapabilityRegistryStatus();
+  } catch (error) {
+    markCapabilityProjectionStaleness();
+    store.capabilityRegistrySync = normalizeCapabilityRegistrySync({
+      ...(store.capabilityRegistrySync || {}),
+      enabled: true,
+      rooms: capabilityRegistryScanRooms,
+      last_scan_at: now(),
+      last_scan_status: "archive",
+      last_error: String(error?.message || "Capability registry scan failed").slice(0, 300),
+      discovered_count: store.capabilityRegistryProjection.length,
+      verified_count: store.capabilityRegistryProjection.filter((item) => item.verified).length,
+      rejected_count: store.capabilityRegistryProjection.filter((item) => !item.verified).length
+    });
+    await saveStore();
+    return publicCapabilityRegistryStatus();
+  }
+}
+
+function markCapabilityProjectionStaleness() {
+  const timestamp = Date.now();
+  store.capabilityRegistryProjection = normalizeCapabilityRegistryProjection(store.capabilityRegistryProjection || []).map((item) => ({
+    ...item,
+    stale: Number.isFinite(Date.parse(item.last_seen_at || "")) ? timestamp - Date.parse(item.last_seen_at) > capabilityRegistryStaleMs : true
+  }));
+}
+
+function publicCapabilityRegistryStatus() {
+  const local = normalizeCapabilityRegistryRecords(store.capabilityRegistryRecords || []).map(publicCapabilityRegistryRecord);
+  const discovered = normalizeCapabilityRegistryProjection(store.capabilityRegistryProjection || [])
+    .filter((item) => item.node_id !== nodeIdentity.nodeId)
+    .map(publicDiscoveredCapability);
+  const verifiedCount = discovered.filter((item) => item.verified).length;
+  const rejectedCount = discovered.filter((item) => !item.verified).length;
+  const sync = normalizeCapabilityRegistrySync(store.capabilityRegistrySync || {});
+  return {
+    schema: capabilityRegistrySchema,
+    version: 1,
+    generated_at: now(),
+    status: {
+      enabled: technocoreEnabled,
+      kv_namespace: capabilityRegistryNamespace,
+      scan_rooms: capabilityRegistryScanRooms,
+      stale_after_ms: capabilityRegistryStaleMs,
+      last_publish_at: sync.last_publish_at,
+      last_scan_at: sync.last_scan_at,
+      last_scan_status: sync.last_scan_status,
+      last_error: sync.last_error,
+      local_count: local.length,
+      discovered_count: discovered.length,
+      verified_count: verifiedCount,
+      rejected_count: rejectedCount
+    },
+    local,
+    discovered
+  };
+}
+
+function startCapabilityRegistrySync() {
+  publishLocalCapabilityRegistries().catch((error) => console.warn(`Capability registry publish failed: ${error.message}`));
+  scanCapabilityRegistry().catch((error) => console.warn(`Capability registry scan failed: ${error.message}`));
+  setInterval(() => publishLocalCapabilityRegistries().catch((error) => console.warn(`Capability registry publish failed: ${error.message}`)), 60 * 60 * 1000).unref?.();
+  setInterval(() => scanCapabilityRegistry().catch((error) => console.warn(`Capability registry scan failed: ${error.message}`)), capabilityRegistryScanMs).unref?.();
 }
 
 /** Share local trust summary to Technocore osa-network for cross-node federation. */
@@ -9270,18 +9853,57 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
   // Phase 3: Agent DID / Capabilities / Delegation
   if (method === "GET" && path === "/api/agents/dids") {
     const profiles = normalizeAgentCapabilities(store.agentCapabilities || []);
-    const defaultAgents = ["technocore-specialist", "coder", "bugfixer", "info-guy", "coinexpert", "graphicsexpert", "moneymaker", "security-expert", "explorer"];
-    const managedCapabilities = ["sign_text", "create_deal", "request_work", "submit_result", "attest_result", "claim", "receipt"];
-    const output = defaultAgents.map((id) => {
+    const managedCapabilities = managedNoValueSigningActions;
+    const localAgentIds = [...new Set(agentGuiAgents().map((agent) => agent.id))];
+    const registryByAgent = new Map(normalizeCapabilityRegistryRecords(store.capabilityRegistryRecords || []).map((item) => [item.agent_id, publicCapabilityRegistryRecord(item)]));
+    const output = localAgentIds.map((id) => {
       const existing = profiles.find((p) => p.agent_id === id);
+      const registry = registryByAgent.get(id) || null;
       return {
         agent_id: id,
         did: existing?.did || agentDidForProfile(id),
         capabilities: existing?.capabilities || managedCapabilities,
-        published: Boolean(existing)
+        published: Boolean(existing),
+        registry_published: Boolean(registry),
+        registry_status: registry?.last_publish_status || null,
+        registry_path: registry?.kv_path || technocoreCapabilityKvLocation(id).path,
+        registry_payload_hash: registry?.payload_hash || null,
+        registry_verified: registry?.verified === true
       };
     });
     return sendJson(res, 200, { agents: output, generated_at: now() });
+  }
+
+  if (method === "GET" && path === "/api/capability-registry") {
+    markCapabilityProjectionStaleness();
+    return sendJson(res, 200, publicCapabilityRegistryStatus());
+  }
+
+  if (method === "POST" && path === "/api/capability-registry/publish") {
+    try {
+      const body = await readJson(req);
+      const requestedAgentId = body.agent_id ? String(body.agent_id).slice(0, 80) : null;
+      if (requestedAgentId) {
+        const agent = agentGuiProfileById(requestedAgentId);
+        if (!agent) return sendJson(res, 404, { detail: "Unknown local agent profile" });
+        const result = await publishCapabilityRegistryForAgent(agent, { announce: body.announce !== false });
+        await saveStore();
+        return sendJson(res, 200, { ok: result.status !== "failed", result, registry: publicCapabilityRegistryStatus() });
+      }
+      const results = await publishLocalCapabilityRegistries({ announce: body.announce !== false });
+      return sendJson(res, 200, { ok: results.every((item) => item.status !== "failed"), results, registry: publicCapabilityRegistryStatus() });
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to publish capability registry" });
+    }
+  }
+
+  if (method === "POST" && path === "/api/capability-registry/scan") {
+    try {
+      const registry = await scanCapabilityRegistry();
+      return sendJson(res, 200, { ok: true, registry });
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to scan capability registry" });
+    }
   }
 
   if (method === "GET" && path.match(/^\/api\/agents\/([^/]+)\/did$/)) {
@@ -9962,6 +10584,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       // Register the new agent DID on Technocore in the background and publish locally.
       if (ensureAgentCapabilitiesPublished()) await saveStore();
       ensureAgentDidsOnTechnocore().catch(() => {});
+      publishCapabilityRegistryForAgent(publicAgentGuiProfile(profile)).then(() => saveStore()).catch(() => {});
       return sendJson(res, 201, { ok: true, agent: publicAgentGuiProfile(profile) });
     } catch (error) {
       return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to create OpenClaw profile" });
@@ -9974,6 +10597,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     const index = store.agentProfiles.findIndex((profile) => profile.id === id);
     if (index < 0) return notFound(res);
     store.agentProfiles.splice(index, 1);
+    store.capabilityRegistryRecords = normalizeCapabilityRegistryRecords(store.capabilityRegistryRecords || []).filter((item) => item.agent_id !== id);
     await saveStore();
     return sendJson(res, 200, { ok: true, id });
   }
@@ -10034,6 +10658,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     if (body.model_default !== undefined) profile.model = String(body.model_default || "OpenClaw local agent").slice(0, 120);
     if (body.base_url !== undefined) profile.base_url = String(body.base_url || "").slice(0, 500);
     await saveStore();
+    publishCapabilityRegistryForAgent(publicAgentGuiProfile(profile)).then(() => saveStore()).catch(() => {});
     return sendJson(res, 200, { ok: true, id });
   }
 
@@ -10355,6 +10980,20 @@ async function handleApi(req, res, url) {
         agentDonations: [],
         publicProjectReviews: [],
         publicProjectCopies: [],
+        networkChatMessages: [],
+        protocolTranscripts: [],
+        protocolRoomSync: {},
+        protocolPaperDeals: [],
+        protocolPaperNotes: {},
+        projectManifests: [],
+        agentCapabilities: [],
+        capabilityRegistryRecords: [],
+        capabilityRegistryProjection: [],
+        capabilityRegistrySync: {},
+        delegations: [],
+        jobClaims: [],
+        jobResults: [],
+        localJobs: [],
         federationPeerAnnouncements: [],
         publicRooms: [],
         publicProjects: [],
@@ -11860,7 +12499,7 @@ server.on("upgrade", (req, socket) => {
 server.listen(port, host, () => {
   console.log(`OpenSwarmAgents node listening on http://${host}:${port}`);
   startFederationPeerSync();
-  // Publish all default agent capability records so Vault shows them as published
+  // Publish local capability records and keep a verified cross-node projection.
   if (ensureAgentCapabilitiesPublished()) saveStore().catch((error) => console.warn(`Unable to save agent capability defaults: ${error.message}`));
   
   ensureTechnocorePublicRoomTopic().catch((error) => {
@@ -11877,6 +12516,7 @@ server.listen(port, host, () => {
   // Share local trust summary to Technocore for cross-node federation
   shareTrustToTechnocore().catch(() => {});
   setInterval(() => shareTrustToTechnocore().catch(() => {}), 60 * 60 * 1000).unref?.();
+  startCapabilityRegistrySync();
   // Scan Technocore rooms for available JOB frames and bridge them into the Dashboard
   syncTechnocoreJobRooms().catch(() => {});
   setInterval(() => syncTechnocoreJobRooms().catch(() => {}), 60_000).unref?.();

@@ -420,6 +420,13 @@ try {
   await expectText(page, '[data-testid="network-chat-messages"]', "Delayed validators room fixture");
   await expectText(page, "body", "Canvas");
   await expectText(page, "body", "Start a desk to show project results.");
+  await page.getByRole("button", { name: "Vault" }).click();
+  await expectText(page, "body", "Capability Registry");
+  await expectText(page, "body", "Local Agents");
+  await expectText(page, "body", "technocore-specialist");
+  await expectText(page, "body", "VERIFIED");
+  assert(!(await page.locator("body").innerText()).match(/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}|\bsig\b/i), "Vault registry UI should not render raw signatures or signing material");
+  await page.getByRole("button", { name: "Workspaces / Projects" }).click();
   await page.locator('button[title="Collapse canvas"]').click();
   await page.locator('button[title="Open result canvas"]').click();
   await page.locator('button[title="Settings"]').click();

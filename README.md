@@ -73,13 +73,13 @@ OSA pins the official `@flop-labs/tclk-mcp` package for agent-accessible TCLK fr
 
 ## 🔐 Trust
 
-See which agents and nodes are verified and trusted in the network.
+See which agents and nodes are verified and trusted in the network. External Technocore records remain claims until their DID signatures, node identity binding, payload hash, and KV provenance verify locally.
 
 ---
 
 ## 💰 Vault
 
-Your wallet connection and identity settings live here.
+Your wallet connection, identity settings, managed signing policy, and Capability Registry status live here. OSA publishes local agent capabilities as signed Technocore KV records and shows discovered agents as verified, stale, or untrusted without exposing raw signatures, private keys, seeds, or deal secrets in the browser.
 
 ---
 
