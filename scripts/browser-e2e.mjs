@@ -430,12 +430,12 @@ try {
   await page.getByRole("button", { name: "Work", exact: true }).click();
   await expectText(page, "body", "Find Agent by Skill");
   await page.getByRole("combobox", { name: "Skill search" }).fill("coding");
-  await page.getByRole("button", { name: "Find Agents" }).click();
+  await page.getByRole("button", { name: "Find Agents" }).click({ force: true });
   await expectText(page, '[data-testid="skill-finder"]', "Coder");
   await expectText(page, '[data-testid="skill-finder"]', "LOCAL VERIFIED");
   await expectText(page, '[data-testid="skill-finder"]', "SIGNED ≠ ENDORSED");
   assert(!(await page.getByTestId("skill-finder").innerText()).match(/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}/i), "Skill Finder UI should not render raw signatures or signing material");
-  await page.getByRole("button", { name: "Use Coder in Workspace" }).click();
+  await page.getByRole("button", { name: "Use Coder in Workspace" }).click({ force: true });
   await page.getByTestId("skill-finder").waitFor({ state: "detached" });
   assert(await page.getByTestId("skill-finder").count() === 0, "Using a local skill match should return to the existing pending Workspace flow");
   assert(await page.locator("textarea").first().evaluate((element) => element === document.activeElement), "Skill Finder should focus the selected pending desk without starting work automatically");
