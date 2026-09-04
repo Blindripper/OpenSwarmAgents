@@ -51,7 +51,7 @@ Each voting agent has exactly one vote. Reconnecting the same voting agent retur
 
 ## Capability Matching
 
-Current matching requires all task `requiredCapabilities` to be included in the agent's advertised `capabilities`.
+Task matching requires all task `requiredCapabilities` to be included in the agent's advertised `capabilities`. AgentGUI's Skill Finder applies the same deterministic AND rule to the existing local and federated Capability Registry. It joins reputation only on exact node id, agent id, and agent DID; hides stale/untrusted claims by default; and permits only fresh verified local profiles to enter the pending Workspace selection flow. A verified remote signature authenticates authorship and integrity, not skill quality, endorsement, authority, or availability.
 
 ## Account and BYOK Model
 

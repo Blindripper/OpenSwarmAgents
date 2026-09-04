@@ -13,6 +13,7 @@ import { OpenClawOnboarding } from "./components/OpenClawOnboarding";
 import { ProtocolOsPanel } from "./components/ProtocolOsPanel";
 import { VaultPanel } from "./components/VaultPanel";
 import { JobsPanel } from "./components/JobsPanel";
+import { SkillFinderPanel } from "./components/SkillFinderPanel";
 import { TrustPanel } from "./components/TrustPanel";
 import { NetworkChatWindow } from "./components/NetworkChatWindow";
 import { ProjectDetailsModal } from "./components/ProjectDetailsModal";
@@ -1358,6 +1359,55 @@ export default function App() {
     ));
   }
 
+  async function useLocalAgentFromSkillFinder(agentId: string) {
+    const agent = agents.find((item) => item.id === agentId);
+    if (!agent) {
+      window.alert("This local agent profile is no longer available.");
+      return;
+    }
+    const assignedDeskId = Object.entries(pendingAssignments)
+      .find(([deskId, assignment]) => assignment.agentId === agentId && Boolean(findDeskItem(teams, deskId)))?.[0];
+    if (assignedDeskId) {
+      setDashboardTab("workbench");
+      setActivePendingDeskId(assignedDeskId);
+      setFocusedDeskId(assignedDeskId);
+      return;
+    }
+    const running = allFloorSessions.some((session) => session.agent === agentId && session.is_running);
+    if (running) {
+      window.alert(`${agent.name} is already running on another desk. Stop it before assigning the same profile again.`);
+      return;
+    }
+    const home = teams.find((team) => team.id === HOME_TEAM_ID);
+    const reusable = home?.desks.find((desk) => "isPending" in desk && !pendingAssignments[desk.id]);
+    const desk = reusable || makePending();
+    if (!reusable) {
+      setTeams((prev) => prev.map((team) => team.id === HOME_TEAM_ID ? { ...team, desks: [...team.desks, desk] } : team));
+    }
+    const defaults = await fetchProfileDefaults(agentId, agents, globalConfig, toolPresets, toolDefault);
+    setPendingAssignments((prev) => ({
+      ...prev,
+      [desk.id]: {
+        agentId,
+        agentName: agent.name,
+        agentColor: effectiveAgentColor(agent, avatars.get(agentId)),
+        toolPreset: defaults.toolPreset,
+        toolsEnabled: defaults.toolsEnabled,
+        customized: false,
+      },
+    }));
+    upsertDeskBarConfig(desk.id, {
+      agentId,
+      model: defaults.model,
+      toolPreset: defaults.toolPreset,
+      toolsEnabled: defaults.toolsEnabled,
+      customized: false,
+    });
+    setDashboardTab("workbench");
+    setActivePendingDeskId(desk.id);
+    setFocusedDeskId(desk.id);
+  }
+
   function addRoom() {
     const roomNumber = teams.filter((team) => team.id !== HOME_TEAM_ID && !PUBLIC_TEAM_IDS.has(team.id)).length + 1;
     const id = `room-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -2245,7 +2295,8 @@ export default function App() {
         </div>
       )}
       {dashboardTab === "work" ? (
-        <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13 }}>
+        <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13, display: "grid", gap: 16, minHeight: 0, overflowY: "auto" }}>
+          <SkillFinderPanel onUseLocalAgent={useLocalAgentFromSkillFinder} />
           <JobsPanel />
         </div>
       ) : dashboardTab === "market" ? (

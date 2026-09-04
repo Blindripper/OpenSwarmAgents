@@ -132,6 +132,17 @@ const reputationRegistrySchema = "osa-reputation/1";
 const reputationRegistryNamespace = "osa-reputation";
 const managedNoValueSigningActions = ["sign_text", "create_deal", "request_work", "submit_result", "attest_result", "claim", "receipt"];
 const humanRequiredSigningActions = ["lock", "settle", "transfer", "refund", "delegate"];
+const defaultAgentSkillClaims = Object.freeze({
+  "technocore-specialist": ["software_engineering", "debugging", "architecture", "automation", "technocore", "agent_workflows"],
+  coder: ["software_engineering", "coding", "repository_editing", "testing"],
+  bugfixer: ["debugging", "root_cause_analysis", "regression_testing"],
+  "info-guy": ["research", "source_verification", "documentation"],
+  coinexpert: ["crypto_analysis", "tokenomics", "wallet_security", "market_research"],
+  graphicsexpert: ["visual_design", "ui_design", "asset_briefs", "image_prompts"],
+  moneymaker: ["monetization", "growth", "pricing", "revenue_experiments"],
+  "security-expert": ["security_review", "threat_modeling", "auth", "secrets_hardening"],
+  explorer: ["project_discovery", "due_diligence", "public_project_review"]
+});
 const capabilityRegistryScanRooms = uniqueTechnocoreRooms([
   technocorePublicRoom,
   ...technocoreConfiguredRooms,
@@ -1617,6 +1628,14 @@ function sanitizeCapabilityList(capabilities) {
     if (output.length >= 50) break;
   }
   return output;
+}
+
+function sanitizeDisplayText(value, maxLength = 160) {
+  return String(value || "")
+    .replace(/[\u0000-\u001f\u007f<>]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
 }
 
 function normalizeJobClaims(records) {
@@ -7752,7 +7771,11 @@ function ensureAgentCapabilitiesPublished() {
       const retainedCapabilities = hadLegacyCriticalDefaults
         ? caps.filter((capability) => !humanRequiredSigningActions.includes(capability))
         : caps;
-      const migratedCapabilities = [...new Set([...(isDefaultAgent ? retainedCapabilities : sanitizeCapabilityList(retainedCapabilities)), ...defaultCapabilities])]
+      const migratedCapabilities = [...new Set([
+        ...(isDefaultAgent ? retainedCapabilities : sanitizeCapabilityList(retainedCapabilities)),
+        ...defaultCapabilities,
+        ...(defaultAgentSkillClaims[agentId] || [])
+      ])]
         .filter((capability) => !humanRequiredSigningActions.includes(capability));
       if (migratedCapabilities.length !== caps.length || migratedCapabilities.some((capability, index) => capability !== caps[index])) {
         record.capabilities = migratedCapabilities;
@@ -7769,7 +7792,7 @@ function ensureAgentCapabilitiesPublished() {
     }
     const did = agentDidForProfile(agentId);
     store.agentCapabilities = normalizeAgentCapabilities([
-      { agent_id: agentId, did, capabilities: [...defaultCapabilities], published_at: now(), updated_at: now() },
+      { agent_id: agentId, did, capabilities: [...defaultCapabilities, ...(defaultAgentSkillClaims[agentId] || [])], published_at: now(), updated_at: now() },
       ...(store.agentCapabilities || [])
     ]);
     changed = true;
@@ -7796,7 +7819,7 @@ function technocoreCapabilityKvLocation(agentId) {
 function localAgentCapabilities(agentId) {
   const record = normalizeAgentCapabilities(store.agentCapabilities || []).find((item) => item.agent_id === agentId);
   const caps = sanitizeCapabilityList(record?.capabilities?.length ? record.capabilities : managedNoValueSigningActions);
-  return [...new Set([...caps, ...managedNoValueSigningActions])]
+  return [...new Set([...caps, ...managedNoValueSigningActions, ...(defaultAgentSkillClaims[agentId] || [])])]
     .filter((capability) => !humanRequiredSigningActions.includes(capability))
     .slice(0, 50);
 }
@@ -8787,6 +8810,182 @@ function publicReputationStatus() {
     },
     local,
     discovered
+  };
+}
+
+function normalizeSkillFinderQuery(value) {
+  const raw = sanitizeDisplayText(value, 120).toLowerCase();
+  if (!raw) return [];
+  return [...new Set(raw
+    .split(",")
+    .map((part) => part.trim().replace(/[^a-z0-9_-]+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "").slice(0, 60))
+    .filter(Boolean))]
+    .sort()
+    .slice(0, 12);
+}
+
+function reputationEvidenceVolume(record) {
+  const counts = record?.counts || {};
+  return ["accepted_results", "verified_job_results", "claimed_deals", "refunded_deals", "disputed_deals"]
+    .reduce((sum, key) => sum + Math.max(0, Number(counts[key] || 0)), 0);
+}
+
+function skillFinderReputationForCapability(capability, reputationRows) {
+  const key = `${capability.node_id}\x00${capability.agent_id}\x00${capability.did}`;
+  const candidates = reputationRows
+    .filter((record) => `${record.node_id}\x00${record.agent_id}\x00${record.did}` === key)
+    .sort((a, b) => {
+      const aState = a.verified ? (a.stale ? 2 : 3) : 1;
+      const bState = b.verified ? (b.stale ? 2 : 3) : 1;
+      return bState - aState
+        || String(b.last_seen_at || b.updated_at || "").localeCompare(String(a.last_seen_at || a.updated_at || ""))
+        || String(a.kv_path || "").localeCompare(String(b.kv_path || ""));
+    });
+  const record = candidates[0];
+  if (!record) return {
+    status: "none",
+    label: "NO REPUTATION RECORD",
+    verified: false,
+    stale: false,
+    counts: normalizeReputationCounts({}),
+    evidence_hash: null,
+    kv_path: null,
+    note: "No exact-identity reputation record was found."
+  };
+  const local = capability.source === "local";
+  const status = !record.verified ? "untrusted" : record.stale ? "stale" : local ? "local_signed_record" : "signed_record";
+  return {
+    status,
+    label: status === "untrusted" ? "UNTRUSTED REPUTATION" : status === "stale" ? "STALE REPUTATION" : local ? "LOCAL SIGNED RECORD" : "SIGNED REPUTATION CLAIM",
+    verified: record.verified === true,
+    stale: record.stale === true,
+    counts: normalizeReputationCounts(record.counts || {}),
+    evidence_hash: record.evidence_hash || null,
+    kv_path: record.kv_path || null,
+    note: record.verified
+      ? "Signature and internal evidence counts verified; this is not an endorsement or independent proof."
+      : `Rejected reputation record: ${sanitizeDisplayText(record.rejection_reason || "unverified", 160)}`
+  };
+}
+
+function publicSkillFinderResults(url) {
+  markCapabilityProjectionStaleness();
+  markReputationProjectionStaleness();
+  const rawQuery = url.searchParams.get("skill") || url.searchParams.get("q") || "";
+  const requestedSkills = normalizeSkillFinderQuery(rawQuery);
+  const requestedSource = url.searchParams.get("source");
+  const source = ["all", "local", "federated"].includes(requestedSource) ? requestedSource : "all";
+  const includeUntrusted = url.searchParams.get("include_untrusted") === "1";
+  const includeStale = url.searchParams.get("include_stale") === "1";
+  const limit = url.searchParams.has("limit")
+    ? Math.round(boundedNumber(url.searchParams.get("limit"), 50, 1, 100))
+    : 50;
+  const capabilityState = publicCapabilityRegistryStatus();
+  const reputationState = publicReputationStatus();
+  const capabilityRows = [
+    ...capabilityState.local.map((record) => ({ ...record, source: "local", stale: false })),
+    ...capabilityState.discovered.map((record) => ({ ...record, source: "technocore" }))
+  ];
+  const reputationRows = [
+    ...reputationState.local.map((record) => ({ ...record, source: "local", stale: false })),
+    ...reputationState.discovered.map((record) => ({ ...record, source: "technocore" }))
+  ];
+  const availableSkills = [...new Set(capabilityRows
+    .filter((record) => record.source === "local" || (record.verified && !record.stale))
+    .flatMap((record) => sanitizeCapabilityList(record.capabilities || [])))]
+    .sort()
+    .slice(0, 250);
+  const matchedRows = requestedSkills.length === 0 ? [] : capabilityRows
+    .filter((record) => source === "all" || (source === "local" ? record.source === "local" : record.source !== "local"))
+    .filter((record) => requestedSkills.every((skill) => record.capabilities.includes(skill)));
+  const excluded = { untrusted: 0, stale: 0 };
+  const projected = [];
+  for (const record of matchedRows) {
+    const stale = record.stale === true;
+    const untrusted = record.verified !== true;
+    if (untrusted && !includeUntrusted) { excluded.untrusted += 1; continue; }
+    if (stale && !includeStale) { excluded.stale += 1; continue; }
+    const local = record.source === "local";
+    const eligible = record.verified === true && !stale;
+    const reputation = skillFinderReputationForCapability(record, reputationRows);
+    projected.push({
+      id: `${local ? "local" : "federated"}:${record.node_id}:${record.agent_id}:${record.did}`,
+      source: local ? "local" : "federated",
+      agent_id: sanitizeDisplayText(record.agent_id, 80),
+      name: sanitizeDisplayText(record.name || record.agent_id, 80) || "Agent",
+      tagline: sanitizeDisplayText(record.tagline || "", 160),
+      did: String(record.did || "").slice(0, 150),
+      node_id: String(record.node_id || "").slice(0, 100),
+      capabilities: sanitizeCapabilityList(record.capabilities || []),
+      matched_skills: requestedSkills,
+      eligible,
+      eligibility: eligible ? (local ? "local_verified" : "federated_signature_verified") : stale ? "stale" : "untrusted",
+      verification: {
+        verified: record.verified === true,
+        stale,
+        label: !record.verified ? "UNTRUSTED" : stale ? "STALE" : local ? "LOCAL VERIFIED" : "SIGNATURE VERIFIED",
+        rejection_reason: record.verified ? null : sanitizeDisplayText(record.rejection_reason || "unverified", 160),
+        note: record.verified
+          ? "The capability record signature and identity binding verified; the skill claim is not an endorsement."
+          : "This claim failed verification and is not eligible for use."
+      },
+      provenance: local ? {
+        kind: "local",
+        kv_path: record.kv_path,
+        payload_hash: record.payload_hash || null
+      } : {
+        kind: "technocore",
+        room: record.provenance?.room || null,
+        seq: record.provenance?.seq || null,
+        announced_at: record.provenance?.announced_at || null,
+        kv_path: record.kv_path,
+        payload_hash: record.payload_hash || null,
+        last_seen_at: record.last_seen_at || null
+      },
+      reputation,
+      action: {
+        kind: local && eligible ? "local_workspace" : "discovery_only",
+        enabled: local && eligible,
+        label: local && eligible ? "Use in Workspace" : "Discovery only"
+      }
+    });
+  }
+  projected.sort((a, b) => {
+    const aEligible = a.eligible ? 1 : 0;
+    const bEligible = b.eligible ? 1 : 0;
+    const aLocal = a.source === "local" ? 1 : 0;
+    const bLocal = b.source === "local" ? 1 : 0;
+    const aReputation = ["local_signed_record", "signed_record"].includes(a.reputation.status) ? 1 : 0;
+    const bReputation = ["local_signed_record", "signed_record"].includes(b.reputation.status) ? 1 : 0;
+    return bEligible - aEligible
+      || bLocal - aLocal
+      || bReputation - aReputation
+      || reputationEvidenceVolume(b.reputation) - reputationEvidenceVolume(a.reputation)
+      || a.agent_id.localeCompare(b.agent_id)
+      || a.did.localeCompare(b.did);
+  });
+  return {
+    schema: "osa-skill-finder/1",
+    version: 1,
+    generated_at: now(),
+    query: { raw: sanitizeDisplayText(rawQuery, 120), skills: requestedSkills, mode: "all", source },
+    policy: {
+      remote_data: "untrusted_until_verified",
+      signature_meaning: "authorship_and_integrity_not_endorsement",
+      local_action: "select_profile_for_existing_pending_workspace_flow",
+      remote_action: "discovery_only"
+    },
+    status: {
+      capability_scan: capabilityState.status.last_scan_status,
+      capability_error: capabilityState.status.last_error,
+      reputation_scan: reputationState.status.last_scan_status,
+      reputation_error: reputationState.status.last_error,
+      matched_count: matchedRows.length,
+      returned_count: Math.min(projected.length, limit),
+      excluded
+    },
+    available_skills: availableSkills,
+    matches: projected.slice(0, limit)
   };
 }
 
@@ -10652,6 +10851,10 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     } catch (error) {
       return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to scan reputation" });
     }
+  }
+
+  if (method === "GET" && path === "/api/agents/find") {
+    return sendJson(res, 200, publicSkillFinderResults(url));
   }
 
   if (method === "GET" && path.match(/^\/api\/agents\/([^/]+)\/did$/)) {

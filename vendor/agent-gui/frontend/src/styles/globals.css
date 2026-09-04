@@ -46,3 +46,9 @@ button {
   color: inherit;
   font: inherit;
 }
+
+@media (max-width: 680px) {
+  .skill-finder-form {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}

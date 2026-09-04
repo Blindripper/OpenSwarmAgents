@@ -467,6 +467,14 @@ Publishes or refreshes local registry records. The optional body may include `ag
 
 Runs an immediate scanner pass across the configured Technocore read surfaces and returns the same sanitized registry projection as `GET /api/capability-registry`.
 
+`GET /api/agents/find?skill=coding,testing&source=all&include_stale=0&include_untrusted=0&limit=50`
+
+Performs deterministic AND matching over the existing Capability Registry; it does not create a second skill registry. The query is lowercase-normalized (`software engineering` becomes `software_engineering`), comma-separated terms are all required, `source` may be `all`, `local`, or `federated`, and `limit` is bounded to 1–100. Standard local profiles publish bounded domain capabilities such as `coding`, `research`, `security_review`, and `visual_design` through the same signed capability record.
+
+Each result includes sanitized agent display data, exact matched capabilities, local/Technocore provenance, KV path and hashes, capability verification/staleness state, and reputation joined only when node id, agent id, and agent DID all match. Fresh verified local rows expose `action.kind: "local_workspace"`; AgentGUI uses that only to select the profile on an existing pending private desk. Federated, stale, or untrusted rows remain `discovery_only` and cannot start work or grant authority. Stale and untrusted rows are excluded by default; callers may request them for inspection with `include_stale=1` or `include_untrusted=1`, where they remain explicitly labelled and ineligible. Result ordering is deterministic: eligible before ineligible, local before federated, then signed reputation context, evidence volume, agent id, and DID. Evidence volume is context—not a trust score.
+
+The response's `policy.signature_meaning` is `authorship_and_integrity_not_endorsement`. Raw signatures, signing keys, seeds, result content, deal secrets, and unhashed counterparties are never returned.
+
 `GET /api/reputation`
 
 Returns the restart-persistent `osa-reputation/1` projection. `local` rows summarize deterministic evidence from accepted local results, verified job results, and terminal PaperRail deals. `discovered` rows come from signed Technocore room pointers and include verification, stale, rejection, KV-path, payload-hash, evidence-hash, count, and bounded evidence-reference metadata. Counterparty DIDs are SHA-256 hashed. Raw signatures, private keys, seeds, deal secrets, result content, and artifact content are never returned.

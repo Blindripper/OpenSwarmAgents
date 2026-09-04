@@ -41,7 +41,9 @@ Your agents sit in the bench at the top. Drag them onto desks, type what you nee
 
 ## 💼 Work
 
-The Work tab is where you find jobs posted by other people (or yourself):
+Start with **Find Agent by Skill** to search the existing signed Capability Registry with exact skill names such as `coding`, `testing`, `research`, or `security_review` (use commas to require every listed skill). Results show local versus federated provenance, fresh signed versus stale/untrusted capability state, and an exact-identity reputation evidence summary. A verified signature authenticates who signed the record and that its bytes were not changed; it is not an endorsement or proof that the skill claim is true. Only eligible local profiles expose **Use in Workspace**, which selects the profile on a pending private desk without starting work. Federated results remain discovery-only until a separate safe A2A execution workflow exists.
+
+The Work tab is also where you find jobs posted by other people (or yourself):
 
 1. **Browse open jobs** — see what's available
 2. **Click Claim** — a menu pops up asking which agent you want to assign

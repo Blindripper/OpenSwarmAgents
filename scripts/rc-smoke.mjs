@@ -61,8 +61,8 @@ try {
       OSA_TECHNOCORE_PUBLIC_ROOM: "osa-network",
       OSA_TECHNOCORE_ROOMS: "osa-lab",
       OSA_TECHNOCORE_ROOM_LIMIT: "2",
-      OSA_CAPABILITY_REGISTRY_STALE_MS: "50",
-      OSA_REPUTATION_STALE_MS: "50",
+      OSA_CAPABILITY_REGISTRY_STALE_MS: "500",
+      OSA_REPUTATION_STALE_MS: "500",
       OSA_TECHNOCORE_ANNOUNCE: "1",
       OSA_PUBLIC_URL: "https://osa.example",
       AGENTSWARM_PROPOSAL_VOTING_MS: "1",
@@ -470,6 +470,7 @@ try {
   assert(!/PRIVATE KEY|privateKey|seed|pkcs8/i.test(didListingText), "Agent DID APIs must not leak private keys or deterministic seeds");
   const migratedCoderCapabilities = didListing.agents?.find((agent) => agent.agent_id === "coder")?.capabilities || [];
   assert(["sign_text", "create_deal", "submit_result", "attest_result", "claim", "receipt"].every((capability) => migratedCoderCapabilities.includes(capability)), "Legacy default agent records should migrate to autonomous managed no-value signing");
+  assert(["coding", "software_engineering", "repository_editing", "testing"].every((capability) => migratedCoderCapabilities.includes(capability)), "Default profiles should advertise bounded domain skills through the existing capability registry");
   assert(!migratedCoderCapabilities.includes("lock") && !migratedCoderCapabilities.includes("settle"), "Managed-signing migration must not grant lock or real-settlement authority");
   const registryPath = "osa-capabilities/technocore-specialist";
   for (let attempt = 0; attempt < 40 && !technocoreNotes.has(registryPath); attempt += 1) await delay(50);
@@ -497,7 +498,7 @@ try {
   const firstReputationHash = firstReputationPublish.reputation.local.find((agent) => agent.agent_id === "technocore-specialist")?.payload_hash;
   const secondReputationHash = secondReputationPublish.reputation.local.find((agent) => agent.agent_id === "technocore-specialist")?.payload_hash;
   assert(firstReputationHash && firstReputationHash === secondReputationHash, "Reputation publish should be idempotent for unchanged local evidence");
-  const externalRecord = makeCapabilityRegistryFixtureRecord({ agentId: "remote-coder", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId });
+  const externalRecord = makeCapabilityRegistryFixtureRecord({ agentId: "remote-coder", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId, name: "Remote <Coder>", tagline: "Federated coding fixture <script>" });
   technocoreNotes.set("osa-capabilities/remote-coder", stableStringify(externalRecord));
   signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, capabilityRegistryAnnouncementText(externalRecord), "9100001");
   const tamperedRecord = makeCapabilityRegistryFixtureRecord({ agentId: "remote-tampered", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId });
@@ -512,8 +513,8 @@ try {
   assert(capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-coder" && agent.verified === true), "Registry scanner should verify a foreign canonical signed capability entry");
   assert(capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-tampered" && agent.verified === false), "Registry scanner should mark tampered payloads untrusted");
   assert(capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-mismatch" && agent.verified === false && agent.rejection_reason), "Registry scanner should fail closed on signer mismatch");
-  const remoteReputation = makeReputationFixtureRecord({ agentId: "remote-reputable", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId });
-  technocoreNotes.set("osa-reputation/remote-reputable", stableStringify(remoteReputation));
+  const remoteReputation = makeReputationFixtureRecord({ agentId: "remote-coder", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId });
+  technocoreNotes.set("osa-reputation/remote-coder", stableStringify(remoteReputation));
   signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, reputationAnnouncementText(remoteReputation), "9200001");
   const payloadMismatch = makeReputationFixtureRecord({ agentId: "remote-rep-payload", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId });
   payloadMismatch.payload.projection.counts.accepted_results = 4;
@@ -542,7 +543,24 @@ try {
   technocoreNotes.set("osa-reputation/remote-rep-evidence", stableStringify(evidenceMismatch));
   signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, reputationAnnouncementText(evidenceMismatch), "9200006");
   reputation = (await postJson("/api/reputation/scan", {})).reputation;
-  assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-reputable" && agent.verified === true && agent.counts.accepted_results === 1 && agent.counts.claimed_deals === 1), "Reputation scanner should verify a foreign canonical signed reputation entry");
+  assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-coder" && agent.verified === true && agent.counts.accepted_results === 1 && agent.counts.claimed_deals === 1), "Reputation scanner should verify a foreign canonical signed reputation entry");
+  const firstSkillSearch = await getJson("/api/agents/find?skill=coding&source=all");
+  const secondSkillSearch = await getJson("/api/agents/find?skill=coding&source=all");
+  assert(firstSkillSearch.schema === "osa-skill-finder/1" && firstSkillSearch.query.skills.join(",") === "coding", "Skill finder should expose a versioned normalized exact-match query");
+  assert(firstSkillSearch.matches?.some((agent) => agent.source === "local" && agent.agent_id === "coder" && agent.action.enabled === true), "Skill finder should return a verified local coding profile through the existing workspace action");
+  const remoteSkillMatch = firstSkillSearch.matches?.find((agent) => agent.source === "federated" && agent.agent_id === "remote-coder");
+  assert(remoteSkillMatch?.verification.label === "SIGNATURE VERIFIED" && remoteSkillMatch.action.enabled === false && remoteSkillMatch.provenance.room === "osa-network", "Skill finder should expose verified federated provenance without granting remote execution");
+  assert(remoteSkillMatch?.reputation.status === "signed_record" && remoteSkillMatch.reputation.counts.accepted_results === 1, "Skill finder should join reputation only by exact agent/node/DID identity");
+  assert(!/[<>]/.test(`${remoteSkillMatch?.name || ""}${remoteSkillMatch?.tagline || ""}`), "Skill finder should sanitize external display strings");
+  assert(firstSkillSearch.matches.map((agent) => agent.id).join("|") === secondSkillSearch.matches.map((agent) => agent.id).join("|"), "Skill finder result ordering should be deterministic");
+  const multiSkillSearch = await getJson("/api/agents/find?skill=coding%2Ctesting&source=all");
+  assert(multiSkillSearch.query.skills.join(",") === "coding,testing" && multiSkillSearch.matches.every((agent) => agent.capabilities.includes("coding") && agent.capabilities.includes("testing")), "Skill finder should deterministically require every comma-separated capability");
+  const impossibleSkillSearch = await getJson("/api/agents/find?skill=coding%2Csecurity_review&source=all");
+  assert(impossibleSkillSearch.matches.length === 0, "Skill finder should not return partial matches for an AND query");
+  assert(!firstSkillSearch.matches.some((agent) => ["remote-tampered", "remote-mismatch"].includes(agent.agent_id)), "Skill finder should exclude untrusted capability claims by default");
+  const unsafeSkillSearch = await getJson("/api/agents/find?skill=coding&source=federated&include_untrusted=1");
+  assert(unsafeSkillSearch.matches.some((agent) => agent.agent_id === "remote-tampered" && agent.eligible === false && agent.verification.label === "UNTRUSTED"), "Skill finder should clearly label explicitly requested untrusted claims and keep them unusable");
+  assert(!/\"signature\"|privateKey|PRIVATE KEY|seed|pkcs8/i.test(JSON.stringify(firstSkillSearch)), "Skill finder must not expose raw signatures, keys, or deterministic seeds");
   assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-payload" && agent.verified === false), "Reputation scanner should mark tampered payloads untrusted");
   assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-sig" && agent.verified === false && agent.rejection_reason), "Reputation scanner should fail closed on invalid signatures");
   assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-did" && agent.verified === false && agent.rejection_reason), "Reputation scanner should fail closed on signer DID mismatch");
@@ -550,11 +568,15 @@ try {
   assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-evidence" && agent.verified === false && agent.rejection_reason === "evidence_count_mismatch"), "Reputation scanner should reject invented evidence counts");
   assert(!/\"signature\"|privateKey|PRIVATE KEY|seed|pkcs8/i.test(JSON.stringify(reputation)), "Discovered reputation projection must not expose raw signatures, keys, or deterministic seeds");
   technocoreRegistryUnavailable = true;
-  await delay(80);
+  await delay(600);
   capabilityRegistry = (await postJson("/api/capability-registry/scan", {})).registry;
   assert(capabilityRegistry.status.last_scan_status === "archive" && capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-coder" && agent.stale === true), "Registry scanner should retain stale restart-safe projection during Technocore KV outage");
   reputation = (await postJson("/api/reputation/scan", {})).reputation;
-  assert(reputation.status.last_scan_status === "archive" && reputation.discovered?.some((agent) => agent.agent_id === "remote-reputable" && agent.stale === true), "Reputation scanner should retain stale restart-safe projection during Technocore KV outage");
+  assert(reputation.status.last_scan_status === "archive" && reputation.discovered?.some((agent) => agent.agent_id === "remote-coder" && agent.stale === true), "Reputation scanner should retain stale restart-safe projection during Technocore KV outage");
+  const staleSkillSearch = await getJson("/api/agents/find?skill=coding&source=federated");
+  assert(!staleSkillSearch.matches.some((agent) => agent.agent_id === "remote-coder") && staleSkillSearch.status.excluded.stale >= 1, "Skill finder should exclude stale federated claims by default");
+  const includedStaleSkillSearch = await getJson("/api/agents/find?skill=coding&source=federated&include_stale=1");
+  assert(includedStaleSkillSearch.matches.some((agent) => agent.agent_id === "remote-coder" && agent.eligible === false && agent.verification.label === "STALE"), "Skill finder should clearly label stale claims and keep them unusable when explicitly requested");
   technocoreRegistryUnavailable = false;
   const lockFrame = {
     type: "lock",
@@ -976,7 +998,7 @@ function signedFixtureWrite(room, did, privateKey, text, nonce) {
   return { room, from: did, nonce, sig, text: singleLine };
 }
 
-function makeCapabilityRegistryFixtureRecord({ agentId, agentDid, agentPrivateKey, nodeDid, nodePrivateKey, nodeId }) {
+function makeCapabilityRegistryFixtureRecord({ agentId, agentDid, agentPrivateKey, nodeDid, nodePrivateKey, nodeId, name = agentId, tagline = "RC external registry fixture" }) {
   const timestamp = new Date().toISOString();
   const payload = {
     schema: "osa-capability-registry/1",
@@ -984,13 +1006,13 @@ function makeCapabilityRegistryFixtureRecord({ agentId, agentDid, agentPrivateKe
     agent_id: agentId,
     identity: {
       agent_id: agentId,
-      name: agentId,
-      tagline: "RC external registry fixture",
+      name,
+      tagline,
       did: agentDid
     },
     node_id: nodeId,
     node_did: nodeDid,
-    capabilities: ["sign_text", "create_deal", "request_work", "submit_result", "attest_result", "claim", "receipt"],
+    capabilities: ["sign_text", "create_deal", "request_work", "submit_result", "attest_result", "claim", "receipt", "coding", "testing"],
     signing_policy: {
       autonomous: ["sign_text", "create_deal", "request_work", "submit_result", "attest_result", "claim", "receipt"],
       require_human: ["lock", "settle", "transfer", "refund", "delegate"]
