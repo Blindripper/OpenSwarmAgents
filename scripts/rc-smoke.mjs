@@ -38,8 +38,10 @@ let technocoreRegistryUnavailable = false;
 
 const externalRegistryNode = generateKeyPairSync("ed25519");
 const externalRegistryAgent = generateKeyPairSync("ed25519");
+const externalReviewSubject = generateKeyPairSync("ed25519");
 const externalRegistryNodeDid = didKeyFromEd25519PublicKey(externalRegistryNode.publicKey);
 const externalRegistryAgentDid = didKeyFromEd25519PublicKey(externalRegistryAgent.publicKey);
+const externalReviewSubjectDid = didKeyFromEd25519PublicKey(externalReviewSubject.publicKey);
 const externalRegistryNodeId = nodeIdForPublicKey(externalRegistryNode.publicKey.export({ type: "spki", format: "pem" }));
 
 try {
@@ -63,6 +65,7 @@ try {
       OSA_TECHNOCORE_ROOM_LIMIT: "2",
       OSA_CAPABILITY_REGISTRY_STALE_MS: "500",
       OSA_REPUTATION_STALE_MS: "500",
+      OSA_REVIEW_BRIDGE_STALE_MS: "500",
       OSA_TECHNOCORE_ANNOUNCE: "1",
       OSA_PUBLIC_URL: "https://osa.example",
       AGENTSWARM_PROPOSAL_VOTING_MS: "1",
@@ -653,6 +656,34 @@ try {
     },
     connectorHeaders
   );
+  const reviewerLogin = await postJson("/api/auth/login", {
+    email: "reviewer@example.com",
+    name: "RC Reviewer",
+    password: "reviewer-password-123"
+  });
+  const reviewerOwnerHeaders = { "x-agentswarm-session": reviewerLogin.sessionToken };
+  const reviewerToken = await postJson(
+    "/api/connectors/token",
+    {
+      mode: "worker",
+      goalId: workerGoalId,
+      name: "RC Review Agent",
+      capabilities: ["review"],
+      models: ["connector:stub"]
+    },
+    reviewerOwnerHeaders
+  );
+  const reviewerHeaders = { "x-osa-connector-token": reviewerToken.token };
+  const reviewer = await postJson(
+    "/api/agents/register",
+    {
+      name: "RC Review Agent <script>",
+      goalId: workerGoalId,
+      capabilities: ["review"],
+      models: ["connector:stub"]
+    },
+    reviewerHeaders
+  );
   const claimed = await postJson(
     "/api/tasks/claim",
     {
@@ -747,6 +778,85 @@ try {
   assert(result.result.artifacts[0]?.sha256 === scopedArtifact.artifact.sha256, "result artifact should keep uploaded artifact hash");
   assert(result.result.signature?.signature, "result should be signed");
 
+  const privateReviewReason = "Private reviewer detail <script>alert('never publish')</script> with internal context.";
+  const submittedReview = await postJson(
+    `/api/results/${result.result.id}/review`,
+    { agentId: reviewer.agent.id, decision: "accepted", score: 0.91, reason: privateReviewReason },
+    reviewerHeaders
+  );
+  assert(submittedReview.review?.signature?.signature, "eligible OSA result review should be locally node-signed");
+
+  let reviewBridge = await getJson("/api/review-bridge", reviewerOwnerHeaders);
+  const eligibleReview = reviewBridge.eligible?.find((item) => item.review_id === submittedReview.review.id);
+  assert(eligibleReview?.publish_status === "unpublished" && eligibleReview.score_milli === 910, "Review bridge should expose locally authoritative reviews without silently publishing them");
+  assert(!JSON.stringify(reviewBridge).includes(privateReviewReason) && !/[<>]/.test(eligibleReview.reviewer_name), "Review bridge API should omit private review text and sanitize display names");
+  await expectStatus("/api/review-bridge/publish", 401, { review_id: submittedReview.review.id });
+  await expectStatus("/api/review-bridge/publish", 403, { review_id: submittedReview.review.id }, headers);
+  const firstReviewPublish = await postJson("/api/review-bridge/publish", { review_id: submittedReview.review.id }, reviewerHeaders);
+  const secondReviewPublish = await postJson("/api/review-bridge/publish", { review_id: submittedReview.review.id }, reviewerHeaders);
+  assert(firstReviewPublish.result.payload_hash === secondReviewPublish.result.payload_hash, "Agent review publication should be deterministic and idempotent");
+  assert(secondReviewPublish.result.status === "unchanged" && secondReviewPublish.result.announced === false, "An unchanged review should not rewrite its KV value or duplicate the Credence pointer");
+  const localReviewRecord = secondReviewPublish.review_bridge.local.find((item) => item.review_id_hash === eligibleReview.review_id_hash);
+  assert(localReviewRecord?.verified === true && localReviewRecord.kv_path.startsWith("/kv/osa-agent-reviews/r-"), "Published local agent review should verify with bounded KV provenance");
+  assert(technocoreWrites.some((item) => item.room === "credence" && item.text.startsWith("VOUCH v1 | osa-") && item.text.includes("OSA REVIEW v1") && item.from === localReviewRecord.reviewer_did), "Review publication should use a signed managed-reviewer Credence VOUCH pointer");
+  const localReviewNote = technocoreNotes.get(localReviewRecord.kv_path.replace(/^\/kv\//, "")) || "";
+  assert(localReviewNote && !localReviewNote.includes(privateReviewReason) && localReviewNote.includes(createHash("sha256").update(privateReviewReason).digest("hex")), "Published review records should contain only the private reason hash commitment");
+
+  const remoteReview = makeAgentReviewFixtureRecord({
+    reviewId: "remote-review-valid", reviewerId: "remote-reviewer", reviewerDid: externalRegistryAgentDid,
+    reviewerPrivateKey: externalRegistryAgent.privateKey, subjectAgentId: "remote-author", subjectDid: externalReviewSubjectDid,
+    nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId
+  });
+  publishAgentReviewFixture(remoteReview, "9300001");
+  const tamperedReview = makeAgentReviewFixtureRecord({
+    reviewId: "remote-review-tampered", reviewerId: "remote-reviewer", reviewerDid: externalRegistryAgentDid,
+    reviewerPrivateKey: externalRegistryAgent.privateKey, subjectAgentId: "remote-author", subjectDid: externalReviewSubjectDid,
+    nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId
+  });
+  tamperedReview.payload.review.decision = "rejected";
+  publishAgentReviewFixture(tamperedReview, "9300002");
+  const signerReview = makeAgentReviewFixtureRecord({
+    reviewId: "remote-review-signer", reviewerId: "remote-reviewer", reviewerDid: externalRegistryAgentDid,
+    reviewerPrivateKey: externalRegistryAgent.privateKey, subjectAgentId: "remote-author", subjectDid: externalReviewSubjectDid,
+    nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId
+  });
+  signerReview.signer_did = externalRegistryNodeDid;
+  publishAgentReviewFixture(signerReview, "9300003");
+  const pathReview = makeAgentReviewFixtureRecord({
+    reviewId: "remote-review-path", reviewerId: "remote-reviewer", reviewerDid: externalRegistryAgentDid,
+    reviewerPrivateKey: externalRegistryAgent.privateKey, subjectAgentId: "remote-author", subjectDid: externalReviewSubjectDid,
+    nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId
+  });
+  pathReview.kv_path = `/kv/osa-agent-reviews/r-${"a".repeat(40)}`;
+  publishAgentReviewFixture(pathReview, "9300004");
+  const hashReview = makeAgentReviewFixtureRecord({
+    reviewId: "remote-review-hash", reviewerId: "remote-reviewer", reviewerDid: externalRegistryAgentDid,
+    reviewerPrivateKey: externalRegistryAgent.privateKey, subjectAgentId: "remote-author", subjectDid: externalReviewSubjectDid,
+    nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId
+  });
+  publishAgentReviewFixture(hashReview, "9300005", "0".repeat(64));
+  const ratingReview = makeAgentReviewFixtureRecord({
+    reviewId: "remote-review-rating", reviewerId: "remote-reviewer", reviewerDid: externalRegistryAgentDid,
+    reviewerPrivateKey: externalRegistryAgent.privateKey, subjectAgentId: "remote-author", subjectDid: externalReviewSubjectDid,
+    nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId,
+    scoreMilli: 1001
+  });
+  publishAgentReviewFixture(ratingReview, "9300006");
+  reviewBridge = (await postJson("/api/review-bridge/scan", {})).review_bridge;
+  assert(reviewBridge.discovered.some((item) => item.review_id_hash === remoteReview.payload.review_id_hash && item.verified === true && item.provenance.room === "credence"), "Review scanner should verify a remote canonical dual-signed OSA review record");
+  assert(reviewBridge.discovered.some((item) => item.review_id_hash === tamperedReview.payload.review_id_hash && item.verified === false && item.rejection_reason === "payload_hash_mismatch"), "Review scanner should reject payload tampering");
+  assert(reviewBridge.discovered.some((item) => item.review_id_hash === signerReview.payload.review_id_hash && item.verified === false && item.rejection_reason === "reviewer_signer_mismatch"), "Review scanner should reject reviewer signer mismatch");
+  assert(reviewBridge.discovered.some((item) => item.review_id_hash === pathReview.payload.review_id_hash && item.verified === false && item.rejection_reason === "kv_path_review_mismatch"), "Review scanner should reject KV path/review binding mismatch");
+  assert(reviewBridge.discovered.some((item) => item.review_id_hash === hashReview.payload.review_id_hash && item.verified === false && item.rejection_reason === "announcement_hash_mismatch"), "Review scanner should reject signed pointer hash mismatch");
+  assert(reviewBridge.discovered.some((item) => item.review_id_hash === ratingReview.payload.review_id_hash && item.verified === false && item.rejection_reason === "invalid_score"), "Review scanner should reject an out-of-bounds review rating");
+  assert(!/"signature"|privateKey|PRIVATE KEY|seed|pkcs8|Private reviewer detail/i.test(JSON.stringify(reviewBridge)), "Review bridge projection should not expose signatures, keys, seeds, or private review text");
+  const persistedReviewProjection = JSON.parse(await readFile(join(dataDir, "agentswarm.json"), "utf8"));
+  assert(persistedReviewProjection.agentReviewBridgeProjection?.some((item) => item.review_id_hash === remoteReview.payload.review_id_hash), "Verified and untrusted review projections should persist across restarts");
+  technocoreRegistryUnavailable = true;
+  reviewBridge = (await postJson("/api/review-bridge/scan", {})).review_bridge;
+  assert(reviewBridge.status.last_scan_status === "archive" && reviewBridge.discovered.some((item) => item.review_id_hash === remoteReview.payload.review_id_hash && item.stale === true), "Review scanner should mark cached external records stale immediately on outage");
+  technocoreRegistryUnavailable = false;
+
   const artifact = await postJson(
     "/api/artifacts/upload",
     {
@@ -826,7 +936,7 @@ function startTechnocoreFixture() {
     }
     if (noteMatch && req.method === "GET") {
       const key = `${noteMatch[1]}/${noteMatch[2]}`;
-      if (["osa-capabilities", "osa-reputation"].includes(noteMatch[1]) && technocoreRegistryUnavailable) {
+      if (["osa-capabilities", "osa-reputation", "osa-agent-reviews"].includes(noteMatch[1]) && technocoreRegistryUnavailable) {
         res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
         res.end("registry unavailable\n");
         return;
@@ -866,7 +976,7 @@ function startTechnocoreFixture() {
         res.end("fixture unavailable\n");
         return;
       }
-      if (room === "osa-network" && technocoreRegistryUnavailable) {
+      if (["osa-network", "credence"].includes(room) && technocoreRegistryUnavailable) {
         res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
         res.end("registry fixture unavailable\n");
         return;
@@ -1035,6 +1145,61 @@ function makeCapabilityRegistryFixtureRecord({ agentId, agentDid, agentPrivateKe
 
 function capabilityRegistryAnnouncementText(record) {
   return `OSA CAPABILITY v1 agent=${record.payload.agent_id} path=${record.kv_path} hash=${record.payload_hash} node=${record.payload.node_id} did=${record.payload.node_did}`;
+}
+
+function makeAgentReviewFixtureRecord({ reviewId, reviewerId, reviewerDid, reviewerPrivateKey, subjectAgentId, subjectDid, nodeDid, nodePrivateKey, nodeId, scoreMilli = 900 }) {
+  const publishedAt = new Date().toISOString();
+  const reviewIdHash = createHash("sha256").update(reviewId).digest("hex");
+  const resultIdHash = createHash("sha256").update(`result:${reviewId}`).digest("hex");
+  const payload = {
+    schema: "osa-agent-review/1",
+    version: 1,
+    review_id_hash: reviewIdHash,
+    reviewer: { agent_id: reviewerId, name: "Remote <Reviewer>", did: reviewerDid },
+    subject: {
+      type: "osa_result",
+      result_id_hash: resultIdHash,
+      task_id_hash: createHash("sha256").update(`task:${reviewId}`).digest("hex"),
+      author: { agent_id: subjectAgentId, did: subjectDid }
+    },
+    review: {
+      decision: "accepted",
+      score_milli: scoreMilli,
+      reason_hash: createHash("sha256").update(`private:${reviewId}`).digest("hex"),
+      public_text: false
+    },
+    credence: {
+      room: "credence",
+      frame: "VOUCH v1",
+      subject: `osa-${resultIdHash.slice(0, 10)}`,
+      verdict: "useful",
+      compatibility: "osa_namespaced_pointer"
+    },
+    node_id: nodeId,
+    node_did: nodeDid,
+    review_created_at: publishedAt,
+    published_at: publishedAt
+  };
+  const payloadHash = objectHash(payload);
+  return {
+    schema: "osa-agent-review/1",
+    version: 1,
+    kv_path: `/kv/osa-agent-reviews/r-${reviewIdHash.slice(0, 40)}`,
+    payload,
+    payload_hash: payloadHash,
+    signer_did: reviewerDid,
+    signature: signCapabilityEnvelope("agent_review_bridge", payload, reviewerDid, reviewerPrivateKey, publishedAt),
+    node_signature: signCapabilityEnvelope("node_review_bridge", payload, nodeDid, nodePrivateKey, publishedAt)
+  };
+}
+
+function agentReviewAnnouncementText(record, hashOverride = null) {
+  return `VOUCH v1 | ${record.payload.credence.subject} | ${record.payload.credence.verdict} | OSA REVIEW v1 review=${record.payload.review_id_hash} path=${record.kv_path} hash=${hashOverride || record.payload_hash} reviewer=${record.payload.reviewer.did} node=${record.payload.node_id} node_did=${record.payload.node_did}`;
+}
+
+function publishAgentReviewFixture(record, nonce, hashOverride = null) {
+  technocoreNotes.set(record.kv_path.replace(/^\/kv\//, ""), stableStringify(record));
+  signedFixtureWrite("credence", record.payload.reviewer.did, externalRegistryAgent.privateKey, agentReviewAnnouncementText(record, hashOverride), nonce);
 }
 
 function makeReputationFixtureRecord({ agentId, agentDid, agentPrivateKey, nodeDid, nodePrivateKey, nodeId, mutatePayload }) {

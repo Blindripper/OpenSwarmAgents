@@ -56,10 +56,57 @@ interface ReputationState {
   discovered: ReputationAgent[];
 }
 
+interface AgentReviewRow {
+  id?: string;
+  review_id?: string;
+  review_id_hash: string;
+  reviewer_agent_id: string;
+  reviewer_name?: string;
+  reviewer_did?: string;
+  subject_agent_id: string;
+  subject_did?: string;
+  subject_result_hash: string;
+  node_id?: string;
+  decision: string;
+  score_milli: number | null;
+  review_created_at?: string | null;
+  published_at?: string | null;
+  source?: string;
+  verified?: boolean;
+  stale?: boolean;
+  status?: string;
+  publish_status?: string;
+  rejection_reason?: string | null;
+  kv_path?: string;
+  payload_hash?: string | null;
+  last_seen_at?: string | null;
+  provenance?: { room?: string | null; seq?: number | null; announced_at?: string | null; credence_frame?: string | null } | null;
+}
+
+interface AgentReviewBridgeState {
+  status: {
+    enabled: boolean;
+    room: string;
+    kv_namespace: string;
+    last_scan_status?: string | null;
+    last_scan_at?: string | null;
+    last_error?: string | null;
+    eligible_count: number;
+    local_count: number;
+    verified_count: number;
+    rejected_count: number;
+  };
+  semantics?: { verification?: string; privacy?: string; credence?: string };
+  eligible: AgentReviewRow[];
+  local: AgentReviewRow[];
+  discovered: AgentReviewRow[];
+}
+
 interface TrustResponse {
   summary: TrustSummary | null;
   top_builders: ReputationAgent[];
   reputation: ReputationState | null;
+  review_bridge: AgentReviewBridgeState | null;
 }
 
 const shortHash = (value?: string | null) => value ? `${value.slice(0, 10)}...${value.slice(-6)}` : "pending";
@@ -79,9 +126,11 @@ const badgeStyle = (kind: "verified" | "stale" | "untrusted" | "local") => ({
 export function TrustPanel() {
   const [summary, setSummary] = useState<TrustSummary | null>(null);
   const [reputation, setReputation] = useState<ReputationState | null>(null);
+  const [reviewBridge, setReviewBridge] = useState<AgentReviewBridgeState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"publish" | "scan" | null>(null);
+  const [reviewBusy, setReviewBusy] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -92,6 +141,7 @@ export function TrustPanel() {
       if (!response.ok) throw new Error(data.detail || "Trust load failed");
       setSummary(data.summary || null);
       setReputation(data.reputation || null);
+      setReviewBridge(data.review_bridge || null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Trust load failed");
     } finally {
@@ -121,6 +171,26 @@ export function TrustPanel() {
     }
   }, [refresh]);
 
+  const runReviewBridgeAction = useCallback(async (action: "scan" | "publish", reviewId?: string) => {
+    setReviewBusy(action === "scan" ? "scan" : (reviewId || "publish"));
+    setError(null);
+    try {
+      const resp = await fetch(action === "scan" ? "/api/review-bridge/scan" : "/api/review-bridge/publish", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(action === "scan" ? {} : { review_id: reviewId }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "Agent review bridge action failed");
+      setReviewBridge(data.review_bridge || data);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Agent review bridge action failed");
+    } finally {
+      setReviewBusy(null);
+    }
+  }, [refresh]);
+
   if (loading) return <div style={{ color: "var(--text-dim)", fontSize: 15 }}>Loading trust data...</div>;
 
   const allReputation = [...(reputation?.local || []).map((agent) => ({ ...agent, source: "local" })), ...(reputation?.discovered || [])];
@@ -131,6 +201,8 @@ export function TrustPanel() {
     const bEvidence = b.counts.accepted_results + b.counts.verified_job_results + b.counts.claimed_deals;
     return bTrusted - aTrusted || bEvidence - aEvidence || a.agent_id.localeCompare(b.agent_id);
   });
+  const reviewRows = [...(reviewBridge?.local || []).map((review) => ({ ...review, source: "local" })), ...(reviewBridge?.discovered || [])]
+    .sort((a, b) => Number(Boolean(b.verified && !b.stale)) - Number(Boolean(a.verified && !a.stale)) || String(b.published_at || b.last_seen_at || "").localeCompare(String(a.published_at || a.last_seen_at || "")));
 
   const reputationCard = (agent: ReputationAgent) => {
     const local = agent.source === "local";
@@ -203,6 +275,77 @@ export function TrustPanel() {
             ))}
           </div>
         ) : <div style={{ color: "var(--text-dim)", fontSize: 13, padding: "10px 0" }}>No evidence data yet.</div>}
+      </section>
+
+      <section style={{ border: "1px solid #273453", borderRadius: 8, padding: 16, background: "#0b1525" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 4 }}>Agent Review Bridge</div>
+            <div style={{ fontSize: 12, color: "var(--text-dim)", maxWidth: 760 }}>
+              Explicitly publish eligible local OSA result reviews as signed <code>osa-agent-review/1</code> KV records with an OSA pointer in #{reviewBridge?.status.room || "credence"}. Signatures prove authorship and integrity—not endorsement, authority, ranking, rewards, settlement, or permission to execute.
+            </div>
+          </div>
+          <button type="button" disabled={reviewBusy !== null} onClick={() => void runReviewBridgeAction("scan")} style={{ height: 32, padding: "0 12px", borderRadius: 6, border: "1px solid #2563eb", background: "#10204a", color: "#93c5fd", fontWeight: 900, fontSize: 12, cursor: reviewBusy ? "default" : "pointer" }}>{reviewBusy === "scan" ? "Scanning..." : "Scan #credence"}</button>
+        </div>
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 10 }}>
+          <span style={badgeStyle("local")}>{reviewBridge?.status.eligible_count || 0} ELIGIBLE LOCAL</span>
+          <span style={badgeStyle("verified")}>{reviewBridge?.status.verified_count || 0} VERIFIED REMOTE</span>
+          <span style={badgeStyle("untrusted")}>{reviewBridge?.status.rejected_count || 0} UNTRUSTED</span>
+        </div>
+        <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 12 }}>
+          Private review reasons never leave this node: only a SHA-256 commitment, bounded score, decision, hashed subject ids, and managed reviewer/node identities are public. The observed Credence <code>VOUCH v1</code> envelope carries an OSA-namespaced pointer; no generic Credence schema compatibility is claimed.
+        </div>
+        {reviewBridge?.status.last_error && <div style={{ color: "#facc15", fontSize: 11, marginBottom: 10 }}>Scanner using stale cached projection: {reviewBridge.status.last_error}</div>}
+
+        {(reviewBridge?.eligible || []).length > 0 && (
+          <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
+            {(reviewBridge?.eligible || []).map((review) => (
+              <div key={review.review_id_hash} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "10px 12px", border: "1px solid #273453", borderRadius: 8, background: "#0b1220" }}>
+                <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+                  <strong style={{ color: "#cbd5e1", fontSize: 13 }}>{review.reviewer_name || review.reviewer_agent_id} → {review.subject_agent_id}</strong>
+                  <span style={{ color: "#94a3b8", fontSize: 11 }}>{review.decision.replace(/_/g, " ")} · score {review.score_milli === null ? "unknown" : `${(review.score_milli / 10).toFixed(1)}%`} · subject {shortHash(review.subject_result_hash)}</span>
+                  <span style={{ color: "#64748b", fontSize: 10 }}>Publication: {review.publish_status || "unpublished"} · KV {review.kv_path}</span>
+                </div>
+                <button type="button" disabled={reviewBusy !== null || !review.review_id} onClick={() => void runReviewBridgeAction("publish", review.review_id)} style={{ height: 30, padding: "0 11px", borderRadius: 6, border: "1px solid #2a8c72", background: "#10251f", color: "#7ee0c2", fontWeight: 900, fontSize: 11, cursor: reviewBusy ? "default" : "pointer" }}>{reviewBusy === review.review_id ? "Publishing..." : review.publish_status === "published" || review.publish_status === "unchanged" ? "Republish" : "Publish review"}</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {reviewRows.length === 0 ? (
+          <div style={{ color: "var(--text-dim)", fontSize: 13, padding: "8px 0" }}>No published or discovered agent-review records yet. Reviews remain local until you explicitly publish one.</div>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {reviewRows.map((review) => {
+              const local = review.source === "local";
+              const stale = review.stale === true;
+              const untrusted = review.verified !== true;
+              return (
+                <div key={`${review.node_id || "local"}-${review.review_id_hash}-${review.kv_path || "none"}`} style={{ display: "grid", gap: 7, padding: "10px 12px", border: "1px solid #1e2a45", borderRadius: 8, background: "rgba(15,23,42,0.55)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <strong style={{ color: local ? "#93c5fd" : "#7ee0c2", fontSize: 13 }}>{review.reviewer_name || review.reviewer_agent_id}</strong>
+                      <span style={{ color: "#64748b", fontSize: 11 }}> reviewed {review.subject_agent_id} · {review.decision.replace(/_/g, " ")} · {review.score_milli === null ? "score unknown" : `${(review.score_milli / 10).toFixed(1)}%`}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {local && <span style={badgeStyle("local")}>LOCAL</span>}
+                      {review.verified && !stale && <span style={badgeStyle("verified")}>SIGNATURE VERIFIED</span>}
+                      {stale && <span style={badgeStyle("stale")}>STALE</span>}
+                      {untrusted && <span style={badgeStyle("untrusted")}>UNTRUSTED</span>}
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 5, color: "#94a3b8", fontSize: 10 }}>
+                    <span>Reviewer {shortDid(review.reviewer_did)}</span>
+                    <span>Subject {shortHash(review.subject_result_hash)}</span>
+                    <span>Payload {shortHash(review.payload_hash)}</span>
+                    <span>{review.provenance?.room ? `Seen #${review.provenance.room}${review.provenance.seq ? `:${review.provenance.seq}` : ""}` : `KV ${review.kv_path || "pending"}`}</span>
+                  </div>
+                  {review.rejection_reason && <div style={{ color: "#fca5a5", fontSize: 11 }}>Rejected: {review.rejection_reason}</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       <section style={{ border: "1px solid #273453", borderRadius: 8, padding: 16, background: "#0b1525" }}>

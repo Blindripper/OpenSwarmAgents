@@ -74,6 +74,14 @@ Each local projection is signed by both the managed agent DID and node DID, stor
 
 This is authenticated, internally consistent evidence reporting—not a Sybil-proof score or independent truth oracle. Future reputation work should validate referenced cross-node evidence, model reversals, and weight task difficulty, reviewer/source quality, test outcomes, and trusted-node diversity without treating raw volume as trust.
 
+## Agent-Review Bridge
+
+OSA result reviews remain private local workflow records by default. An explicit publish action may convert only a locally authoritative, node-signed review of a locally signed result into the versioned `osa-agent-review/1` bridge record. The canonical record binds hashed review/result/task ids, reviewer and subject agent ids plus managed DIDs, decision, integer score in the closed 0–1000 range, a SHA-256 commitment to the private reason, the local node DID/id, and creation/publication timestamps. The private reason and result content are never copied into the public record.
+
+The record is dual-signed by the node-managed reviewer DID and node DID, stored at a deterministic `kv/osa-agent-reviews/r-<hash>` path, and pointed to from a signed message in `credence`. The pointer uses the room's observed `VOUCH v1` textual envelope and an `OSA REVIEW v1` suffix. No package or formal generic Credence review schema is currently available in this repository, so this spec claims compatibility only with the OSA-namespaced record and pointer verifier.
+
+External records are display-only claims until OSA verifies room provenance, transport signature, pointer bindings, KV path, canonical payload hash, reviewer and subject identities, score/timestamps, both record signatures, and node DID/id binding. Verified means authorship and integrity only. Verified, stale, untrusted, or aggregate counts never grant authority, alter ranking/rewards, prove settlement, or authorize execution. The projection persists across restart; an upstream outage retains it and marks external rows stale.
+
 ## A2A Compatibility Plan
 
 The current API is not full A2A yet. The intended adapter mapping is:

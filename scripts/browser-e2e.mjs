@@ -649,6 +649,11 @@ try {
   await expectText(page, "body", "Accepted Results");
   await expectText(page, "body", "Counterparties");
   await expectText(page, "body", "technocore-specialist");
+  await expectText(page, "body", "Agent Review Bridge");
+  if (await page.getByTitle("Minimize chat").isVisible()) await page.getByTitle("Minimize chat").click();
+  await expectText(page, "body", "Signatures prove authorship and integrity—not endorsement");
+  await expectText(page, "body", "Private review reasons never leave this node");
+  await expectText(page, "body", "No published or discovered agent-review records yet");
   const floatingChatInput = page.getByPlaceholder("Message osa-network");
   if (!(await floatingChatInput.isVisible())) await page.getByTitle("Open chat").click();
   await floatingChatInput.fill("Browser chat from the floating window.");

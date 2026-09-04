@@ -130,6 +130,9 @@ const capabilityRegistrySchema = "osa-capability-registry/1";
 const capabilityRegistryNamespace = "osa-capabilities";
 const reputationRegistrySchema = "osa-reputation/1";
 const reputationRegistryNamespace = "osa-reputation";
+const agentReviewBridgeSchema = "osa-agent-review/1";
+const agentReviewBridgeNamespace = "osa-agent-reviews";
+const agentReviewBridgeRoom = "credence";
 const managedNoValueSigningActions = ["sign_text", "create_deal", "request_work", "submit_result", "attest_result", "claim", "receipt"];
 const humanRequiredSigningActions = ["lock", "settle", "transfer", "refund", "delegate"];
 const defaultAgentSkillClaims = Object.freeze({
@@ -158,6 +161,10 @@ const reputationRegistryScanMs = Math.round(boundedNumber(process.env.OSA_REPUTA
 const reputationRegistryStaleMs = Math.round(boundedNumber(process.env.OSA_REPUTATION_STALE_MS, 24 * 60 * 60 * 1000, 1_000, 30 * 24 * 60 * 60 * 1000));
 const reputationRegistryPointerLimit = Math.round(boundedNumber(process.env.OSA_REPUTATION_POINTER_LIMIT, 80, 5, 250));
 const reputationRegistryRoomLimit = Math.round(boundedNumber(process.env.OSA_REPUTATION_ROOM_LIMIT, 80, 10, 200));
+const agentReviewBridgeScanMs = Math.round(boundedNumber(process.env.OSA_REVIEW_BRIDGE_SCAN_MS, 5 * 60 * 1000, 30_000, 60 * 60 * 1000));
+const agentReviewBridgeStaleMs = Math.round(boundedNumber(process.env.OSA_REVIEW_BRIDGE_STALE_MS, 24 * 60 * 60 * 1000, 1_000, 30 * 24 * 60 * 60 * 1000));
+const agentReviewBridgePointerLimit = Math.round(boundedNumber(process.env.OSA_REVIEW_BRIDGE_POINTER_LIMIT, 100, 5, 250));
+const agentReviewBridgeRoomLimit = Math.round(boundedNumber(process.env.OSA_REVIEW_BRIDGE_ROOM_LIMIT, 100, 10, 200));
 const technocoreChannelsCache = { key: "", expiresAt: 0, channels: [], error: null };
 let technocoreChannelsRefreshPromise = null;
 const technocoreNonceByRoom = new Map();
@@ -290,6 +297,9 @@ async function loadStore() {
       reputationRecords: [],
       reputationProjection: [],
       reputationSync: {},
+      agentReviewBridgeRecords: [],
+      agentReviewBridgeProjection: [],
+      agentReviewBridgeSync: {},
       delegations: [],
       jobClaims: [],
       jobResults: [],
@@ -347,6 +357,9 @@ function normalizeStore(input) {
     reputationRecords: normalizeReputationRecords(input.reputationRecords || []),
     reputationProjection: normalizeReputationProjection(input.reputationProjection || []),
     reputationSync: normalizeReputationSync(input.reputationSync || {}),
+    agentReviewBridgeRecords: normalizeAgentReviewBridgeRecords(input.agentReviewBridgeRecords || []),
+    agentReviewBridgeProjection: normalizeAgentReviewBridgeProjection(input.agentReviewBridgeProjection || []),
+    agentReviewBridgeSync: normalizeAgentReviewBridgeSync(input.agentReviewBridgeSync || {}),
     delegations: normalizeDelegations(input.delegations || []),
     jobClaims: normalizeJobClaims(input.jobClaims || []),
     jobResults: normalizeJobResults(input.jobResults || []),
@@ -1614,6 +1627,100 @@ function normalizePublicReputationEvidenceRefs(input) {
       .map((hash) => String(hash || "").slice(0, 100))
       .filter((hash) => /^[a-f0-9]{64}$/.test(hash))
       .slice(0, 200)
+  };
+}
+
+function normalizeAgentReviewBridgeRecords(records) {
+  if (!Array.isArray(records)) return [];
+  const byReview = new Map();
+  for (const rec of records) {
+    const record = rec?.record && typeof rec.record === "object" && !Array.isArray(rec.record) ? rec.record : null;
+    const reviewIdHash = String(rec?.review_id_hash || record?.payload?.review_id_hash || "").slice(0, 64);
+    if (!record || !/^[a-f0-9]{64}$/.test(reviewIdHash)) continue;
+    byReview.set(reviewIdHash, {
+      review_id_hash: reviewIdHash,
+      kv_path: String(rec.kv_path || record.kv_path || technocoreAgentReviewKvLocation(reviewIdHash).path).slice(0, 120),
+      payload_hash: String(rec.payload_hash || record.payload_hash || "").slice(0, 64),
+      signer_did: String(rec.signer_did || record.signer_did || record.payload?.reviewer?.did || "").slice(0, 150),
+      node_id: String(rec.node_id || record.payload?.node_id || nodeIdentity.nodeId).slice(0, 100),
+      record,
+      published_at: validIsoTimestamp(rec.published_at || record.payload?.published_at) || now(),
+      last_publish_at: validIsoTimestamp(rec.last_publish_at) || null,
+      last_publish_status: ["pending", "published", "unchanged", "disabled", "failed"].includes(rec.last_publish_status) ? rec.last_publish_status : "pending",
+      last_publish_error: rec.last_publish_error ? sanitizeDisplayText(rec.last_publish_error, 300) : null,
+      last_announced_at: validIsoTimestamp(rec.last_announced_at) || null,
+      last_announced_hash: /^[a-f0-9]{64}$/.test(String(rec.last_announced_hash || "")) ? String(rec.last_announced_hash) : null
+    });
+  }
+  return [...byReview.values()]
+    .sort((a, b) => String(b.published_at).localeCompare(String(a.published_at)))
+    .slice(0, 1000);
+}
+
+function normalizeAgentReviewBridgeProjection(records) {
+  if (!Array.isArray(records)) return [];
+  const byKey = new Map();
+  for (const rec of records) {
+    const reviewIdHash = String(rec?.review_id_hash || "").slice(0, 64);
+    const reviewerDid = String(rec?.reviewer_did || "").slice(0, 150);
+    const nodeId = String(rec?.node_id || "").slice(0, 100);
+    const kvPath = String(rec?.kv_path || "").slice(0, 120);
+    if (!/^[a-f0-9]{64}$/.test(reviewIdHash) || !reviewerDid || !nodeId || !kvPath) continue;
+    const verified = rec.verified === true;
+    const key = `${nodeId}\x00${reviewIdHash}\x00${reviewerDid}\x00${kvPath}`;
+    byKey.set(key, {
+      id: String(rec.id || `agent-review-${createHash("sha256").update(key).digest("hex").slice(0, 24)}`).slice(0, 100),
+      source: rec.source === "local" ? "local" : "technocore",
+      review_id_hash: reviewIdHash,
+      reviewer_agent_id: sanitizeDisplayText(rec.reviewer_agent_id, 80),
+      reviewer_name: sanitizeDisplayText(rec.reviewer_name || rec.reviewer_agent_id, 80),
+      reviewer_did: reviewerDid,
+      subject_type: rec.subject_type === "osa_result" ? "osa_result" : "unknown",
+      subject_result_hash: String(rec.subject_result_hash || "").slice(0, 64),
+      subject_task_hash: String(rec.subject_task_hash || "").slice(0, 64),
+      subject_agent_id: sanitizeDisplayText(rec.subject_agent_id, 80),
+      subject_did: String(rec.subject_did || "").slice(0, 150),
+      decision: ["accepted", "needs_revision", "rejected"].includes(rec.decision) ? rec.decision : "unknown",
+      score_milli: Number.isSafeInteger(rec.score_milli) ? rec.score_milli : null,
+      reason_hash: String(rec.reason_hash || "").slice(0, 64),
+      review_created_at: validIsoTimestamp(rec.review_created_at) || null,
+      published_at: validIsoTimestamp(rec.published_at) || null,
+      node_id: nodeId,
+      node_did: String(rec.node_did || "").slice(0, 150),
+      kv_path: kvPath,
+      payload_hash: String(rec.payload_hash || "").slice(0, 64),
+      verified,
+      status: verified ? "verified" : "untrusted",
+      stale: rec.stale === true,
+      rejection_reason: verified ? null : sanitizeDisplayText(rec.rejection_reason || "unverified", 240),
+      first_seen_at: validIsoTimestamp(rec.first_seen_at) || now(),
+      last_seen_at: validIsoTimestamp(rec.last_seen_at) || now(),
+      provenance: {
+        room: normalizeTechnocoreName(rec.provenance?.room) || null,
+        seq: finitePositiveNumber(rec.provenance?.seq),
+        from: rec.provenance?.from ? String(rec.provenance.from).slice(0, 150) : null,
+        announced_at: validIsoTimestamp(rec.provenance?.announced_at) || null,
+        credence_frame: rec.provenance?.credence_frame === "VOUCH v1" ? "VOUCH v1" : null
+      }
+    });
+  }
+  return [...byKey.values()]
+    .sort((a, b) => String(b.last_seen_at).localeCompare(String(a.last_seen_at)) || a.review_id_hash.localeCompare(b.review_id_hash))
+    .slice(0, 1500);
+}
+
+function normalizeAgentReviewBridgeSync(input) {
+  const value = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  return {
+    enabled: value.enabled === true,
+    room: normalizeTechnocoreName(value.room) || agentReviewBridgeRoom,
+    last_publish_at: validIsoTimestamp(value.last_publish_at) || null,
+    last_scan_at: validIsoTimestamp(value.last_scan_at) || null,
+    last_scan_status: ["idle", "live", "archive", "disabled", "failed"].includes(value.last_scan_status) ? value.last_scan_status : "idle",
+    last_error: value.last_error ? sanitizeDisplayText(value.last_error, 300) : null,
+    discovered_count: Math.max(0, Number(value.discovered_count || 0)),
+    verified_count: Math.max(0, Number(value.verified_count || 0)),
+    rejected_count: Math.max(0, Number(value.rejected_count || 0))
   };
 }
 
@@ -3173,6 +3280,9 @@ async function loadPostgresStore() {
     reputationRecords: [],
     reputationProjection: [],
     reputationSync: {},
+    agentReviewBridgeRecords: [],
+    agentReviewBridgeProjection: [],
+    agentReviewBridgeSync: {},
     delegations: [],
     jobClaims: [],
     jobResults: [],
@@ -5508,6 +5618,12 @@ function publicRuntime() {
     reputationRegistryScanRooms,
     reputationRegistryLastScanAt: normalizeReputationSync(store?.reputationSync || {}).last_scan_at,
     reputationRegistryLastScanStatus: normalizeReputationSync(store?.reputationSync || {}).last_scan_status,
+    agentReviewBridgeEnabled: technocoreEnabled,
+    agentReviewBridgeSchema,
+    agentReviewBridgeRoom,
+    agentReviewBridgeNamespace,
+    agentReviewBridgeLastScanAt: normalizeAgentReviewBridgeSync(store?.agentReviewBridgeSync || {}).last_scan_at,
+    agentReviewBridgeLastScanStatus: normalizeAgentReviewBridgeSync(store?.agentReviewBridgeSync || {}).last_scan_status,
     node: publicNodeIdentity(),
     oauthConfigured: Object.fromEntries(
       Object.keys(oauthProviderConfig).map((provider) => [provider, Boolean(providerCredentials(provider))])
@@ -8813,6 +8929,446 @@ function publicReputationStatus() {
   };
 }
 
+function reviewBridgeIdHash(reviewId) {
+  return hashPublicValue(String(reviewId || ""));
+}
+
+function technocoreAgentReviewKvLocation(reviewIdOrHash) {
+  const hash = /^[a-f0-9]{64}$/.test(String(reviewIdOrHash || ""))
+    ? String(reviewIdOrHash)
+    : reviewBridgeIdHash(reviewIdOrHash);
+  const key = `r-${hash.slice(0, 40)}`;
+  return { namespace: agentReviewBridgeNamespace, key, path: `/kv/${agentReviewBridgeNamespace}/${key}` };
+}
+
+function reviewBridgeVerdict(decision) {
+  return decision === "accepted" ? "useful" : decision === "rejected" ? "not useful" : "partial";
+}
+
+function isBoundedAgentIdentity(identity) {
+  return Boolean(
+    identity && /^[a-z0-9][a-z0-9_-]{0,79}$/.test(String(identity.agent_id || "")) &&
+    ed25519PublicKeyFromDidKey(String(identity.did || ""))
+  );
+}
+
+function locallyAuthoritativeReview(review) {
+  const result = (store.results || []).find((item) => item.id === review?.resultId);
+  const task = (store.tasks || []).find((item) => item.id === review?.taskId);
+  const reviewer = (store.agents || []).find((item) => item.id === review?.agentId);
+  if (!review || !result || !task || !reviewer) return { ok: false, reason: "missing_local_subject_or_reviewer" };
+  if (review.resultId !== result.id || review.taskId !== result.taskId || review.taskId !== task.id || review.goalId !== result.goalId || review.goalId !== task.goalId) {
+    return { ok: false, reason: "local_subject_binding_mismatch" };
+  }
+  if (review.agentId === result.agentId) return { ok: false, reason: "self_review" };
+  if (!["accepted", "needs_revision", "rejected"].includes(review.decision)) return { ok: false, reason: "invalid_decision" };
+  if (!Number.isFinite(Number(review.score)) || Number(review.score) < 0 || Number(review.score) > 1) return { ok: false, reason: "invalid_score" };
+  const reviewCreatedAt = validIsoTimestamp(review.createdAt);
+  if (!reviewCreatedAt || Date.parse(reviewCreatedAt) > Date.now() + 5 * 60 * 1000) return { ok: false, reason: "invalid_review_timestamp" };
+  if (review.signature?.nodeId !== nodeIdentity.nodeId || review.signature?.type !== "result_review") return { ok: false, reason: "review_not_local_node_signed" };
+  const reviewPayload = signedPayloadForFederatedItem("reviews", review);
+  if (!reviewPayload || !verifySignedContribution(review.signature, reviewPayload, nodeIdentity.publicKeyPem)) return { ok: false, reason: "local_review_signature_invalid" };
+  const resultPayload = signedPayloadForFederatedItem("results", result);
+  if (result.signature?.nodeId !== nodeIdentity.nodeId || result.signature?.type !== "task_result" || !resultPayload || !verifySignedContribution(result.signature, resultPayload, nodeIdentity.publicKeyPem)) {
+    return { ok: false, reason: "local_result_signature_invalid" };
+  }
+  return { ok: true, review, result, task, reviewer };
+}
+
+function makeAgentReviewBridgeRecord(review) {
+  const authority = locallyAuthoritativeReview(review);
+  if (!authority.ok) {
+    const error = new Error(`Review is not eligible for public bridge publication: ${authority.reason}`);
+    error.statusCode = 409;
+    throw error;
+  }
+  const { result, reviewer } = authority;
+  const reviewIdHash = reviewBridgeIdHash(review.id);
+  const existing = normalizeAgentReviewBridgeRecords(store.agentReviewBridgeRecords || []).find((item) => item.review_id_hash === reviewIdHash);
+  if (existing?.record) return existing.record;
+  const reviewerIdentity = agentSigningIdentityForProfile(review.agentId);
+  const subjectDid = agentDidForProfile(result.agentId);
+  const nodeDid = technocoreDid || didKeyFromEd25519PublicKeyPem(nodeIdentity.publicKeyPem);
+  const resultIdHash = hashPublicValue(result.id);
+  const publishedAt = now();
+  const payload = {
+    schema: agentReviewBridgeSchema,
+    version: 1,
+    review_id_hash: reviewIdHash,
+    reviewer: {
+      agent_id: String(review.agentId).slice(0, 80),
+      name: sanitizeDisplayText(reviewer.name || review.agentId, 80),
+      did: reviewerIdentity.did
+    },
+    subject: {
+      type: "osa_result",
+      result_id_hash: resultIdHash,
+      task_id_hash: hashPublicValue(review.taskId),
+      author: { agent_id: String(result.agentId).slice(0, 80), did: subjectDid }
+    },
+    review: {
+      decision: review.decision,
+      score_milli: Math.round(Number(review.score) * 1000),
+      reason_hash: hashPublicValue(review.reason || ""),
+      public_text: false
+    },
+    credence: {
+      room: agentReviewBridgeRoom,
+      frame: "VOUCH v1",
+      subject: `osa-${resultIdHash.slice(0, 10)}`,
+      verdict: reviewBridgeVerdict(review.decision),
+      compatibility: "osa_namespaced_pointer"
+    },
+    node_id: nodeIdentity.nodeId,
+    node_did: nodeDid,
+    review_created_at: validIsoTimestamp(review.createdAt),
+    published_at: publishedAt
+  };
+  const location = technocoreAgentReviewKvLocation(reviewIdHash);
+  const payloadHash = objectHash(payload);
+  const nodeSigner = { did: nodeDid, privateKey: nodeIdentity.privateKeyPem };
+  return {
+    schema: agentReviewBridgeSchema,
+    version: 1,
+    kv_path: location.path,
+    payload,
+    payload_hash: payloadHash,
+    signer_did: reviewerIdentity.did,
+    signature: signCapabilityEnvelope("agent_review_bridge", payload, reviewerIdentity, publishedAt),
+    node_signature: signCapabilityEnvelope("node_review_bridge", payload, nodeSigner, publishedAt)
+  };
+}
+
+function verifyAgentReviewBridgeRecord(record, options = {}) {
+  try {
+    if (!record || record.schema !== agentReviewBridgeSchema || record.version !== 1) return { ok: false, reason: "wrong_schema" };
+    const payload = record.payload;
+    if (!payload || payload.schema !== agentReviewBridgeSchema || payload.version !== 1) return { ok: false, reason: "invalid_payload" };
+    if (!/^[a-f0-9]{64}$/.test(String(payload.review_id_hash || ""))) return { ok: false, reason: "invalid_review_id_hash" };
+    const expectedPath = technocoreAgentReviewKvLocation(payload.review_id_hash).path;
+    if (record.kv_path !== expectedPath) return { ok: false, reason: "kv_path_review_mismatch" };
+    if (options.expectedPath && record.kv_path !== options.expectedPath) return { ok: false, reason: "announcement_path_mismatch" };
+    if (options.expectedReviewHash && payload.review_id_hash !== options.expectedReviewHash) return { ok: false, reason: "announcement_review_mismatch" };
+    if (record.payload_hash !== objectHash(payload)) return { ok: false, reason: "payload_hash_mismatch" };
+    if (options.expectedHash && record.payload_hash !== options.expectedHash) return { ok: false, reason: "announcement_hash_mismatch" };
+    if (!isBoundedAgentIdentity(payload.reviewer)) return { ok: false, reason: "invalid_reviewer_identity" };
+    if (record.signer_did !== payload.reviewer.did) return { ok: false, reason: "reviewer_signer_mismatch" };
+    if (!payload.subject || payload.subject.type !== "osa_result") return { ok: false, reason: "invalid_subject_type" };
+    if (!/^[a-f0-9]{64}$/.test(String(payload.subject.result_id_hash || "")) || !/^[a-f0-9]{64}$/.test(String(payload.subject.task_id_hash || ""))) return { ok: false, reason: "invalid_subject_hash" };
+    if (!isBoundedAgentIdentity(payload.subject.author)) return { ok: false, reason: "invalid_subject_identity" };
+    if (payload.subject.author.agent_id === payload.reviewer.agent_id && payload.subject.author.did === payload.reviewer.did) return { ok: false, reason: "self_review" };
+    if (!["accepted", "needs_revision", "rejected"].includes(payload.review?.decision)) return { ok: false, reason: "invalid_decision" };
+    if (!Number.isSafeInteger(payload.review?.score_milli) || payload.review.score_milli < 0 || payload.review.score_milli > 1000) return { ok: false, reason: "invalid_score" };
+    if (!/^[a-f0-9]{64}$/.test(String(payload.review?.reason_hash || "")) || payload.review.public_text !== false) return { ok: false, reason: "invalid_private_review_commitment" };
+    const expectedVerdict = reviewBridgeVerdict(payload.review.decision);
+    if (payload.credence?.room !== agentReviewBridgeRoom || payload.credence?.frame !== "VOUCH v1" || payload.credence?.subject !== `osa-${payload.subject.result_id_hash.slice(0, 10)}` || payload.credence?.verdict !== expectedVerdict || payload.credence?.compatibility !== "osa_namespaced_pointer") {
+      return { ok: false, reason: "credence_binding_mismatch" };
+    }
+    if (options.expectedSubject && payload.credence.subject !== options.expectedSubject) return { ok: false, reason: "announcement_subject_mismatch" };
+    if (options.expectedVerdict && payload.credence.verdict !== options.expectedVerdict) return { ok: false, reason: "announcement_verdict_mismatch" };
+    if (!payload.node_did || !payload.node_id) return { ok: false, reason: "missing_node_identity" };
+    const nodePublicKey = ed25519PublicKeyFromDidKey(payload.node_did);
+    if (!nodePublicKey) return { ok: false, reason: "invalid_node_did" };
+    if (nodeIdForPublicKey(nodePublicKey.export({ type: "spki", format: "pem" })) !== payload.node_id) return { ok: false, reason: "node_id_did_mismatch" };
+    if (options.announcedFrom && options.announcedFrom !== payload.reviewer.did) return { ok: false, reason: "announcement_reviewer_did_mismatch" };
+    const createdAt = validIsoTimestamp(payload.review_created_at);
+    const publishedAt = validIsoTimestamp(payload.published_at);
+    if (!createdAt || !publishedAt || Date.parse(createdAt) > Date.parse(publishedAt) || Date.parse(publishedAt) > Date.now() + 5 * 60 * 1000) return { ok: false, reason: "invalid_timestamps" };
+    if (record.signature?.signed_at !== publishedAt || record.node_signature?.signed_at !== publishedAt) return { ok: false, reason: "signature_timestamp_mismatch" };
+    if (!verifyCapabilityEnvelope("agent_review_bridge", record.signature, payload, payload.reviewer.did)) return { ok: false, reason: "reviewer_signature_invalid" };
+    if (!verifyCapabilityEnvelope("node_review_bridge", record.node_signature, payload, payload.node_did)) return { ok: false, reason: "node_signature_invalid" };
+    return { ok: true, reason: null };
+  } catch (error) {
+    return { ok: false, reason: sanitizeDisplayText(error?.message || "verification_failed", 120).replace(/\s+/g, "_") };
+  }
+}
+
+function agentReviewProjection(record, verified, rejectionReason, provenance) {
+  const payload = record?.payload || {};
+  const key = `${payload.node_id || provenance?.node_id || "unknown"}\x00${payload.review_id_hash || provenance?.review_id_hash || "unknown"}\x00${payload.reviewer?.did || provenance?.reviewer_did || "unknown"}\x00${record?.kv_path || provenance?.path || ""}`;
+  return {
+    id: `agent-review-${createHash("sha256").update(key).digest("hex").slice(0, 24)}`,
+    source: payload.node_id === nodeIdentity.nodeId ? "local" : "technocore",
+    review_id_hash: String(payload.review_id_hash || provenance?.review_id_hash || "").slice(0, 64),
+    reviewer_agent_id: sanitizeDisplayText(payload.reviewer?.agent_id || "unknown", 80),
+    reviewer_name: sanitizeDisplayText(payload.reviewer?.name || payload.reviewer?.agent_id || "Agent", 80),
+    reviewer_did: String(payload.reviewer?.did || record?.signer_did || provenance?.reviewer_did || "").slice(0, 150),
+    subject_type: payload.subject?.type || "unknown",
+    subject_result_hash: String(payload.subject?.result_id_hash || "").slice(0, 64),
+    subject_task_hash: String(payload.subject?.task_id_hash || "").slice(0, 64),
+    subject_agent_id: sanitizeDisplayText(payload.subject?.author?.agent_id || "unknown", 80),
+    subject_did: String(payload.subject?.author?.did || "").slice(0, 150),
+    decision: payload.review?.decision || "unknown",
+    score_milli: Number.isSafeInteger(payload.review?.score_milli) ? payload.review.score_milli : null,
+    reason_hash: String(payload.review?.reason_hash || "").slice(0, 64),
+    review_created_at: validIsoTimestamp(payload.review_created_at),
+    published_at: validIsoTimestamp(payload.published_at),
+    node_id: String(payload.node_id || provenance?.node_id || "").slice(0, 100),
+    node_did: String(payload.node_did || "").slice(0, 150),
+    kv_path: String(record?.kv_path || provenance?.path || "").slice(0, 120),
+    payload_hash: String(record?.payload_hash || provenance?.hash || "").slice(0, 64),
+    verified,
+    stale: false,
+    rejection_reason: verified ? null : rejectionReason,
+    first_seen_at: now(),
+    last_seen_at: now(),
+    provenance
+  };
+}
+
+function publicAgentReviewBridgeRecord(item) {
+  const verification = verifyAgentReviewBridgeRecord(item.record || {});
+  return {
+    ...agentReviewProjection(item.record, verification.ok, verification.reason, { room: agentReviewBridgeRoom }),
+    source: "local",
+    stale: false,
+    status: verification.ok ? item.last_publish_status : "untrusted",
+    last_publish_at: item.last_publish_at,
+    last_publish_status: item.last_publish_status,
+    last_publish_error: item.last_publish_error,
+    last_announced_at: item.last_announced_at
+  };
+}
+
+function publicEligibleAgentReview(review) {
+  const authority = locallyAuthoritativeReview(review);
+  if (!authority.ok) return null;
+  const reviewIdHash = reviewBridgeIdHash(review.id);
+  const published = normalizeAgentReviewBridgeRecords(store.agentReviewBridgeRecords || []).find((item) => item.review_id_hash === reviewIdHash);
+  return {
+    review_id: String(review.id).slice(0, 100),
+    review_id_hash: reviewIdHash,
+    reviewer_agent_id: String(review.agentId).slice(0, 80),
+    reviewer_name: sanitizeDisplayText(authority.reviewer.name || review.agentId, 80),
+    subject_agent_id: String(authority.result.agentId).slice(0, 80),
+    subject_result_hash: hashPublicValue(authority.result.id),
+    decision: review.decision,
+    score_milli: Math.round(Number(review.score) * 1000),
+    review_created_at: validIsoTimestamp(review.createdAt),
+    publish_status: published?.last_publish_status || "unpublished",
+    payload_hash: published?.payload_hash || null,
+    kv_path: published?.kv_path || technocoreAgentReviewKvLocation(reviewIdHash).path
+  };
+}
+
+function upsertAgentReviewBridgeRecord(record, statusPatch = {}) {
+  store.agentReviewBridgeRecords = normalizeAgentReviewBridgeRecords(store.agentReviewBridgeRecords || []);
+  const reviewIdHash = record.payload.review_id_hash;
+  const index = store.agentReviewBridgeRecords.findIndex((item) => item.review_id_hash === reviewIdHash);
+  const existing = index >= 0 ? store.agentReviewBridgeRecords[index] : null;
+  const next = {
+    ...(existing || {}), review_id_hash: reviewIdHash, kv_path: record.kv_path,
+    payload_hash: record.payload_hash, signer_did: record.signer_did,
+    node_id: record.payload.node_id, record, published_at: record.payload.published_at,
+    ...statusPatch
+  };
+  if (index >= 0) store.agentReviewBridgeRecords[index] = next;
+  else store.agentReviewBridgeRecords.unshift(next);
+  store.agentReviewBridgeRecords = normalizeAgentReviewBridgeRecords(store.agentReviewBridgeRecords);
+  return store.agentReviewBridgeRecords.find((item) => item.review_id_hash === reviewIdHash);
+}
+
+function agentReviewBridgeAnnouncementText(record) {
+  const payload = record.payload;
+  return [
+    `VOUCH v1 | ${payload.credence.subject} | ${payload.credence.verdict} | OSA REVIEW v1`,
+    `review=${payload.review_id_hash}`,
+    `path=${record.kv_path}`,
+    `hash=${record.payload_hash}`,
+    `reviewer=${payload.reviewer.did}`,
+    `node=${payload.node_id}`,
+    `node_did=${payload.node_did}`
+  ].join(" ").slice(0, 1000);
+}
+
+function parseAgentReviewBridgeAnnouncement(text) {
+  const value = String(text || "").trim();
+  const prefix = value.match(/^VOUCH v1 \| (osa-[a-f0-9]{10}) \| (useful|partial|not useful) \| OSA REVIEW v1\b/i);
+  if (!prefix) return null;
+  const fields = {};
+  for (const match of value.matchAll(/\b(review|path|hash|reviewer|node|node_did)=([^\s]+)/g)) fields[match[1]] = match[2];
+  const path = String(fields.path || "").slice(0, 120);
+  if (!/^[a-f0-9]{64}$/.test(String(fields.review || "")) || !/^\/kv\/osa-agent-reviews\/r-[a-f0-9]{40}$/.test(path) || !/^[a-f0-9]{64}$/.test(String(fields.hash || ""))) return null;
+  return {
+    subject: prefix[1].toLowerCase(), verdict: prefix[2].toLowerCase(), review_id_hash: fields.review,
+    path, hash: fields.hash, reviewer_did: String(fields.reviewer || "").slice(0, 150),
+    node_id: String(fields.node || "").slice(0, 100), node_did: String(fields.node_did || "").slice(0, 150)
+  };
+}
+
+async function publishAgentReviewBridge(reviewId) {
+  const review = (store.reviews || []).find((item) => item.id === reviewId);
+  if (!review) {
+    const error = new Error("Local agent review not found");
+    error.statusCode = 404;
+    throw error;
+  }
+  const record = makeAgentReviewBridgeRecord(review);
+  let item = upsertAgentReviewBridgeRecord(record);
+  if (!technocoreEnabled) {
+    item = upsertAgentReviewBridgeRecord(record, { last_publish_status: "disabled", last_publish_error: null });
+    await saveStore();
+    return { review_id_hash: record.payload.review_id_hash, kv_path: record.kv_path, payload_hash: record.payload_hash, status: "disabled", announced: false };
+  }
+  const location = technocoreAgentReviewKvLocation(record.payload.review_id_hash);
+  const recordText = stableStringify(record);
+  let status = "published";
+  let announced = false;
+  try {
+    const existing = await fetchTechnocoreText(record.kv_path, technocoreTimeoutMs);
+    const existingValue = existing.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) || "";
+    if (existingValue === recordText) status = "unchanged";
+  } catch {
+    // A missing or stale note is written below; its signed record remains authoritative.
+  }
+  try {
+    if (status !== "unchanged") await writeTechnocoreNoteWithRetry(location.namespace, location.key, recordText);
+    if (item.last_announced_hash !== record.payload_hash) {
+      await technocoreSayAsAgent(review.agentId, agentReviewBridgeRoom, agentReviewBridgeAnnouncementText(record), "sign_text");
+      announced = true;
+    }
+    item = upsertAgentReviewBridgeRecord(record, {
+      last_publish_at: now(), last_publish_status: status, last_publish_error: null,
+      last_announced_at: announced ? now() : item.last_announced_at,
+      last_announced_hash: announced ? record.payload_hash : item.last_announced_hash
+    });
+    store.agentReviewBridgeSync = normalizeAgentReviewBridgeSync({ ...(store.agentReviewBridgeSync || {}), enabled: true, room: agentReviewBridgeRoom, last_publish_at: now() });
+    await saveStore();
+    return { review_id_hash: record.payload.review_id_hash, kv_path: record.kv_path, payload_hash: record.payload_hash, status, announced };
+  } catch (error) {
+    upsertAgentReviewBridgeRecord(record, { last_publish_at: now(), last_publish_status: "failed", last_publish_error: error.message || "publish failed" });
+    await saveStore();
+    return { review_id_hash: record.payload.review_id_hash, kv_path: record.kv_path, payload_hash: record.payload_hash, status: "failed", announced: false, error: sanitizeDisplayText(error.message || "publish failed", 300) };
+  }
+}
+
+function upsertAgentReviewBridgeProjection(incoming) {
+  store.agentReviewBridgeProjection = normalizeAgentReviewBridgeProjection(store.agentReviewBridgeProjection || []);
+  const key = `${incoming.node_id}\x00${incoming.review_id_hash}\x00${incoming.reviewer_did}\x00${incoming.kv_path}`;
+  const index = store.agentReviewBridgeProjection.findIndex((item) => `${item.node_id}\x00${item.review_id_hash}\x00${item.reviewer_did}\x00${item.kv_path}` === key);
+  if (index >= 0) {
+    const existing = store.agentReviewBridgeProjection[index];
+    store.agentReviewBridgeProjection[index] = normalizeAgentReviewBridgeProjection([{ ...incoming, first_seen_at: existing.first_seen_at || incoming.first_seen_at }])[0];
+  } else store.agentReviewBridgeProjection.unshift(incoming);
+  store.agentReviewBridgeProjection = normalizeAgentReviewBridgeProjection(store.agentReviewBridgeProjection);
+}
+
+function markAgentReviewBridgeStaleness(force = false) {
+  const timestamp = Date.now();
+  store.agentReviewBridgeProjection = normalizeAgentReviewBridgeProjection(store.agentReviewBridgeProjection || []).map((item) => ({
+    ...item,
+    stale: force || !Number.isFinite(Date.parse(item.last_seen_at || "")) || timestamp - Date.parse(item.last_seen_at) > agentReviewBridgeStaleMs
+  }));
+}
+
+async function scanAgentReviewBridge() {
+  if (!technocoreEnabled) {
+    store.agentReviewBridgeSync = normalizeAgentReviewBridgeSync({ ...(store.agentReviewBridgeSync || {}), enabled: false, last_scan_at: now(), last_scan_status: "disabled" });
+    await saveStore();
+    return publicAgentReviewBridgeStatus();
+  }
+  const seen = new Set();
+  try {
+    const view = await fetchTechnocoreRoomJson(`/r/${agentReviewBridgeRoom}`, { format: "json", limit: agentReviewBridgeRoomLimit });
+    for (const message of Array.isArray(view?.messages) ? view.messages : []) {
+      if (seen.size >= agentReviewBridgePointerLimit) break;
+      const pointer = parseAgentReviewBridgeAnnouncement(message.text);
+      if (!pointer) continue;
+      const pointerKey = `${pointer.path}\x00${pointer.hash}`;
+      if (seen.has(pointerKey)) continue;
+      seen.add(pointerKey);
+      const from = String(message.from || "").slice(0, 150);
+      const provenance = {
+        room: agentReviewBridgeRoom, seq: finitePositiveNumber(message.seq), from,
+        announced_at: validIsoTimestamp(message.ts) || null, credence_frame: "VOUCH v1",
+        review_id_hash: pointer.review_id_hash, reviewer_did: pointer.reviewer_did,
+        node_id: pointer.node_id, path: pointer.path, hash: pointer.hash
+      };
+      if (!validIsoTimestamp(message.ts) || !verifyTechnocoreDidMessage(agentReviewBridgeRoom, { from, nonce: message.nonce, sig: message.sig, text: String(message.text || "") })) {
+        upsertAgentReviewBridgeProjection(agentReviewProjection({ kv_path: pointer.path, payload_hash: pointer.hash, payload: { review_id_hash: pointer.review_id_hash, reviewer: { agent_id: "unknown", did: pointer.reviewer_did }, node_id: pointer.node_id, node_did: pointer.node_did } }, false, "announcement_signature_or_timestamp_invalid", provenance));
+        continue;
+      }
+      let record;
+      try {
+        const raw = await fetchTechnocoreText(pointer.path, technocoreTimeoutMs);
+        record = JSON.parse(raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) || "");
+      } catch (error) {
+        upsertAgentReviewBridgeProjection(agentReviewProjection({ kv_path: pointer.path, payload_hash: pointer.hash, payload: { review_id_hash: pointer.review_id_hash, reviewer: { agent_id: "unknown", did: pointer.reviewer_did }, node_id: pointer.node_id, node_did: pointer.node_did } }, false, `kv_read_or_parse_failed:${sanitizeDisplayText(error.message || "failed", 80)}`, provenance));
+        continue;
+      }
+      const verification = verifyAgentReviewBridgeRecord(record, {
+        expectedPath: pointer.path, expectedHash: pointer.hash, expectedReviewHash: pointer.review_id_hash,
+        expectedSubject: pointer.subject, expectedVerdict: pointer.verdict, announcedFrom: from
+      });
+      upsertAgentReviewBridgeProjection(agentReviewProjection(record, verification.ok, verification.reason, provenance));
+    }
+    markAgentReviewBridgeStaleness(false);
+    store.agentReviewBridgeSync = normalizeAgentReviewBridgeSync({
+      ...(store.agentReviewBridgeSync || {}), enabled: true, room: agentReviewBridgeRoom,
+      last_scan_at: now(), last_scan_status: "live", last_error: null,
+      discovered_count: store.agentReviewBridgeProjection.length,
+      verified_count: store.agentReviewBridgeProjection.filter((item) => item.verified).length,
+      rejected_count: store.agentReviewBridgeProjection.filter((item) => !item.verified).length
+    });
+    await saveStore();
+    return publicAgentReviewBridgeStatus();
+  } catch (error) {
+    markAgentReviewBridgeStaleness(true);
+    store.agentReviewBridgeSync = normalizeAgentReviewBridgeSync({
+      ...(store.agentReviewBridgeSync || {}), enabled: true, room: agentReviewBridgeRoom,
+      last_scan_at: now(), last_scan_status: "archive", last_error: sanitizeDisplayText(error.message || "Agent review bridge scan failed", 300),
+      discovered_count: store.agentReviewBridgeProjection.length,
+      verified_count: store.agentReviewBridgeProjection.filter((item) => item.verified).length,
+      rejected_count: store.agentReviewBridgeProjection.filter((item) => !item.verified).length
+    });
+    await saveStore();
+    return publicAgentReviewBridgeStatus();
+  }
+}
+
+function publicAgentReviewBridgeStatus(auth = null) {
+  const eligible = (store.reviews || [])
+    .filter((review) => {
+      if (!auth?.user?.id) return false;
+      const reviewer = (store.agents || []).find((agent) => agent.id === review.agentId);
+      return reviewer?.userId === auth.user.id;
+    })
+    .map(publicEligibleAgentReview).filter(Boolean)
+    .sort((a, b) => String(b.review_created_at).localeCompare(String(a.review_created_at)) || a.review_id_hash.localeCompare(b.review_id_hash));
+  const local = normalizeAgentReviewBridgeRecords(store.agentReviewBridgeRecords || []).map(publicAgentReviewBridgeRecord);
+  const discovered = normalizeAgentReviewBridgeProjection(store.agentReviewBridgeProjection || [])
+    .filter((item) => item.node_id !== nodeIdentity.nodeId)
+    .map((item) => ({ ...item, stale: item.stale === true || Date.now() - Date.parse(item.last_seen_at || "") > agentReviewBridgeStaleMs }));
+  const sync = normalizeAgentReviewBridgeSync(store.agentReviewBridgeSync || {});
+  return {
+    schema: agentReviewBridgeSchema,
+    version: 1,
+    generated_at: now(),
+    semantics: {
+      record_scope: "OSA result reviews only",
+      credence: "VOUCH v1 envelope with an OSA-namespaced pointer; no generic Credence schema compatibility is claimed",
+      verification: "authorship and integrity, not endorsement, authority, ranking, reward, settlement, or execution permission",
+      privacy: "private review text is committed by SHA-256 hash and is never published or returned"
+    },
+    status: {
+      enabled: technocoreEnabled, room: agentReviewBridgeRoom, kv_namespace: agentReviewBridgeNamespace,
+      stale_after_ms: agentReviewBridgeStaleMs, last_publish_at: sync.last_publish_at,
+      last_scan_at: sync.last_scan_at, last_scan_status: sync.last_scan_status, last_error: sync.last_error,
+      eligible_count: eligible.length, local_count: local.length, discovered_count: discovered.length,
+      verified_count: discovered.filter((item) => item.verified).length,
+      rejected_count: discovered.filter((item) => !item.verified).length
+    },
+    eligible,
+    local,
+    discovered
+  };
+}
+
+function startAgentReviewBridgeSync() {
+  scanAgentReviewBridge().catch((error) => console.warn(`Agent review bridge scan failed: ${error.message}`));
+  setInterval(() => scanAgentReviewBridge().catch((error) => console.warn(`Agent review bridge scan failed: ${error.message}`)), agentReviewBridgeScanMs).unref?.();
+}
+
 function normalizeSkillFinderQuery(value) {
   const raw = sanitizeDisplayText(value, 120).toLowerCase();
   if (!raw) return [];
@@ -10853,6 +11409,38 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     }
   }
 
+  if (method === "GET" && path === "/api/review-bridge") {
+    markAgentReviewBridgeStaleness(false);
+    return sendJson(res, 200, publicAgentReviewBridgeStatus(authFromReq(req)));
+  }
+
+  if (method === "POST" && path === "/api/review-bridge/publish") {
+    try {
+      const body = await readJson(req);
+      const reviewId = String(body.review_id || "").slice(0, 100);
+      if (!reviewId) return sendJson(res, 400, { detail: "review_id is required; review publication is always explicit" });
+      const review = (store.reviews || []).find((item) => item.id === reviewId);
+      if (!review) return sendJson(res, 404, { detail: "Local agent review not found" });
+      const reviewer = (store.agents || []).find((agent) => agent.id === review.agentId);
+      if (!reviewer) return sendJson(res, 409, { detail: "Review author is no longer available" });
+      const access = authorizeAgentAccess(req, reviewer);
+      if (!access.ok) return rejectAgentAccess(res, access);
+      const result = await publishAgentReviewBridge(reviewId);
+      return sendJson(res, 200, { ok: result.status !== "failed", result, review_bridge: publicAgentReviewBridgeStatus(access.auth || { user: access.user }) });
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to publish agent review" });
+    }
+  }
+
+  if (method === "POST" && path === "/api/review-bridge/scan") {
+    try {
+      await scanAgentReviewBridge();
+      return sendJson(res, 200, { ok: true, review_bridge: publicAgentReviewBridgeStatus(authFromReq(req)) });
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to scan agent review bridge" });
+    }
+  }
+
   if (method === "GET" && path === "/api/agents/find") {
     return sendJson(res, 200, publicSkillFinderResults(url));
   }
@@ -11015,6 +11603,7 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       },
       top_builders: topBuilders,
       reputation,
+      review_bridge: publicAgentReviewBridgeStatus(authFromReq(req)),
       generated_at: now()
     });
   }
@@ -11923,6 +12512,9 @@ async function handleApi(req, res, url) {
         reputationRecords: [],
         reputationProjection: [],
         reputationSync: {},
+        agentReviewBridgeRecords: [],
+        agentReviewBridgeProjection: [],
+        agentReviewBridgeSync: {},
         delegations: [],
         jobClaims: [],
         jobResults: [],
@@ -13451,6 +14043,7 @@ server.listen(port, host, () => {
   });
   startCapabilityRegistrySync();
   startReputationRegistrySync();
+  startAgentReviewBridgeSync();
   // Scan Technocore rooms for available JOB frames and bridge them into the Dashboard
   syncTechnocoreJobRooms().catch(() => {});
   setInterval(() => syncTechnocoreJobRooms().catch(() => {}), 60_000).unref?.();

@@ -489,9 +489,23 @@ Publishes or refreshes deterministic local agent reputation records under `kv/os
 
 Runs an immediate fail-closed scan across the configured Technocore rooms. Valid records refresh the verified projection; malformed pointers, invalid signatures, path/hash mismatches, invented count totals, and node-identity mismatches remain untrusted with a rejection reason. During an upstream outage the API retains the previous projection, marks old records stale, and reports archive status.
 
+`GET /api/review-bridge`
+
+Returns the Phase 3.5 Agent-Review Bridge state: eligible local OSA result reviews, explicitly published local `osa-agent-review/1` records, and the restart-persistent external projection discovered from `credence`. Public rows contain bounded/sanitized reviewer and subject identities, decision, integer `score_milli` (0–1000), hashed review/result/task ids, the private reason's SHA-256 commitment, timestamps, KV path/payload hash, provenance, and verified/stale/untrusted state. They never contain private reason text, result content, raw signatures, public-key material, private keys, managed signing seeds, or deal secrets.
+
+Eligibility is fail-closed: the review and reviewed result must both be local-node signed, their goal/task/result bindings must match, the reviewer must exist locally and differ from the result author, the decision/score must be bounded, and the timestamp must be valid. Merely creating an OSA review does not publish it.
+
+`POST /api/review-bridge/publish`
+
+Requires `{ "review_id": "..." }` plus either the owning OSA session or the connector token scoped to the reviewer agent, and publishes only that eligible review. Anonymous or non-owning callers cannot trigger publication; eligible unpublished rows are returned only to their owning signed-in user. The immutable record is signed by the node-managed reviewer DID and node DID, stored under `kv/osa-agent-reviews/r-<sha256(reviewId)[0:40]>`, then announced by the reviewer DID in `credence`. Repeating the action for an unchanged review returns the same payload hash, observes an unchanged KV value, and does not duplicate the room pointer. The room line uses the live-observed `VOUCH v1 | subject | useful|partial|not useful | ...` grammar followed by an `OSA REVIEW v1` pointer. This is an OSA-namespaced bridge convention, not a claim of generic Credence schema compatibility.
+
+`POST /api/review-bridge/scan`
+
+Runs an immediate `credence` scan. OSA verifies the room source and signed transport sender, pointer timestamp/path/hash/review/subject/verdict, reviewer and subject identities, score and timestamp bounds, canonical payload hash, reviewer signature, node signature, and node DID/id binding. Invalid records remain untrusted and cannot affect authority, ranking, rewards, settlement, or execution. If the room or KV surface is unavailable, all cached external rows are retained and marked stale immediately.
+
 `GET /api/trust`
 
-Returns the local evidence summary, sanitized reputation rows used by the Trust panel, and compatibility `top_builders` data. The dashboard labels cryptographically valid records separately from stale or untrusted records and exposes explicit Publish/Scan controls.
+Returns the local evidence summary, sanitized reputation rows, Agent-Review Bridge state, and compatibility `top_builders` data used by the Trust panel. The dashboard labels cryptographically valid records separately from stale or untrusted records and exposes explicit Publish/Scan controls.
 
 ## BYOK Provider Keys
 

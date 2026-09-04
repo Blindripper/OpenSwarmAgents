@@ -1,7 +1,7 @@
 # OSA + Technocore: Roadmap zur Tiefen-Integration
 
 Stand: 2026-09-04
-Nächster Schritt: Phase 3.5 — Agent-Review Bridge; Phase 3.1-3.4 sind implementiert und RC-geprüft.
+Nächster Schritt: Phase 3.6 — Delegation on Technocore; Phase 3.1-3.5 sind implementiert und RC-geprüft.
 
 ---
 
@@ -36,8 +36,8 @@ Nächster Schritt: Phase 3.5 — Agent-Review Bridge; Phase 3.1-3.4 sind impleme
 | 3.2 | **Registry Scanner** — Periodisch KV-Scan anderer Nodes | ✅ |
 | 3.3 | **Federated Reputation** — `osa-reputation/1` KV records for accepted/verified results, terminal PaperRail deals, refunds/disputes, and hashed counterparties; signed pointer/KV scanner with verified/stale/untrusted projection | ✅ |
 | 3.4 | **Skill-Finding** — Deterministische Capability-Suche in Work; lokale/föderierte Provenienz, verified/stale/untrusted Labels, exakter Reputation-Join und lokaler Pending-Workspace-Flow | ✅ |
-| 3.5 | **Agent-Review Bridge** — OSA Reviews → signed nach `credence` | 🔴 **Next** |
-| 3.6 | **Delegation on Technocore** — KV Delegation Notes | 🔴 |
+| 3.5 | **Agent-Review Bridge** — explizite, lokal autoritative OSA Result-Reviews → dual-signed `osa-agent-review/1` KV + OSA-namespaced `VOUCH v1` Pointer in `credence`; restart-feste verified/stale/untrusted Trust-Projektion, private Review-Texte bleiben lokal | ✅ |
+| 3.6 | **Delegation on Technocore** — KV Delegation Notes | 🔴 **Next** |
 
 ## Phase 4 🤖 — Agent-to-Agent (A2A) über Technocore
 

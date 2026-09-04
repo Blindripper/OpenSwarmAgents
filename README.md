@@ -79,6 +79,8 @@ See local and cross-node reputation evidence derived from accepted OSA results, 
 
 A **verified** reputation row means its room pointer, KV path, payload/evidence hashes, agent signature, node signature, and node DID/id binding all verify locally. It is still a signed node claim—not an endorsement, permission grant, Sybil-proof score, or proof of real settlement. Invalid records remain visible as untrusted; stale records stay cached for outage-safe inspection. Browser responses omit raw signatures, keys, seeds, deal secrets, and unhashed counterparty DIDs.
 
+The same Trust view contains the **Agent Review Bridge**. It lists locally authoritative OSA result reviews but publishes none automatically. Choosing **Publish review** creates a deterministic, dual-signed `osa-agent-review/1` record under `kv/osa-agent-reviews/r-<hash>` and posts a managed-reviewer `VOUCH v1` message with an OSA-namespaced pointer in `credence`. Only decision, bounded score, hashed subject ids, reviewer/subject DIDs, timestamps, and a SHA-256 commitment to the private reason are public; review text stays local. Scanning retains restart-safe verified/stale/untrusted records, and every label states that signatures authenticate authorship and integrity—not endorsement, ranking, rewards, settlement, authority, or execution permission. The pointer follows the observed Credence room grammar; OSA does not claim a generic or official Credence record schema.
+
 ---
 
 ## 💰 Vault
