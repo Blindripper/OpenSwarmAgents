@@ -133,6 +133,12 @@ const reputationRegistryNamespace = "osa-reputation";
 const agentReviewBridgeSchema = "osa-agent-review/1";
 const agentReviewBridgeNamespace = "osa-agent-reviews";
 const agentReviewBridgeRoom = "credence";
+const delegationNoteSchema = "osa-delegation-note/1";
+const delegationNoteNamespace = "osa-delegations";
+const delegationNoteRoom = technocorePublicRoom;
+const delegationAllowedScopes = Object.freeze(["coordination", "work_request", "result_delivery", "review", "paperrail_no_value"]);
+const delegationAllowedCapabilities = Object.freeze(["request_work", "submit_result", "attest_result", "claim", "receipt", "research", "review", "synthesis", "coding", "testing"]);
+const delegationSensitiveCapabilities = Object.freeze(["admin", "delegate", "lock", "refund", "settle", "sign_text", "transfer", "wallet", "keys", "secrets", "execute", "spawn_agent"]);
 const managedNoValueSigningActions = ["sign_text", "create_deal", "request_work", "submit_result", "attest_result", "claim", "receipt"];
 const humanRequiredSigningActions = ["lock", "settle", "transfer", "refund", "delegate"];
 const defaultAgentSkillClaims = Object.freeze({
@@ -165,6 +171,10 @@ const agentReviewBridgeScanMs = Math.round(boundedNumber(process.env.OSA_REVIEW_
 const agentReviewBridgeStaleMs = Math.round(boundedNumber(process.env.OSA_REVIEW_BRIDGE_STALE_MS, 24 * 60 * 60 * 1000, 1_000, 30 * 24 * 60 * 60 * 1000));
 const agentReviewBridgePointerLimit = Math.round(boundedNumber(process.env.OSA_REVIEW_BRIDGE_POINTER_LIMIT, 100, 5, 250));
 const agentReviewBridgeRoomLimit = Math.round(boundedNumber(process.env.OSA_REVIEW_BRIDGE_ROOM_LIMIT, 100, 10, 200));
+const delegationNoteScanMs = Math.round(boundedNumber(process.env.OSA_DELEGATION_SCAN_MS, 5 * 60 * 1000, 30_000, 60 * 60 * 1000));
+const delegationNoteStaleMs = Math.round(boundedNumber(process.env.OSA_DELEGATION_STALE_MS, 24 * 60 * 60 * 1000, 1_000, 30 * 24 * 60 * 60 * 1000));
+const delegationNotePointerLimit = Math.round(boundedNumber(process.env.OSA_DELEGATION_POINTER_LIMIT, 100, 5, 250));
+const delegationNoteRoomLimit = Math.round(boundedNumber(process.env.OSA_DELEGATION_ROOM_LIMIT, 100, 10, 200));
 const technocoreChannelsCache = { key: "", expiresAt: 0, channels: [], error: null };
 let technocoreChannelsRefreshPromise = null;
 const technocoreNonceByRoom = new Map();
@@ -301,6 +311,8 @@ async function loadStore() {
       agentReviewBridgeProjection: [],
       agentReviewBridgeSync: {},
       delegations: [],
+      delegationProjection: [],
+      delegationSync: {},
       jobClaims: [],
       jobResults: [],
       localJobs: [],
@@ -361,6 +373,8 @@ function normalizeStore(input) {
     agentReviewBridgeProjection: normalizeAgentReviewBridgeProjection(input.agentReviewBridgeProjection || []),
     agentReviewBridgeSync: normalizeAgentReviewBridgeSync(input.agentReviewBridgeSync || {}),
     delegations: normalizeDelegations(input.delegations || []),
+    delegationProjection: normalizeDelegationProjection(input.delegationProjection || []),
+    delegationSync: normalizeDelegationSync(input.delegationSync || {}),
     jobClaims: normalizeJobClaims(input.jobClaims || []),
     jobResults: normalizeJobResults(input.jobResults || []),
     localJobs: Array.isArray(input.localJobs) ? input.localJobs.slice(0, 50) : [],
@@ -1819,22 +1833,129 @@ async function discoverTechnocoreJobs(limit) {
 
 function normalizeDelegations(records) {
   if (!Array.isArray(records)) return [];
-  const seen = new Set();
-  return records.filter((rec) => {
-    const key = String(rec.from_agent || "") + ">" + String(rec.to_agent || "");
-    if (!key.includes(">") || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).map((rec) => ({
-    id: "deleg-" + randomUUID(),
-    from_agent: String(rec.from_agent).slice(0, 80),
-    to_agent: String(rec.to_agent).slice(0, 80),
-    scope: String(rec.scope || "deal").slice(0, 40),
-    policy: String(rec.policy || "require-approval").slice(0, 40),
-    created_at: validIsoTimestamp(rec.created_at) || now(),
-    expires_at: validIsoTimestamp(rec.expires_at) || null,
-    revoked_at: validIsoTimestamp(rec.revoked_at) || null
-  }));
+  const byId = new Map();
+  for (const rec of records) {
+    const fromAgent = String(rec?.from_agent || rec?.record?.payload?.delegator?.agent_id || "").slice(0, 80);
+    const toAgent = String(rec?.to_agent || rec?.record?.payload?.delegatee?.agent_id || "").slice(0, 80);
+    if (!/^[a-z0-9][a-z0-9_-]{0,79}$/.test(fromAgent) || !/^[a-z0-9][a-z0-9_-]{0,79}$/.test(toAgent) || fromAgent === toAgent) continue;
+    const createdAt = validIsoTimestamp(rec.created_at || rec.issued_at || rec?.record?.payload?.state?.issued_at) || now();
+    const legacyId = `deleg-legacy-${createHash("sha256").update(`${fromAgent}\x00${toAgent}\x00${rec.scope || "coordination"}\x00${createdAt}`).digest("hex").slice(0, 24)}`;
+    const id = String(rec.id || rec?.record?.payload?.delegation_id || legacyId).slice(0, 100);
+    if (!/^deleg-[a-z0-9-]{8,94}$/.test(id)) continue;
+    const rawScopes = Array.isArray(rec.scopes) ? rec.scopes : Array.isArray(rec?.record?.payload?.grant?.scopes) ? rec.record.payload.grant.scopes : [rec.scope === "deal" ? "paperrail_no_value" : rec.scope || "coordination"];
+    const scopes = normalizeDelegationScopes(rawScopes);
+    const capabilities = normalizeDelegationCapabilities(rec.capabilities || rec?.record?.payload?.grant?.capabilities || []);
+    const record = rec?.record && typeof rec.record === "object" && !Array.isArray(rec.record) ? rec.record : null;
+    const state = ["draft", "active", "revoked", "expired"].includes(rec.state) ? rec.state : rec.revoked_at ? "revoked" : record?.payload?.state?.status === "revoked" ? "revoked" : record ? "active" : "draft";
+    const expiresAt = validIsoTimestamp(rec.expires_at || record?.payload?.state?.expires_at) || null;
+    byId.set(id, {
+      id,
+      from_agent: fromAgent,
+      to_agent: toAgent,
+      delegator_did: String(rec.delegator_did || record?.payload?.delegator?.did || agentDidForProfile(fromAgent)).slice(0, 150),
+      delegatee_did: String(rec.delegatee_did || record?.payload?.delegatee?.did || agentDidForProfile(toAgent)).slice(0, 150),
+      scopes,
+      capabilities,
+      scope: scopes[0] || "coordination",
+      policy: "require-human",
+      state: state === "active" && expiresAt && Date.parse(expiresAt) <= Date.now() ? "expired" : state,
+      revision: Math.max(0, Math.min(1_000_000, Number(rec.revision || record?.payload?.revision || (record ? 1 : 0)))),
+      created_at: createdAt,
+      issued_at: validIsoTimestamp(rec.issued_at || record?.payload?.state?.issued_at) || null,
+      expires_at: expiresAt,
+      revoked_at: validIsoTimestamp(rec.revoked_at || record?.payload?.state?.revoked_at) || null,
+      kv_path: String(rec.kv_path || record?.kv_path || technocoreDelegationKvLocation(id).path).slice(0, 120),
+      payload_hash: String(rec.payload_hash || record?.payload_hash || "").slice(0, 64),
+      published_at: validIsoTimestamp(rec.published_at || record?.payload?.published_at) || null,
+      last_publish_at: validIsoTimestamp(rec.last_publish_at) || null,
+      last_publish_status: ["draft", "published", "unchanged", "revoked", "disabled", "failed"].includes(rec.last_publish_status) ? rec.last_publish_status : record ? "published" : "draft",
+      last_publish_error: rec.last_publish_error ? sanitizeDisplayText(rec.last_publish_error, 300) : null,
+      last_announced_at: validIsoTimestamp(rec.last_announced_at) || null,
+      last_announced_hash: /^[a-f0-9]{64}$/.test(String(rec.last_announced_hash || "")) ? String(rec.last_announced_hash) : null,
+      record
+    });
+  }
+  return [...byId.values()].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || a.id.localeCompare(b.id)).slice(0, 1000);
+}
+
+function normalizeDelegationScopes(values) {
+  const aliases = { deal: "paperrail_no_value", task: "work_request", result: "result_delivery" };
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map((value) => aliases[String(value || "").toLowerCase()] || String(value || "").toLowerCase())
+    .filter((value) => delegationAllowedScopes.includes(value)))]
+    .sort()
+    .slice(0, 8);
+}
+
+function normalizeDelegationCapabilities(values) {
+  return sanitizeCapabilityList(values)
+    .filter((value) => delegationAllowedCapabilities.includes(value) && !delegationSensitiveCapabilities.includes(value) && !humanRequiredSigningActions.includes(value))
+    .sort()
+    .slice(0, 20);
+}
+
+function normalizeDelegationProjection(records) {
+  if (!Array.isArray(records)) return [];
+  const byId = new Map();
+  for (const rec of records) {
+    const delegationId = String(rec?.delegation_id || "").slice(0, 100);
+    const kvPath = String(rec?.kv_path || "").slice(0, 120);
+    const delegatorDid = String(rec?.delegator_did || "").slice(0, 150);
+    if (!/^deleg-[a-z0-9-]{8,94}$/.test(delegationId) || !kvPath || !delegatorDid) continue;
+    const verified = rec.verified === true;
+    const current = byId.get(delegationId);
+    const next = {
+      id: String(rec.id || `delegation-${createHash("sha256").update(`${delegationId}\x00${kvPath}`).digest("hex").slice(0, 24)}`).slice(0, 100),
+      source: "technocore",
+      delegation_id: delegationId,
+      revision: Math.max(1, Math.min(1_000_000, Number(rec.revision || 1))),
+      from_agent: sanitizeDisplayText(rec.from_agent, 80),
+      to_agent: sanitizeDisplayText(rec.to_agent, 80),
+      delegator_did: delegatorDid,
+      delegatee_did: String(rec.delegatee_did || "").slice(0, 150),
+      node_id: String(rec.node_id || "").slice(0, 100),
+      node_did: String(rec.node_did || "").slice(0, 150),
+      scopes: normalizeDelegationScopes(rec.scopes || []),
+      capabilities: normalizeDelegationCapabilities(rec.capabilities || []),
+      state: ["active", "revoked", "expired"].includes(rec.state) ? rec.state : "untrusted",
+      issued_at: validIsoTimestamp(rec.issued_at) || null,
+      expires_at: validIsoTimestamp(rec.expires_at) || null,
+      revoked_at: validIsoTimestamp(rec.revoked_at) || null,
+      supersedes_payload_hash: /^[a-f0-9]{64}$/.test(String(rec.supersedes_payload_hash || "")) ? String(rec.supersedes_payload_hash) : null,
+      kv_path: kvPath,
+      payload_hash: String(rec.payload_hash || "").slice(0, 64),
+      verified,
+      stale: rec.stale === true,
+      status: verified ? (["revoked", "expired"].includes(rec.state) ? rec.state : "verified") : "untrusted",
+      rejection_reason: verified ? null : sanitizeDisplayText(rec.rejection_reason || "unverified", 240),
+      authority: "informational_only",
+      first_seen_at: validIsoTimestamp(rec.first_seen_at) || now(),
+      last_seen_at: validIsoTimestamp(rec.last_seen_at) || now(),
+      provenance: {
+        room: normalizeTechnocoreName(rec.provenance?.room) || null,
+        seq: finitePositiveNumber(rec.provenance?.seq),
+        from: rec.provenance?.from ? String(rec.provenance.from).slice(0, 150) : null,
+        announced_at: validIsoTimestamp(rec.provenance?.announced_at) || null
+      }
+    };
+    if (!current || next.revision > current.revision || (next.revision === current.revision && String(next.last_seen_at).localeCompare(String(current.last_seen_at)) > 0)) byId.set(delegationId, next);
+  }
+  return [...byId.values()].sort((a, b) => String(b.last_seen_at).localeCompare(String(a.last_seen_at)) || a.delegation_id.localeCompare(b.delegation_id)).slice(0, 1500);
+}
+
+function normalizeDelegationSync(input) {
+  const value = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  return {
+    enabled: value.enabled === true,
+    room: normalizeTechnocoreName(value.room) || delegationNoteRoom,
+    last_publish_at: validIsoTimestamp(value.last_publish_at) || null,
+    last_scan_at: validIsoTimestamp(value.last_scan_at) || null,
+    last_scan_status: ["idle", "live", "archive", "disabled", "failed"].includes(value.last_scan_status) ? value.last_scan_status : "idle",
+    last_error: value.last_error ? sanitizeDisplayText(value.last_error, 300) : null,
+    discovered_count: Math.max(0, Number(value.discovered_count || 0)),
+    verified_count: Math.max(0, Number(value.verified_count || 0)),
+    rejected_count: Math.max(0, Number(value.rejected_count || 0))
+  };
 }
 
 function signingPolicyForAgent(agentId, action) {
@@ -3284,6 +3405,8 @@ async function loadPostgresStore() {
     agentReviewBridgeProjection: [],
     agentReviewBridgeSync: {},
     delegations: [],
+    delegationProjection: [],
+    delegationSync: {},
     jobClaims: [],
     jobResults: [],
     federationPeerAnnouncements: [],
@@ -5624,6 +5747,12 @@ function publicRuntime() {
     agentReviewBridgeNamespace,
     agentReviewBridgeLastScanAt: normalizeAgentReviewBridgeSync(store?.agentReviewBridgeSync || {}).last_scan_at,
     agentReviewBridgeLastScanStatus: normalizeAgentReviewBridgeSync(store?.agentReviewBridgeSync || {}).last_scan_status,
+    delegationNoteEnabled: technocoreEnabled,
+    delegationNoteSchema,
+    delegationNoteRoom,
+    delegationNoteNamespace,
+    delegationNoteLastScanAt: normalizeDelegationSync(store?.delegationSync || {}).last_scan_at,
+    delegationNoteLastScanStatus: normalizeDelegationSync(store?.delegationSync || {}).last_scan_status,
     node: publicNodeIdentity(),
     oauthConfigured: Object.fromEntries(
       Object.keys(oauthProviderConfig).map((provider) => [provider, Boolean(providerCredentials(provider))])
@@ -9369,6 +9498,483 @@ function startAgentReviewBridgeSync() {
   setInterval(() => scanAgentReviewBridge().catch((error) => console.warn(`Agent review bridge scan failed: ${error.message}`)), agentReviewBridgeScanMs).unref?.();
 }
 
+function technocoreDelegationKvLocation(delegationId) {
+  const id = String(delegationId || "");
+  const key = `d-${createHash("sha256").update(id).digest("hex").slice(0, 40)}`;
+  return { namespace: delegationNoteNamespace, key, path: `/kv/${delegationNoteNamespace}/${key}` };
+}
+
+function assertHumanDelegationAction(req, body, expectedConfirmation, agentId = null) {
+  const auth = authFromReq(req);
+  if (!auth) {
+    const error = new Error("Authenticate with a local OSA session before changing delegation notes");
+    error.statusCode = 401;
+    throw error;
+  }
+  if (body?.confirmation !== expectedConfirmation) {
+    const error = new Error(`Explicit confirmation '${expectedConfirmation}' is required`);
+    error.statusCode = 400;
+    throw error;
+  }
+  if (agentId && signingPolicyForAgent(agentId, "delegate") !== "require-human") {
+    const error = new Error("Delegation publish is blocked unless managed action 'delegate' remains require-human");
+    error.statusCode = 403;
+    throw error;
+  }
+  return auth;
+}
+
+function createLocalDelegation(body) {
+  const fromAgent = String(body.from_agent || "").slice(0, 80);
+  const toAgent = String(body.to_agent || "").slice(0, 80);
+  if (!agentGuiProfileById(fromAgent) || !agentGuiProfileById(toAgent)) {
+    const error = new Error("Delegator and delegatee must be existing local Agent Profiles");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (fromAgent === toAgent) {
+    const error = new Error("Delegator and delegatee must be different agents");
+    error.statusCode = 400;
+    throw error;
+  }
+  const requestedScopes = Array.isArray(body.scopes) ? body.scopes : body.scope ? [body.scope] : [];
+  const scopes = normalizeDelegationScopes(requestedScopes);
+  if (!scopes.length || scopes.length !== new Set(requestedScopes.map((value) => String(value || "").toLowerCase())).size) {
+    const error = new Error(`Scopes must be selected from: ${delegationAllowedScopes.join(", ")}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  const requestedCapabilities = Array.isArray(body.capabilities) ? body.capabilities : [];
+  const capabilities = normalizeDelegationCapabilities(requestedCapabilities);
+  if (capabilities.length !== new Set(requestedCapabilities.map((value) => String(value || "").toLowerCase())).size) {
+    const error = new Error("Delegation contains an unsupported or sensitive capability");
+    error.statusCode = 400;
+    throw error;
+  }
+  const createdAt = now();
+  const requestedExpiry = validIsoTimestamp(body.expires_at);
+  const expiresAt = requestedExpiry || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const lifetime = Date.parse(expiresAt) - Date.parse(createdAt);
+  if (!Number.isFinite(lifetime) || lifetime < 60_000 || lifetime > 30 * 24 * 60 * 60 * 1000) {
+    const error = new Error("Delegation expiry must be between 1 minute and 30 days in the future");
+    error.statusCode = 400;
+    throw error;
+  }
+  const id = `deleg-${randomUUID()}`;
+  const delegation = normalizeDelegations([{
+    id,
+    from_agent: fromAgent,
+    to_agent: toAgent,
+    delegator_did: agentDidForProfile(fromAgent),
+    delegatee_did: agentDidForProfile(toAgent),
+    scopes,
+    capabilities,
+    state: "draft",
+    created_at: createdAt,
+    expires_at: expiresAt,
+    kv_path: technocoreDelegationKvLocation(id).path,
+    last_publish_status: "draft"
+  }])[0];
+  store.delegations = normalizeDelegations([delegation, ...(store.delegations || [])]);
+  return store.delegations.find((item) => item.id === id);
+}
+
+function delegationRecordPayload(delegation, options = {}) {
+  const existingPayload = delegation.record?.payload || null;
+  const revoke = options.revoke === true;
+  if (!revoke && existingPayload?.state?.status === "active") return existingPayload;
+  if (revoke && existingPayload?.state?.status === "revoked") return existingPayload;
+  const timestamp = options.timestamp || now();
+  return {
+    schema: delegationNoteSchema,
+    version: 1,
+    delegation_id: delegation.id,
+    revision: revoke ? Math.max(2, Number(existingPayload?.revision || delegation.revision || 1) + 1) : 1,
+    delegator: { agent_id: delegation.from_agent, did: agentDidForProfile(delegation.from_agent) },
+    delegatee: { agent_id: delegation.to_agent, did: agentDidForProfile(delegation.to_agent) },
+    node_id: nodeIdentity.nodeId,
+    node_did: technocoreDid || didKeyFromEd25519PublicKeyPem(nodeIdentity.publicKeyPem),
+    grant: {
+      scopes: normalizeDelegationScopes(delegation.scopes),
+      capabilities: normalizeDelegationCapabilities(delegation.capabilities),
+      authority: "coordination_only",
+      remote_execution: false,
+      value_settlement: false
+    },
+    managed_signing: { action: "delegate", policy: "require-human", human_gated: true },
+    state: {
+      status: revoke ? "revoked" : "active",
+      issued_at: existingPayload?.state?.issued_at || timestamp,
+      expires_at: delegation.expires_at,
+      revoked_at: revoke ? (delegation.revoked_at || timestamp) : null,
+      supersedes_payload_hash: revoke ? delegation.payload_hash : null
+    },
+    published_at: timestamp
+  };
+}
+
+function makeDelegationNoteRecord(delegation, options = {}) {
+  const payload = delegationRecordPayload(delegation, options);
+  if (payload === delegation.record?.payload) return delegation.record;
+  const signedAt = payload.published_at;
+  const delegator = agentSigningIdentityForProfile(delegation.from_agent);
+  const nodeDid = payload.node_did;
+  const location = technocoreDelegationKvLocation(delegation.id);
+  return {
+    schema: delegationNoteSchema,
+    version: 1,
+    kv_path: location.path,
+    payload,
+    payload_hash: objectHash(payload),
+    signer_did: delegator.did,
+    signature: signCapabilityEnvelope("agent_delegation_note", payload, delegator, signedAt),
+    node_signature: signCapabilityEnvelope("node_delegation_note", payload, { did: nodeDid, privateKey: nodeIdentity.privateKeyPem }, signedAt)
+  };
+}
+
+function verifyDelegationNoteRecord(record, options = {}) {
+  try {
+    if (!record || record.schema !== delegationNoteSchema || record.version !== 1) return { ok: false, reason: "wrong_schema" };
+    const payload = record.payload;
+    if (!payload || payload.schema !== delegationNoteSchema || payload.version !== 1) return { ok: false, reason: "invalid_payload" };
+    if (!/^deleg-[a-z0-9-]{8,94}$/.test(String(payload.delegation_id || "")) || !Number.isSafeInteger(payload.revision) || payload.revision < 1) return { ok: false, reason: "invalid_delegation_identity" };
+    const expectedPath = technocoreDelegationKvLocation(payload.delegation_id).path;
+    if (record.kv_path !== expectedPath) return { ok: false, reason: "kv_path_delegation_mismatch" };
+    if (options.expectedPath && record.kv_path !== options.expectedPath) return { ok: false, reason: "announcement_path_mismatch" };
+    if (options.expectedDelegationId && payload.delegation_id !== options.expectedDelegationId) return { ok: false, reason: "announcement_delegation_mismatch" };
+    if (record.payload_hash !== objectHash(payload)) return { ok: false, reason: "payload_hash_mismatch" };
+    if (options.expectedHash && record.payload_hash !== options.expectedHash) return { ok: false, reason: "announcement_hash_mismatch" };
+    if (!isBoundedAgentIdentity(payload.delegator) || !isBoundedAgentIdentity(payload.delegatee) || payload.delegator.agent_id === payload.delegatee.agent_id || payload.delegator.did === payload.delegatee.did) return { ok: false, reason: "invalid_agent_binding" };
+    if (record.signer_did !== payload.delegator.did) return { ok: false, reason: "delegator_signer_mismatch" };
+    if (options.announcedFrom && options.announcedFrom !== payload.delegator.did) return { ok: false, reason: "pointer_signer_mismatch" };
+    if (options.expectedDelegateeDid && options.expectedDelegateeDid !== payload.delegatee.did) return { ok: false, reason: "announcement_delegatee_mismatch" };
+    if (!payload.node_id || !payload.node_did) return { ok: false, reason: "missing_node_identity" };
+    const nodePublicKey = ed25519PublicKeyFromDidKey(payload.node_did);
+    if (!nodePublicKey || nodeIdForPublicKey(nodePublicKey.export({ type: "spki", format: "pem" })) !== payload.node_id) return { ok: false, reason: "node_id_did_mismatch" };
+    if (options.expectedNodeId && options.expectedNodeId !== payload.node_id) return { ok: false, reason: "announcement_node_mismatch" };
+    if (options.expectedNodeDid && options.expectedNodeDid !== payload.node_did) return { ok: false, reason: "announcement_node_did_mismatch" };
+    const scopes = normalizeDelegationScopes(payload.grant?.scopes || []);
+    const capabilities = normalizeDelegationCapabilities(payload.grant?.capabilities || []);
+    if (!scopes.length || objectHash(scopes) !== objectHash(payload.grant?.scopes || [])) return { ok: false, reason: "invalid_or_unbounded_scopes" };
+    if (objectHash(capabilities) !== objectHash(payload.grant?.capabilities || [])) return { ok: false, reason: "sensitive_or_unbounded_capability" };
+    if (payload.grant?.authority !== "coordination_only" || payload.grant?.remote_execution !== false || payload.grant?.value_settlement !== false) return { ok: false, reason: "unsafe_authority_claim" };
+    if (payload.managed_signing?.action !== "delegate" || payload.managed_signing?.policy !== "require-human" || payload.managed_signing?.human_gated !== true) return { ok: false, reason: "managed_signing_policy_mismatch" };
+    const issuedAt = validIsoTimestamp(payload.state?.issued_at);
+    const expiresAt = validIsoTimestamp(payload.state?.expires_at);
+    const publishedAt = validIsoTimestamp(payload.published_at);
+    if (!issuedAt || !expiresAt || !publishedAt || Date.parse(expiresAt) <= Date.parse(issuedAt) || Date.parse(expiresAt) - Date.parse(issuedAt) > 30 * 24 * 60 * 60 * 1000 || Date.parse(publishedAt) > Date.now() + 5 * 60 * 1000) return { ok: false, reason: "invalid_timestamps" };
+    const state = payload.state?.status;
+    if (state === "active") {
+      if (payload.revision !== 1 || payload.state.revoked_at !== null || payload.state.supersedes_payload_hash !== null) return { ok: false, reason: "invalid_active_state" };
+      if (Date.parse(expiresAt) <= Date.now()) return { ok: false, reason: "expired" };
+    } else if (state === "revoked") {
+      const revokedAt = validIsoTimestamp(payload.state.revoked_at);
+      if (payload.revision < 2 || !revokedAt || Date.parse(revokedAt) < Date.parse(issuedAt) || Date.parse(revokedAt) > Date.parse(publishedAt) || !/^[a-f0-9]{64}$/.test(String(payload.state.supersedes_payload_hash || ""))) return { ok: false, reason: "invalid_revocation" };
+    } else return { ok: false, reason: "invalid_state" };
+    if (record.signature?.signed_at !== publishedAt || record.node_signature?.signed_at !== publishedAt) return { ok: false, reason: "signature_timestamp_mismatch" };
+    if (!verifyCapabilityEnvelope("agent_delegation_note", record.signature, payload, payload.delegator.did)) return { ok: false, reason: "delegator_signature_invalid" };
+    if (!verifyCapabilityEnvelope("node_delegation_note", record.node_signature, payload, payload.node_did)) return { ok: false, reason: "node_signature_invalid" };
+    return { ok: true, reason: null };
+  } catch (error) {
+    return { ok: false, reason: sanitizeDisplayText(error?.message || "verification_failed", 120).replace(/\s+/g, "_") };
+  }
+}
+
+function delegationProjectionFromRecord(record, verified, rejectionReason, provenance = {}) {
+  const payload = record?.payload || {};
+  const expired = payload.state?.status === "active" && Number.isFinite(Date.parse(payload.state?.expires_at || "")) && Date.parse(payload.state.expires_at) <= Date.now();
+  return {
+    delegation_id: String(payload.delegation_id || provenance.delegation_id || "").slice(0, 100),
+    revision: Math.max(1, Number(payload.revision || provenance.revision || 1)),
+    from_agent: sanitizeDisplayText(payload.delegator?.agent_id || "unknown", 80),
+    to_agent: sanitizeDisplayText(payload.delegatee?.agent_id || "unknown", 80),
+    delegator_did: String(payload.delegator?.did || record?.signer_did || provenance.delegator_did || "").slice(0, 150),
+    delegatee_did: String(payload.delegatee?.did || provenance.delegatee_did || "").slice(0, 150),
+    node_id: String(payload.node_id || provenance.node_id || "").slice(0, 100),
+    node_did: String(payload.node_did || provenance.node_did || "").slice(0, 150),
+    scopes: normalizeDelegationScopes(payload.grant?.scopes || []),
+    capabilities: normalizeDelegationCapabilities(payload.grant?.capabilities || []),
+    state: expired ? "expired" : payload.state?.status || "untrusted",
+    issued_at: validIsoTimestamp(payload.state?.issued_at),
+    expires_at: validIsoTimestamp(payload.state?.expires_at),
+    revoked_at: validIsoTimestamp(payload.state?.revoked_at),
+    supersedes_payload_hash: String(payload.state?.supersedes_payload_hash || "").slice(0, 64) || null,
+    kv_path: String(record?.kv_path || provenance.path || "").slice(0, 120),
+    payload_hash: String(record?.payload_hash || provenance.hash || "").slice(0, 64),
+    verified: verified && !expired,
+    stale: false,
+    rejection_reason: verified && !expired ? null : expired ? "expired" : rejectionReason,
+    authority: "informational_only",
+    first_seen_at: now(),
+    last_seen_at: now(),
+    provenance
+  };
+}
+
+function publicLocalDelegation(delegation) {
+  const verification = delegation.record ? verifyDelegationNoteRecord(delegation.record) : { ok: false, reason: null };
+  const expired = delegation.state === "expired" || (delegation.state === "active" && Date.parse(delegation.expires_at || "") <= Date.now());
+  return {
+    id: delegation.id,
+    delegation_id: delegation.id,
+    from_agent: delegation.from_agent,
+    to_agent: delegation.to_agent,
+    delegator_did: delegation.delegator_did,
+    delegatee_did: delegation.delegatee_did,
+    scopes: delegation.scopes,
+    capabilities: delegation.capabilities,
+    scope: delegation.scope,
+    policy: "require-human",
+    state: expired ? "expired" : delegation.state,
+    revision: delegation.revision,
+    created_at: delegation.created_at,
+    issued_at: delegation.issued_at,
+    expires_at: delegation.expires_at,
+    revoked_at: delegation.revoked_at,
+    kv_path: delegation.kv_path,
+    payload_hash: delegation.payload_hash || null,
+    published_at: delegation.published_at,
+    verified: Boolean(delegation.record && verification.ok && !expired),
+    rejection_reason: delegation.record && !verification.ok ? verification.reason : null,
+    last_publish_at: delegation.last_publish_at,
+    last_publish_status: delegation.last_publish_status,
+    last_publish_error: delegation.last_publish_error,
+    authority: "local_note_only"
+  };
+}
+
+function upsertLocalDelegationRecord(delegationId, record, patch = {}) {
+  store.delegations = normalizeDelegations(store.delegations || []);
+  const index = store.delegations.findIndex((item) => item.id === delegationId);
+  if (index < 0) return null;
+  const payload = record.payload;
+  store.delegations[index] = {
+    ...store.delegations[index],
+    delegator_did: payload.delegator.did,
+    delegatee_did: payload.delegatee.did,
+    state: payload.state.status,
+    revision: payload.revision,
+    issued_at: payload.state.issued_at,
+    expires_at: payload.state.expires_at,
+    revoked_at: payload.state.revoked_at,
+    kv_path: record.kv_path,
+    payload_hash: record.payload_hash,
+    published_at: payload.published_at,
+    record,
+    ...patch
+  };
+  store.delegations = normalizeDelegations(store.delegations);
+  return store.delegations.find((item) => item.id === delegationId);
+}
+
+function delegationAnnouncementText(record) {
+  const payload = record.payload;
+  return [
+    "OSA DELEGATION v1",
+    `id=${payload.delegation_id}`,
+    `revision=${payload.revision}`,
+    `state=${payload.state.status}`,
+    `path=${record.kv_path}`,
+    `hash=${record.payload_hash}`,
+    `delegator=${payload.delegator.did}`,
+    `delegatee=${payload.delegatee.did}`,
+    `node=${payload.node_id}`,
+    `node_did=${payload.node_did}`
+  ].join(" ").slice(0, 1200);
+}
+
+function parseDelegationAnnouncement(text) {
+  const value = String(text || "").trim();
+  if (!/^OSA DELEGATION v1\b/.test(value)) return null;
+  const fields = {};
+  for (const match of value.matchAll(/\b(id|revision|state|path|hash|delegator|delegatee|node|node_did)=([^\s]+)/g)) fields[match[1]] = match[2];
+  if (!/^deleg-[a-z0-9-]{8,94}$/.test(String(fields.id || "")) || !/^\d{1,7}$/.test(String(fields.revision || "")) || !["active", "revoked"].includes(fields.state) || !/^\/kv\/osa-delegations\/d-[a-f0-9]{40}$/.test(String(fields.path || "")) || !/^[a-f0-9]{64}$/.test(String(fields.hash || ""))) return null;
+  return {
+    delegation_id: fields.id,
+    revision: Number(fields.revision),
+    state: fields.state,
+    path: fields.path,
+    hash: fields.hash,
+    delegator_did: String(fields.delegator || "").slice(0, 150),
+    delegatee_did: String(fields.delegatee || "").slice(0, 150),
+    node_id: String(fields.node || "").slice(0, 100),
+    node_did: String(fields.node_did || "").slice(0, 150)
+  };
+}
+
+async function publishDelegationNote(delegationId, options = {}) {
+  const delegation = normalizeDelegations(store.delegations || []).find((item) => item.id === delegationId);
+  if (!delegation) {
+    const error = new Error("Local delegation note not found");
+    error.statusCode = 404;
+    throw error;
+  }
+  if (!options.revoke && delegation.state === "revoked") {
+    const error = new Error("A revoked delegation note cannot be republished as active");
+    error.statusCode = 409;
+    throw error;
+  }
+  if (!options.revoke && Date.parse(delegation.expires_at || "") <= Date.now()) {
+    const error = new Error("Expired delegation drafts cannot be published");
+    error.statusCode = 409;
+    throw error;
+  }
+  if (options.revoke && !delegation.record) {
+    const error = new Error("Publish the active delegation note before revoking it");
+    error.statusCode = 409;
+    throw error;
+  }
+  if (options.revoke && delegation.state !== "revoked") delegation.revoked_at = now();
+  const record = makeDelegationNoteRecord(delegation, options);
+  let item = upsertLocalDelegationRecord(delegationId, record);
+  if (!technocoreEnabled) {
+    item = upsertLocalDelegationRecord(delegationId, record, { last_publish_status: "disabled", last_publish_error: null });
+    await saveStore();
+    return { delegation_id: delegationId, kv_path: record.kv_path, payload_hash: record.payload_hash, state: record.payload.state.status, status: "disabled", announced: false };
+  }
+  const location = technocoreDelegationKvLocation(delegationId);
+  const recordText = stableStringify(record);
+  let status = record.payload.state.status === "revoked" ? "revoked" : "published";
+  let announced = false;
+  try {
+    const existing = await fetchTechnocoreText(record.kv_path, technocoreTimeoutMs);
+    const existingValue = existing.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) || "";
+    if (existingValue === recordText) status = "unchanged";
+  } catch {
+    // Missing or stale note: write the canonical signed value below.
+  }
+  try {
+    if (status !== "unchanged") await writeTechnocoreNoteWithRetry(location.namespace, location.key, recordText);
+    if (item.last_announced_hash !== record.payload_hash) {
+      const identity = agentSigningIdentityForProfile(delegation.from_agent);
+      await technocoreWriteWithRetry(() => technocoreSaySignedWithIdentity(delegationNoteRoom, delegationAnnouncementText(record), identity), { signed: true, from: identity.did, agentId: identity.agentId });
+      announced = true;
+    }
+    item = upsertLocalDelegationRecord(delegationId, record, {
+      last_publish_at: now(), last_publish_status: status, last_publish_error: null,
+      last_announced_at: announced ? now() : item.last_announced_at,
+      last_announced_hash: announced ? record.payload_hash : item.last_announced_hash
+    });
+    store.delegationSync = normalizeDelegationSync({ ...(store.delegationSync || {}), enabled: true, room: delegationNoteRoom, last_publish_at: now() });
+    await saveStore();
+    return { delegation_id: delegationId, kv_path: record.kv_path, payload_hash: record.payload_hash, state: record.payload.state.status, revision: record.payload.revision, status, announced };
+  } catch (error) {
+    upsertLocalDelegationRecord(delegationId, record, { last_publish_at: now(), last_publish_status: "failed", last_publish_error: error.message || "publish failed" });
+    await saveStore();
+    return { delegation_id: delegationId, kv_path: record.kv_path, payload_hash: record.payload_hash, state: record.payload.state.status, revision: record.payload.revision, status: "failed", announced: false, error: sanitizeDisplayText(error.message || "publish failed", 300) };
+  }
+}
+
+function upsertDelegationProjection(incoming) {
+  const records = normalizeDelegationProjection(store.delegationProjection || []);
+  const existing = records.find((item) => item.delegation_id === incoming.delegation_id);
+  if (existing?.verified && (!incoming.verified || existing.revision > incoming.revision)) return;
+  store.delegationProjection = normalizeDelegationProjection([incoming, ...records.filter((item) => item.delegation_id !== incoming.delegation_id)]);
+}
+
+function markDelegationProjectionStaleness(force = false) {
+  const timestamp = Date.now();
+  store.delegationProjection = normalizeDelegationProjection(store.delegationProjection || []).map((item) => ({
+    ...item,
+    stale: force || !Number.isFinite(Date.parse(item.last_seen_at || "")) || timestamp - Date.parse(item.last_seen_at) > delegationNoteStaleMs
+  }));
+}
+
+async function scanDelegationNotes() {
+  if (!technocoreEnabled) {
+    store.delegationSync = normalizeDelegationSync({ ...(store.delegationSync || {}), enabled: false, last_scan_at: now(), last_scan_status: "disabled" });
+    await saveStore();
+    return publicDelegationStatus();
+  }
+  const seen = new Set();
+  try {
+    const view = await fetchTechnocoreRoomJson(`/r/${delegationNoteRoom}`, { format: "json", limit: delegationNoteRoomLimit });
+    for (const message of Array.isArray(view?.messages) ? view.messages : []) {
+      if (seen.size >= delegationNotePointerLimit) break;
+      const pointer = parseDelegationAnnouncement(message.text);
+      if (!pointer) continue;
+      const pointerKey = `${pointer.delegation_id}\x00${pointer.revision}\x00${pointer.hash}`;
+      if (seen.has(pointerKey)) continue;
+      seen.add(pointerKey);
+      const from = String(message.from || "").slice(0, 150);
+      const provenance = { room: delegationNoteRoom, seq: finitePositiveNumber(message.seq), from, announced_at: validIsoTimestamp(message.ts) || null, ...pointer };
+      if (!validIsoTimestamp(message.ts) || !verifyTechnocoreDidMessage(delegationNoteRoom, { from, nonce: message.nonce, sig: message.sig, text: String(message.text || "") })) {
+        upsertDelegationProjection(delegationProjectionFromRecord({ kv_path: pointer.path, payload_hash: pointer.hash, payload: { delegation_id: pointer.delegation_id, revision: pointer.revision, delegator: { agent_id: "unknown", did: pointer.delegator_did }, delegatee: { agent_id: "unknown", did: pointer.delegatee_did }, node_id: pointer.node_id, node_did: pointer.node_did, state: { status: pointer.state } } }, false, "pointer_signature_or_timestamp_invalid", provenance));
+        continue;
+      }
+      let record;
+      try {
+        const raw = await fetchTechnocoreText(pointer.path, technocoreTimeoutMs);
+        record = JSON.parse(raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) || "");
+      } catch (error) {
+        upsertDelegationProjection(delegationProjectionFromRecord({ kv_path: pointer.path, payload_hash: pointer.hash, payload: { delegation_id: pointer.delegation_id, revision: pointer.revision, delegator: { agent_id: "unknown", did: pointer.delegator_did }, delegatee: { agent_id: "unknown", did: pointer.delegatee_did }, node_id: pointer.node_id, node_did: pointer.node_did, state: { status: pointer.state } } }, false, `kv_read_or_parse_failed:${sanitizeDisplayText(error.message || "failed", 80)}`, provenance));
+        continue;
+      }
+      const verification = verifyDelegationNoteRecord(record, {
+        expectedPath: pointer.path, expectedHash: pointer.hash, expectedDelegationId: pointer.delegation_id,
+        expectedDelegateeDid: pointer.delegatee_did, expectedNodeId: pointer.node_id, expectedNodeDid: pointer.node_did,
+        announcedFrom: from
+      });
+      if (record?.payload?.revision !== pointer.revision || record?.payload?.state?.status !== pointer.state) {
+        upsertDelegationProjection(delegationProjectionFromRecord(record, false, "announcement_revision_or_state_mismatch", provenance));
+      } else upsertDelegationProjection(delegationProjectionFromRecord(record, verification.ok, verification.reason, provenance));
+    }
+    markDelegationProjectionStaleness(false);
+    store.delegationSync = normalizeDelegationSync({
+      ...(store.delegationSync || {}), enabled: true, room: delegationNoteRoom, last_scan_at: now(), last_scan_status: "live", last_error: null,
+      discovered_count: store.delegationProjection.length,
+      verified_count: store.delegationProjection.filter((item) => item.verified).length,
+      rejected_count: store.delegationProjection.filter((item) => !item.verified).length
+    });
+    await saveStore();
+    return publicDelegationStatus();
+  } catch (error) {
+    markDelegationProjectionStaleness(true);
+    store.delegationSync = normalizeDelegationSync({
+      ...(store.delegationSync || {}), enabled: true, room: delegationNoteRoom, last_scan_at: now(), last_scan_status: "archive", last_error: sanitizeDisplayText(error.message || "Delegation scanner failed", 300),
+      discovered_count: store.delegationProjection.length,
+      verified_count: store.delegationProjection.filter((item) => item.verified).length,
+      rejected_count: store.delegationProjection.filter((item) => !item.verified).length
+    });
+    await saveStore();
+    return publicDelegationStatus();
+  }
+}
+
+function publicDelegationStatus() {
+  const local = normalizeDelegations(store.delegations || []).map(publicLocalDelegation);
+  const discovered = normalizeDelegationProjection(store.delegationProjection || [])
+    .filter((item) => item.node_id !== nodeIdentity.nodeId)
+    .map((item) => ({ ...item, stale: item.stale === true || Date.now() - Date.parse(item.last_seen_at || "") > delegationNoteStaleMs }));
+  const sync = normalizeDelegationSync(store.delegationSync || {});
+  return {
+    schema: delegationNoteSchema,
+    version: 1,
+    generated_at: now(),
+    semantics: {
+      authority: "Delegation notes are informational coordination claims and never grant remote authority, execution, wallet, signing, or settlement rights.",
+      signing_policy: "Every local publish or revoke is an explicit authenticated human action; managed action delegate remains require-human.",
+      privacy: "Only bounded scopes, capabilities, public DIDs, node binding, state, timestamps, paths, and hashes are exposed."
+    },
+    status: {
+      enabled: technocoreEnabled, room: delegationNoteRoom, kv_namespace: delegationNoteNamespace, stale_after_ms: delegationNoteStaleMs,
+      allowed_scopes: delegationAllowedScopes, allowed_capabilities: delegationAllowedCapabilities,
+      last_publish_at: sync.last_publish_at, last_scan_at: sync.last_scan_at, last_scan_status: sync.last_scan_status, last_error: sync.last_error,
+      local_count: local.length, discovered_count: discovered.length,
+      verified_count: discovered.filter((item) => item.verified).length,
+      rejected_count: discovered.filter((item) => !item.verified).length
+    },
+    delegations: local,
+    local,
+    discovered
+  };
+}
+
+function startDelegationNoteSync() {
+  scanDelegationNotes().catch((error) => console.warn(`Delegation note scan failed: ${error.message}`));
+  setInterval(() => scanDelegationNotes().catch((error) => console.warn(`Delegation note scan failed: ${error.message}`)), delegationNoteScanMs).unref?.();
+}
+
 function normalizeSkillFinderQuery(value) {
   const raw = sanitizeDisplayText(value, 120).toLowerCase();
   if (!raw) return [];
@@ -11467,23 +12073,57 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
   }
 
   if (method === "GET" && path === "/api/delegations") {
-    return sendJson(res, 200, { delegations: normalizeDelegations(store.delegations || []), generated_at: now() });
+    markDelegationProjectionStaleness(false);
+    return sendJson(res, 200, publicDelegationStatus());
   }
 
   if (method === "POST" && path === "/api/delegations") {
-    const body = await readJson(req);
-    const delegation = {
-      from_agent: String(body.from_agent || "").slice(0, 80),
-      to_agent: String(body.to_agent || "").slice(0, 80),
-      scope: String(body.scope || "deal").slice(0, 40),
-      policy: String(body.policy || "require-approval").slice(0, 40)
-    };
-    if (!delegation.from_agent || !delegation.to_agent) {
-      return sendJson(res, 400, { detail: "from_agent and to_agent are required for a delegation" });
+    try {
+      const body = await readJson(req);
+      assertHumanDelegationAction(req, body, "create-delegation");
+      const delegation = createLocalDelegation(body);
+      await saveStore();
+      return sendJson(res, 201, { ok: true, delegation: publicLocalDelegation(delegation), delegation_notes: publicDelegationStatus() });
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to create local delegation note" });
     }
-    store.delegations = normalizeDelegations([{ ...delegation, created_at: now() }, ...(store.delegations || [])]);
-    await saveStore();
-    return sendJson(res, 201, { ok: true, delegation: store.delegations[0] });
+  }
+
+  if (method === "POST" && path.match(/^\/api\/delegations\/([^/]+)\/publish$/)) {
+    try {
+      const delegationId = decodeURIComponent(path.match(/^\/api\/delegations\/([^/]+)\/publish$/)[1]);
+      const body = await readJson(req);
+      const delegation = normalizeDelegations(store.delegations || []).find((item) => item.id === delegationId);
+      if (!delegation) return sendJson(res, 404, { detail: "Local delegation note not found" });
+      assertHumanDelegationAction(req, body, "publish-delegation", delegation.from_agent);
+      const result = await publishDelegationNote(delegationId);
+      return sendJson(res, 200, { ok: result.status !== "failed", result, delegation_notes: publicDelegationStatus() });
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to publish delegation note" });
+    }
+  }
+
+  if (method === "POST" && path.match(/^\/api\/delegations\/([^/]+)\/revoke$/)) {
+    try {
+      const delegationId = decodeURIComponent(path.match(/^\/api\/delegations\/([^/]+)\/revoke$/)[1]);
+      const body = await readJson(req);
+      const delegation = normalizeDelegations(store.delegations || []).find((item) => item.id === delegationId);
+      if (!delegation) return sendJson(res, 404, { detail: "Local delegation note not found" });
+      assertHumanDelegationAction(req, body, "revoke-delegation", delegation.from_agent);
+      const result = await publishDelegationNote(delegationId, { revoke: true });
+      return sendJson(res, 200, { ok: result.status !== "failed", result, delegation_notes: publicDelegationStatus() });
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to revoke delegation note" });
+    }
+  }
+
+  if (method === "POST" && path === "/api/delegations/scan") {
+    try {
+      const delegationNotes = await scanDelegationNotes();
+      return sendJson(res, 200, { ok: true, delegation_notes: delegationNotes });
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to scan delegation notes" });
+    }
   }
 
   if (method === "GET" && path === "/api/signing-policy") {
@@ -11501,6 +12141,9 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       const policy = String(body.policy || "").slice(0, 40);
       if (!["signature-only", "require-human"].includes(policy)) {
         return sendJson(res, 400, { detail: "policy must be 'signature-only' or 'require-human'" });
+      }
+      if (humanRequiredSigningActions.includes(action) && policy !== "require-human") {
+        return sendJson(res, 400, { detail: `${action} is safety-critical and cannot be changed from require-human` });
       }
       store.signingPolicyOverrides = store.signingPolicyOverrides || {};
       store.signingPolicyOverrides[`${agentId}:${action}`] = policy;
@@ -14044,6 +14687,7 @@ server.listen(port, host, () => {
   startCapabilityRegistrySync();
   startReputationRegistrySync();
   startAgentReviewBridgeSync();
+  startDelegationNoteSync();
   // Scan Technocore rooms for available JOB frames and bridge them into the Dashboard
   syncTechnocoreJobRooms().catch(() => {});
   setInterval(() => syncTechnocoreJobRooms().catch(() => {}), 60_000).unref?.();

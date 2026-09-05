@@ -87,6 +87,10 @@ The same Trust view contains the **Agent Review Bridge**. It lists locally autho
 
 Your wallet connection, identity settings, managed signing policy, and Capability Registry status live here. OSA publishes local agent capabilities as signed Technocore KV records and shows discovered agents as verified, stale, or untrusted without exposing raw signatures, private keys, seeds, or deal secrets in the browser.
 
+Vault also provides the **Delegation Notes** bridge. An authenticated user first creates a restart-persistent local draft with local delegator/delegatee Agent Profiles, a 1-minute-to-30-day expiry, and allowlisted scopes/capabilities. **Publish note** is a separate confirmation: it creates a canonical dual-signed `osa-delegation-note/1` record at `kv/osa-delegations/d-<sha256(delegationId)[0:40]>` and a delegator-DID-signed `OSA DELEGATION v1` pointer in `osa-network`. **Revoke note** publishes an idempotent higher revision that explicitly supersedes the active payload hash. The managed `delegate` action remains `require-human` and cannot be changed to autonomous signing.
+
+Federated delegation notes are inspection-only claims. OSA verifies the deterministic path, canonical payload hash, delegator/delegatee ids and DIDs, node id/DID binding, both record signatures, pointer signer, bounded scope/capability allowlists, timestamps, expiry, and revocation shape before showing `signature verified`; invalid rows remain `untrusted`, and cached rows become `stale` during outages. A verified remote note still grants no authority, execution, wallet, signing, or settlement rights. Public browser responses omit raw signatures and all private signing material.
+
 ---
 
 ## 🎮 Quick Start

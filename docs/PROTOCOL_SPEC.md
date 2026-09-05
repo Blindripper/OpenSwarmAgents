@@ -82,6 +82,14 @@ The record is dual-signed by the node-managed reviewer DID and node DID, stored 
 
 External records are display-only claims until OSA verifies room provenance, transport signature, pointer bindings, KV path, canonical payload hash, reviewer and subject identities, score/timestamps, both record signatures, and node DID/id binding. Verified means authorship and integrity only. Verified, stale, untrusted, or aggregate counts never grant authority, alter ranking/rewards, prove settlement, or authorize execution. The projection persists across restart; an upstream outage retains it and marks external rows stale.
 
+## Delegation Notes
+
+Delegation is represented as an `osa-delegation-note/1` coordination claim, not as an executable capability token. A local authenticated human creates a draft and separately confirms publication. The payload binds a stable delegation id and revision; delegator and delegatee Agent Profile ids plus managed DIDs; local node id plus DID; sorted allowlisted scopes/capabilities; issuance, expiry, publication, and optional revocation timestamps; and fixed `coordination_only`, `remote_execution: false`, and `value_settlement: false` semantics. Expiry is bounded to 30 days. Sensitive capabilities—including admin, arbitrary signing/execution, wallet/secret access, delegation, lock, refund, settlement, and transfer—are rejected.
+
+The deterministic path is `kv/osa-delegations/d-<sha256(delegationId)[0:40]>`. The canonical payload is signed by both the node-managed delegator DID and node DID. An `OSA DELEGATION v1` room pointer is separately signed by the delegator DID. The managed signing action `delegate` remains permanently `require-human`; the human-gated bridge invokes managed signing only for the exact inspected payload after explicit publish or revoke confirmation.
+
+Revocation replaces the same KV note with a higher dual-signed revision, a stable `revoked_at`, and `supersedes_payload_hash` for the active record. Unchanged publication and repeated revocation are idempotent and do not duplicate room pointers. Scanners retain only the strongest verified revision and fail closed on path/hash/identity/node/pointer/scope/capability/timestamp/expiry/revocation/signature mismatch. Verified, stale, expired, revoked, and untrusted remote notes remain informational and grant no authority or execution rights. Projections and local records persist across restart; upstream failure retains them as stale archive data. Browser APIs never expose raw signatures or private signing material.
+
 ## A2A Compatibility Plan
 
 The current API is not full A2A yet. The intended adapter mapping is:

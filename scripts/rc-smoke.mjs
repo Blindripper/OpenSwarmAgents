@@ -66,6 +66,7 @@ try {
       OSA_CAPABILITY_REGISTRY_STALE_MS: "500",
       OSA_REPUTATION_STALE_MS: "500",
       OSA_REVIEW_BRIDGE_STALE_MS: "500",
+      OSA_DELEGATION_STALE_MS: "500",
       OSA_TECHNOCORE_ANNOUNCE: "1",
       OSA_PUBLIC_URL: "https://osa.example",
       AGENTSWARM_PROPOSAL_VOTING_MS: "1",
@@ -857,6 +858,81 @@ try {
   assert(reviewBridge.status.last_scan_status === "archive" && reviewBridge.discovered.some((item) => item.review_id_hash === remoteReview.payload.review_id_hash && item.stale === true), "Review scanner should mark cached external records stale immediately on outage");
   technocoreRegistryUnavailable = false;
 
+  await expectStatus("/api/signing-policy", 400, { agent_id: "technocore-specialist", action: "delegate", policy: "signature-only" }, headers);
+  const delegationExpiry = new Date(Date.now() + 2 * 60 * 60_000).toISOString();
+  await expectStatus("/api/delegations", 401, {
+    from_agent: "technocore-specialist", to_agent: "coder", scopes: ["coordination"], capabilities: ["research"], expires_at: delegationExpiry, confirmation: "create-delegation"
+  });
+  await expectStatus("/api/delegations", 400, {
+    from_agent: "technocore-specialist", to_agent: "coder", scopes: ["coordination"], capabilities: ["lock"], expires_at: delegationExpiry, confirmation: "create-delegation"
+  }, headers);
+  const noteWritesBeforeDraft = technocoreNoteWrites.filter((item) => item.namespace === "osa-delegations").length;
+  const createdDelegation = await postJson("/api/delegations", {
+    from_agent: "technocore-specialist",
+    to_agent: "coder",
+    scopes: ["coordination", "work_request"],
+    capabilities: ["request_work", "research"],
+    expires_at: delegationExpiry,
+    confirmation: "create-delegation"
+  }, headers);
+  assert(createdDelegation.delegation.state === "draft" && createdDelegation.delegation.policy === "require-human", "Delegation creation should produce only a restart-persistent human-gated local draft");
+  assert(technocoreNoteWrites.filter((item) => item.namespace === "osa-delegations").length === noteWritesBeforeDraft, "Creating a delegation draft must not publish it implicitly");
+  await expectStatus(`/api/delegations/${createdDelegation.delegation.id}/publish`, 400, {}, headers);
+  const firstDelegationPublish = await postJson(`/api/delegations/${createdDelegation.delegation.id}/publish`, { confirmation: "publish-delegation" }, headers);
+  const secondDelegationPublish = await postJson(`/api/delegations/${createdDelegation.delegation.id}/publish`, { confirmation: "publish-delegation" }, headers);
+  assert(firstDelegationPublish.result.payload_hash === secondDelegationPublish.result.payload_hash && secondDelegationPublish.result.status === "unchanged" && secondDelegationPublish.result.announced === false, "Unchanged delegation publication should be idempotent without duplicate pointers");
+  const localDelegation = secondDelegationPublish.delegation_notes.local.find((item) => item.id === createdDelegation.delegation.id);
+  assert(localDelegation?.verified === true && localDelegation.state === "active" && localDelegation.kv_path.startsWith("/kv/osa-delegations/d-"), "Published local delegation notes should verify with deterministic KV provenance");
+  assert(technocoreWrites.some((item) => item.room === "osa-network" && item.text.startsWith("OSA DELEGATION v1") && item.from === localDelegation.delegator_did), "Delegation pointers should be signed by the managed delegator DID after the explicit human gate");
+  assert(!/"signature"|privateKey|PRIVATE KEY|seed|pkcs8/i.test(JSON.stringify(secondDelegationPublish.delegation_notes)), "Delegation browser APIs must not expose signatures, private keys, or signing seeds");
+  const firstRevocation = await postJson(`/api/delegations/${createdDelegation.delegation.id}/revoke`, { confirmation: "revoke-delegation" }, headers);
+  const secondRevocation = await postJson(`/api/delegations/${createdDelegation.delegation.id}/revoke`, { confirmation: "revoke-delegation" }, headers);
+  assert(firstRevocation.result.state === "revoked" && firstRevocation.result.revision === 2, "Revocation should publish an explicit superseding revision");
+  assert(firstRevocation.result.payload_hash === secondRevocation.result.payload_hash && secondRevocation.result.status === "unchanged" && secondRevocation.result.announced === false, "Delegation revocation retries should be idempotent");
+
+  const remoteDelegation = makeDelegationFixtureRecord({ delegationId: "deleg-remote-valid-0001" });
+  publishDelegationFixture(remoteDelegation, "9400001");
+  const tamperedDelegation = makeDelegationFixtureRecord({ delegationId: "deleg-remote-tampered-0002" });
+  tamperedDelegation.payload.grant.scopes.push("wallet_admin");
+  publishDelegationFixture(tamperedDelegation, "9400002");
+  const signerDelegation = makeDelegationFixtureRecord({ delegationId: "deleg-remote-signer-0003" });
+  signerDelegation.signer_did = externalRegistryNodeDid;
+  publishDelegationFixture(signerDelegation, "9400003");
+  const expiredDelegation = makeDelegationFixtureRecord({
+    delegationId: "deleg-remote-expired-0004",
+    issuedAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+    expiresAt: new Date(Date.now() - 60 * 60_000).toISOString()
+  });
+  publishDelegationFixture(expiredDelegation, "9400004");
+  const sensitiveDelegation = makeDelegationFixtureRecord({ delegationId: "deleg-remote-sensitive-0005", capabilities: ["lock"] });
+  publishDelegationFixture(sensitiveDelegation, "9400005");
+  const nodeBoundDelegation = makeDelegationFixtureRecord({ delegationId: "deleg-remote-node-0006", nodeId: "node-not-derived-from-did" });
+  publishDelegationFixture(nodeBoundDelegation, "9400006");
+  const pointerSignerDelegation = makeDelegationFixtureRecord({ delegationId: "deleg-remote-pointer-0007" });
+  publishDelegationFixture(pointerSignerDelegation, "9400007", { pointerDid: externalRegistryNodeDid, pointerPrivateKey: externalRegistryNode.privateKey });
+  const supersededDelegation = makeDelegationFixtureRecord({ delegationId: "deleg-remote-revoked-0008" });
+  publishDelegationFixture(supersededDelegation, "9400008");
+  let delegationNotes = (await postJson("/api/delegations/scan", {})).delegation_notes;
+  assert(delegationNotes.discovered.some((item) => item.delegation_id === remoteDelegation.payload.delegation_id && item.verified === true && item.state === "active" && item.authority === "informational_only"), "Delegation scanner should verify a canonical cross-node note without granting authority");
+  assert(delegationNotes.discovered.some((item) => item.delegation_id === tamperedDelegation.payload.delegation_id && item.verified === false), "Delegation scanner should reject tampered canonical payloads");
+  assert(delegationNotes.discovered.some((item) => item.delegation_id === signerDelegation.payload.delegation_id && item.rejection_reason === "delegator_signer_mismatch"), "Delegation scanner should reject managed signer mismatch");
+  assert(delegationNotes.discovered.some((item) => item.delegation_id === expiredDelegation.payload.delegation_id && item.rejection_reason === "expired" && item.state === "expired"), "Delegation scanner should fail closed on expired notes");
+  assert(delegationNotes.discovered.some((item) => item.delegation_id === sensitiveDelegation.payload.delegation_id && item.rejection_reason === "sensitive_or_unbounded_capability"), "Delegation scanner should reject sensitive delegated capabilities");
+  assert(delegationNotes.discovered.some((item) => item.delegation_id === nodeBoundDelegation.payload.delegation_id && item.rejection_reason === "node_id_did_mismatch"), "Delegation scanner should reject node id/DID mismatch");
+  assert(delegationNotes.discovered.some((item) => item.delegation_id === pointerSignerDelegation.payload.delegation_id && item.rejection_reason === "pointer_signer_mismatch"), "Delegation scanner should bind the signed room pointer to the delegator DID");
+  const revokedRemoteDelegation = makeDelegationFixtureRecord({ delegationId: supersededDelegation.payload.delegation_id, state: "revoked", revision: 2 });
+  publishDelegationFixture(revokedRemoteDelegation, "9400009");
+  delegationNotes = (await postJson("/api/delegations/scan", {})).delegation_notes;
+  assert(delegationNotes.discovered.some((item) => item.delegation_id === revokedRemoteDelegation.payload.delegation_id && item.verified === true && item.state === "revoked" && item.revision === 2), "A valid revocation should explicitly supersede the active cross-node note");
+  const persistedDelegations = JSON.parse(await readFile(join(dataDir, "agentswarm.json"), "utf8"));
+  assert(persistedDelegations.delegations?.some((item) => item.id === createdDelegation.delegation.id && item.state === "revoked"), "Local delegation drafts, publications, and revocations should persist across restart loads");
+  assert(persistedDelegations.delegationProjection?.some((item) => item.delegation_id === remoteDelegation.payload.delegation_id), "Verified and untrusted cross-node delegation projections should persist locally");
+  technocoreRegistryUnavailable = true;
+  await delay(600);
+  delegationNotes = (await postJson("/api/delegations/scan", {})).delegation_notes;
+  assert(delegationNotes.status.last_scan_status === "archive" && delegationNotes.discovered.some((item) => item.delegation_id === remoteDelegation.payload.delegation_id && item.stale === true), "Delegation scanner should retain cached records as stale during Technocore outage");
+  technocoreRegistryUnavailable = false;
+
   const artifact = await postJson(
     "/api/artifacts/upload",
     {
@@ -936,7 +1012,7 @@ function startTechnocoreFixture() {
     }
     if (noteMatch && req.method === "GET") {
       const key = `${noteMatch[1]}/${noteMatch[2]}`;
-      if (["osa-capabilities", "osa-reputation", "osa-agent-reviews"].includes(noteMatch[1]) && technocoreRegistryUnavailable) {
+      if (["osa-capabilities", "osa-reputation", "osa-agent-reviews", "osa-delegations"].includes(noteMatch[1]) && technocoreRegistryUnavailable) {
         res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
         res.end("registry unavailable\n");
         return;
@@ -1200,6 +1276,77 @@ function agentReviewAnnouncementText(record, hashOverride = null) {
 function publishAgentReviewFixture(record, nonce, hashOverride = null) {
   technocoreNotes.set(record.kv_path.replace(/^\/kv\//, ""), stableStringify(record));
   signedFixtureWrite("credence", record.payload.reviewer.did, externalRegistryAgent.privateKey, agentReviewAnnouncementText(record, hashOverride), nonce);
+}
+
+function makeDelegationFixtureRecord({
+  delegationId,
+  delegatorId = "remote-delegator",
+  delegatorDid = externalRegistryAgentDid,
+  delegatorPrivateKey = externalRegistryAgent.privateKey,
+  delegateeId = "remote-delegatee",
+  delegateeDid = externalReviewSubjectDid,
+  nodeDid = externalRegistryNodeDid,
+  nodePrivateKey = externalRegistryNode.privateKey,
+  nodeId = externalRegistryNodeId,
+  state = "active",
+  revision = state === "revoked" ? 2 : 1,
+  issuedAt = new Date(Date.now() - 60_000).toISOString(),
+  expiresAt = new Date(Date.now() + 60 * 60_000).toISOString(),
+  publishedAt = new Date().toISOString(),
+  capabilities = ["request_work", "research"],
+  mutatePayload
+}) {
+  const previousHash = createHash("sha256").update(`${delegationId}:previous`).digest("hex");
+  const payload = {
+    schema: "osa-delegation-note/1",
+    version: 1,
+    delegation_id: delegationId,
+    revision,
+    delegator: { agent_id: delegatorId, did: delegatorDid },
+    delegatee: { agent_id: delegateeId, did: delegateeDid },
+    node_id: nodeId,
+    node_did: nodeDid,
+    grant: {
+      scopes: ["coordination", "work_request"],
+      capabilities: [...capabilities].sort(),
+      authority: "coordination_only",
+      remote_execution: false,
+      value_settlement: false
+    },
+    managed_signing: { action: "delegate", policy: "require-human", human_gated: true },
+    state: {
+      status: state,
+      issued_at: issuedAt,
+      expires_at: expiresAt,
+      revoked_at: state === "revoked" ? publishedAt : null,
+      supersedes_payload_hash: state === "revoked" ? previousHash : null
+    },
+    published_at: publishedAt
+  };
+  if (typeof mutatePayload === "function") mutatePayload(payload);
+  const payloadHash = objectHash(payload);
+  return {
+    schema: "osa-delegation-note/1",
+    version: 1,
+    kv_path: `/kv/osa-delegations/d-${createHash("sha256").update(delegationId).digest("hex").slice(0, 40)}`,
+    payload,
+    payload_hash: payloadHash,
+    signer_did: delegatorDid,
+    signature: signCapabilityEnvelope("agent_delegation_note", payload, delegatorDid, delegatorPrivateKey, publishedAt),
+    node_signature: signCapabilityEnvelope("node_delegation_note", payload, nodeDid, nodePrivateKey, publishedAt)
+  };
+}
+
+function delegationAnnouncementText(record, hashOverride = null) {
+  const payload = record.payload;
+  return `OSA DELEGATION v1 id=${payload.delegation_id} revision=${payload.revision} state=${payload.state.status} path=${record.kv_path} hash=${hashOverride || record.payload_hash} delegator=${payload.delegator.did} delegatee=${payload.delegatee.did} node=${payload.node_id} node_did=${payload.node_did}`;
+}
+
+function publishDelegationFixture(record, nonce, options = {}) {
+  technocoreNotes.set(record.kv_path.replace(/^\/kv\//, ""), stableStringify(record));
+  const signerDid = options.pointerDid || record.payload.delegator.did;
+  const signerKey = options.pointerPrivateKey || externalRegistryAgent.privateKey;
+  signedFixtureWrite("osa-network", signerDid, signerKey, delegationAnnouncementText(record, options.hashOverride || null), nonce);
 }
 
 function makeReputationFixtureRecord({ agentId, agentDid, agentPrivateKey, nodeDid, nodePrivateKey, nodeId, mutatePayload }) {

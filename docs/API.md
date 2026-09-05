@@ -397,6 +397,10 @@ OSA_TECHNOCORE_PROFILE=1
 OSA_CAPABILITY_REGISTRY_ENABLED=1
 OSA_CAPABILITY_REGISTRY_SCAN_MS=300000
 OSA_CAPABILITY_REGISTRY_STALE_MS=86400000
+OSA_DELEGATION_SCAN_MS=300000
+OSA_DELEGATION_STALE_MS=86400000
+OSA_DELEGATION_POINTER_LIMIT=100
+OSA_DELEGATION_ROOM_LIMIT=100
 ```
 
 `OSA_TECHNOCORE_PUBLIC_ROOM` defaults to `osa-network` and is used by the dashboard chat's default pinned channel. `OSA_TECHNOCORE_ANNOUNCE=1` enables project-share announcements after `POST /api/public/projects/share` succeeds. The dashboard sends an explicit `technocore_channels` list from the share dialog; without that list, the server falls back to `OSA_TECHNOCORE_ANNOUNCE_ROOM` or `osa-network`. The announcement contains only the project name, project id, room count, agent count, and `OSA_PUBLIC_URL`/federation advertise URL when configured.
@@ -502,6 +506,26 @@ Requires `{ "review_id": "..." }` plus either the owning OSA session or the conn
 `POST /api/review-bridge/scan`
 
 Runs an immediate `credence` scan. OSA verifies the room source and signed transport sender, pointer timestamp/path/hash/review/subject/verdict, reviewer and subject identities, score and timestamp bounds, canonical payload hash, reviewer signature, node signature, and node DID/id binding. Invalid records remain untrusted and cannot affect authority, ranking, rewards, settlement, or execution. If the room or KV surface is unavailable, all cached external rows are retained and marked stale immediately.
+
+`GET /api/delegations`
+
+Returns the Phase 3.6 delegation-note state while preserving the compatibility `delegations` list alias. `local` contains restart-persistent drafts and locally published/revoked notes; `discovered` contains the restart-persistent Technocore projection. Public rows expose only ids/DIDs, node binding, allowlisted scopes/capabilities, issuance/expiry/revocation state, revision, KV path, payload hash, provenance, and verified/stale/untrusted status. They omit raw record signatures and all private text, keys, seeds, and signing material. Every remote row has `authority: "informational_only"` and can never grant execution, wallet, signing, settlement, connector, task, or managed-policy rights.
+
+`POST /api/delegations`
+
+Creates a local draft only. It requires an authenticated OSA session and `confirmation: "create-delegation"`, two different existing local Agent Profile ids in `from_agent`/`to_agent`, one or more allowlisted `scopes`, an allowlisted `capabilities` array, and an `expires_at` between one minute and 30 days in the future. Legacy singular `scope` input remains accepted and old `deal`/`task`/`result` values normalize to bounded Phase 3.6 scopes. Draft creation performs no Technocore write.
+
+`POST /api/delegations/:id/publish`
+
+Requires an authenticated OSA session and `confirmation: "publish-delegation"`. The server verifies that managed action `delegate` is still `require-human`, then signs the canonical `osa-delegation-note/1` payload with the node-managed delegator DID and node DID. The deterministic path is `/kv/osa-delegations/d-<sha256(delegationId)[0:40]>`; a signed `OSA DELEGATION v1` pointer is posted to `osa-network` by the delegator DID. Repeating an unchanged publish returns the same payload hash, observes the unchanged KV value, and does not duplicate the pointer.
+
+`POST /api/delegations/:id/revoke`
+
+Requires `confirmation: "revoke-delegation"` under the same authenticated human gate. Only a previously published note can be revoked. The replacement KV record has `state.status: "revoked"`, a higher revision, a stable revocation timestamp, and `supersedes_payload_hash` pointing to the active record. Repeating revocation is idempotent and cannot reactivate the note.
+
+`POST /api/delegations/scan`
+
+Runs an immediate `osa-network` pointer/KV scan. Verification fails closed on pointer signature/timestamp/signer, path/id/revision/state/hash mismatch, malformed agent identities, node id/DID mismatch, either invalid managed signature, unsafe authority flags, sensitive or unbounded scopes/capabilities, invalid issuance/expiry/revocation timestamps, and expired active notes. Valid revocations supersede older active projections. Outages retain the archived projection and mark it stale rather than deleting or promoting records.
 
 `GET /api/trust`
 
