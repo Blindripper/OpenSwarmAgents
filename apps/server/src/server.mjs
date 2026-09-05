@@ -34,6 +34,15 @@ import {
   makeOffer as makeTclkOffer,
   openContract as openTclkContract
 } from "@flop-labs/tclk";
+import {
+  A2A_FRAME_TYPES,
+  A2A_LIMITS,
+  A2A_ROOM_PROFILE,
+  A2A_WIRE_VERSION,
+  a2aPartMetadata,
+  inspectA2AEnvelope,
+  summarizeA2AEnvelope
+} from "./a2a-room-protocol.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "../../..");
@@ -118,6 +127,7 @@ const technocoreReadHedgeMs = boundedNumber(process.env.OSA_TECHNOCORE_READ_HEDG
 const technocoreWriteTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_WRITE_TIMEOUT_MS, Math.max(technocoreTimeoutMs, 8000), 1000, 20000);
 const technocoreWriteAttempts = Math.round(boundedNumber(process.env.OSA_TECHNOCORE_WRITE_ATTEMPTS, 2, 1, 4));
 const protocolTranscriptLimit = Math.round(boundedNumber(process.env.OSA_PROTOCOL_TRANSCRIPT_LIMIT, 2000, 100, 10000));
+const a2aObservationLimit = Math.round(boundedNumber(process.env.OSA_A2A_OBSERVATION_LIMIT, 1000, 100, 5000));
 const technocoreChannelTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS, Math.max(technocoreTimeoutMs, 12000), 1000, 15000);
 const technocoreMetadataTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_METADATA_TIMEOUT_MS, 60000, 5000, 120000);
 const technocoreAnnounceEnabled = process.env.OSA_TECHNOCORE_ANNOUNCE === "1";
@@ -295,6 +305,7 @@ async function loadStore() {
       publicProjectCopies: [],
       managerAudits: [],
       networkChatMessages: [],
+      a2aObservations: [],
       protocolTranscripts: [],
       protocolRoomSync: {},
       protocolPaperDeals: [],
@@ -357,6 +368,7 @@ function normalizeStore(input) {
     publicProjectCopies: normalizePublicProjectCopies(input.publicProjectCopies || []),
     managerAudits: normalizeManagerAudits(input.managerAudits || []),
     networkChatMessages: normalizeNetworkChatMessages(input.networkChatMessages || []),
+    a2aObservations: normalizeA2AObservations(input.a2aObservations || []),
     protocolTranscripts: normalizeProtocolTranscripts(input.protocolTranscripts || []),
     protocolRoomSync: normalizeProtocolRoomSync(input.protocolRoomSync || {}),
     protocolPaperDeals: normalizeProtocolPaperDeals(input.protocolPaperDeals || []),
@@ -1068,6 +1080,244 @@ function normalizeNetworkChatMessages(messages) {
       }
     })
     .filter((message) => message && message.message.length > 0);
+}
+
+function normalizeA2AObservations(records) {
+  if (!Array.isArray(records)) return [];
+  const byId = new Map();
+  for (const record of records) {
+    const id = String(record?.id || "").slice(0, 180);
+    const envelopeHash = String(record?.envelopeHash || record?.envelope_hash || "").toLowerCase();
+    if (!id || !/^[a-f0-9]{64}$/.test(envelopeHash)) continue;
+    const frameType = A2A_FRAME_TYPES.includes(String(record.frameType || record.frame_type))
+      ? String(record.frameType || record.frame_type)
+      : null;
+    const transports = Array.isArray(record.transports)
+      ? record.transports.slice(0, 16).map((item) => ({
+        room: normalizeTechnocoreName(item?.room) || "unknown",
+        generation: Math.max(0, Number(item?.generation || 0)),
+        sequence: Math.max(0, Number(item?.sequence || item?.seq || 0)),
+        observedAt: validIsoTimestamp(item?.observedAt || item?.observed_at) || now()
+      })).filter((item, index, list) => list.findIndex((candidate) => (
+        candidate.room === item.room && candidate.generation === item.generation && candidate.sequence === item.sequence
+      )) === index)
+      : [];
+    const next = {
+      id,
+      profile: A2A_ROOM_PROFILE,
+      version: String(record.version || A2A_WIRE_VERSION).slice(0, 8),
+      frameType,
+      frameId: record.frameId || record.frame_id ? String(record.frameId || record.frame_id).slice(0, 128) : null,
+      correlationId: record.correlationId || record.correlation_id ? String(record.correlationId || record.correlation_id).slice(0, 128) : null,
+      contextId: record.contextId || record.context_id ? String(record.contextId || record.context_id).slice(0, 128) : null,
+      taskId: record.taskId || record.task_id ? String(record.taskId || record.task_id).slice(0, 128) : null,
+      messageId: record.messageId || record.message_id ? String(record.messageId || record.message_id).slice(0, 128) : null,
+      sender: record.sender ? String(record.sender).slice(0, 120) : null,
+      recipient: record.recipient ? String(record.recipient).slice(0, 120) : null,
+      createdAt: validIsoTimestamp(record.createdAt || record.created_at),
+      expiresAt: validIsoTimestamp(record.expiresAt || record.expires_at),
+      envelopeHash,
+      headerHash: /^[a-f0-9]{64}$/.test(String(record.headerHash || record.header_hash || "")) ? String(record.headerHash || record.header_hash) : null,
+      payloadHash: /^[a-f0-9]{64}$/.test(String(record.payloadHash || record.payload_hash || "")) ? String(record.payloadHash || record.payload_hash) : null,
+      wireBytes: Math.max(0, Math.min(A2A_LIMITS.maxWireBytes + 1, Number(record.wireBytes || record.wire_bytes || 0))),
+      transportForm: ["logical-two-line", "technocore-escaped-line"].includes(record.transportForm || record.transport_form) ? String(record.transportForm || record.transport_form) : null,
+      verified: record.verified === true,
+      valid: record.valid === true,
+      rejection: record.rejection ? String(record.rejection).replace(/[^a-zA-Z0-9_:-]/g, "").slice(0, 160) : null,
+      conflict: record.conflict === true,
+      partCount: Math.max(0, Math.min(A2A_LIMITS.maxParts, Number(record.partCount || record.part_count || 0))),
+      partKinds: Array.isArray(record.partKinds || record.part_kinds) ? [...new Set(record.partKinds || record.part_kinds)].filter((kind) => ["text", "data", "file"].includes(kind)).sort() : [],
+      mediaTypes: Array.isArray(record.mediaTypes || record.media_types) ? [...new Set(record.mediaTypes || record.media_types)].map((item) => String(item).slice(0, 160)).sort().slice(0, A2A_LIMITS.maxParts) : [],
+      schemas: Array.isArray(record.schemas) ? [...new Set(record.schemas)].map((item) => String(item).slice(0, 160)).sort().slice(0, A2A_LIMITS.maxParts) : [],
+      transports,
+      replayCount: Math.max(0, transports.length - 1),
+      observedAt: validIsoTimestamp(record.observedAt || record.observed_at) || transports[0]?.observedAt || now(),
+      lastSeenAt: validIsoTimestamp(record.lastSeenAt || record.last_seen_at) || transports.at(-1)?.observedAt || now()
+    };
+    const current = byId.get(id);
+    if (!current || String(next.lastSeenAt).localeCompare(String(current.lastSeenAt)) >= 0) byId.set(id, next);
+  }
+  return [...byId.values()]
+    .sort((a, b) => String(b.lastSeenAt).localeCompare(String(a.lastSeenAt)) || a.id.localeCompare(b.id))
+    .slice(0, a2aObservationLimit);
+}
+
+function recordA2AObservation(room, generation, message, inspection, observedAt = now()) {
+  if (!inspection?.detected) return { inspection, changed: false };
+  store.a2aObservations = normalizeA2AObservations(store.a2aObservations || []);
+  const frameId = inspection.header?.id || null;
+  const envelopeHash = String(inspection.envelopeHash || createHash("sha256").update(String(message?.text || "")).digest("hex"));
+  const conflicts = frameId
+    ? store.a2aObservations.filter((record) => record.frameId === frameId && record.envelopeHash !== envelopeHash)
+    : [];
+  let effectiveInspection = conflicts.length
+    ? { ...inspection, valid: false, rejection: "frame_id_conflict", conflict: true }
+    : inspection;
+  const archiveId = `a2a-observation-${createHash("sha256").update(`${frameId || "wire"}\0${envelopeHash}`).digest("hex").slice(0, 40)}`;
+  const existing = store.a2aObservations.find((record) => record.id === archiveId);
+  const transport = {
+    room,
+    generation: Math.max(0, Number(generation || 0)),
+    sequence: Math.max(0, Number(message?.seq || 0)),
+    observedAt
+  };
+  const transportKey = (item) => `${item.room}:${item.generation}:${item.sequence}`;
+  const transports = existing?.transports ? [...existing.transports] : [];
+  const repeatedTransport = transports.some((item) => transportKey(item) === transportKey(transport));
+  if (!repeatedTransport) transports.push(transport);
+  if (existing && !repeatedTransport) effectiveInspection = { ...effectiveInspection, replay: true };
+  const partMeta = a2aPartMetadata(effectiveInspection.payload);
+  const candidate = {
+    id: archiveId,
+    profile: A2A_ROOM_PROFILE,
+    version: effectiveInspection.version || null,
+    frameType: effectiveInspection.frameType || null,
+    frameId,
+    correlationId: effectiveInspection.header?.correlation_id || null,
+    contextId: effectiveInspection.header?.context_id || null,
+    taskId: effectiveInspection.header?.task_id || null,
+    messageId: effectiveInspection.header?.message_id || null,
+    sender: effectiveInspection.header?.sender || String(message?.from || "").slice(0, 120) || null,
+    recipient: effectiveInspection.header?.recipient || null,
+    createdAt: validIsoTimestamp(effectiveInspection.header?.created_at),
+    expiresAt: validIsoTimestamp(effectiveInspection.header?.expires_at),
+    envelopeHash,
+    headerHash: effectiveInspection.headerHash || null,
+    payloadHash: effectiveInspection.payloadHash || null,
+    wireBytes: effectiveInspection.wireBytes || 0,
+    transportForm: effectiveInspection.transportForm || null,
+    verified: existing?.verified === true || effectiveInspection.verified === true,
+    valid: effectiveInspection.valid === true,
+    rejection: effectiveInspection.valid === true ? null : effectiveInspection.rejection,
+    conflict: effectiveInspection.conflict === true,
+    ...partMeta,
+    transports: transports.slice(-16),
+    replayCount: Math.max(0, transports.length - 1),
+    observedAt: existing?.observedAt || observedAt,
+    lastSeenAt: observedAt
+  };
+  const before = existing ? JSON.stringify(existing) : "";
+  const after = JSON.stringify(candidate);
+  if (before === after) return { inspection: effectiveInspection, changed: false };
+  store.a2aObservations = normalizeA2AObservations([
+    candidate,
+    ...store.a2aObservations.filter((record) => record.id !== archiveId)
+  ]);
+  return { inspection: effectiveInspection, changed: true };
+}
+
+function publicA2AMetadata(inspection) {
+  if (!inspection?.detected) return undefined;
+  const partMeta = a2aPartMetadata(inspection.payload);
+  return {
+    profile: A2A_ROOM_PROFILE,
+    version: inspection.version,
+    type: inspection.frameType,
+    frame_id: inspection.header?.id || null,
+    correlation_id: inspection.header?.correlation_id || null,
+    context_id: inspection.header?.context_id || null,
+    task_id: inspection.header?.task_id || null,
+    message_id: inspection.header?.message_id || null,
+    sender: inspection.header?.sender || null,
+    recipient: inspection.header?.recipient || null,
+    created_at: validIsoTimestamp(inspection.header?.created_at),
+    expires_at: validIsoTimestamp(inspection.header?.expires_at),
+    envelope_hash: inspection.envelopeHash,
+    payload_hash: inspection.payloadHash,
+    wire_bytes: inspection.wireBytes,
+    transport_form: inspection.transportForm,
+    part_count: partMeta.partCount,
+    part_kinds: partMeta.partKinds,
+    media_types: partMeta.mediaTypes,
+    schemas: partMeta.schemas,
+    verified: inspection.verified === true,
+    valid: inspection.valid === true,
+    rejection: inspection.rejection || null,
+    replay: inspection.replay === true,
+    conflict: inspection.conflict === true,
+    authority: "none",
+    handling: "authenticated-data-only",
+    remote_execution: false,
+    value_settlement: false
+  };
+}
+
+function publicA2AObservation(record) {
+  return {
+    id: record.id,
+    profile: A2A_ROOM_PROFILE,
+    version: record.version,
+    type: record.frameType,
+    frame_id: record.frameId,
+    correlation_id: record.correlationId,
+    context_id: record.contextId,
+    task_id: record.taskId,
+    message_id: record.messageId,
+    sender: record.sender,
+    recipient: record.recipient,
+    created_at: record.createdAt,
+    expires_at: record.expiresAt,
+    envelope_hash: record.envelopeHash,
+    header_hash: record.headerHash,
+    payload_hash: record.payloadHash,
+    wire_bytes: record.wireBytes,
+    transport_form: record.transportForm,
+    verified: record.verified,
+    valid: record.valid,
+    rejection: record.rejection,
+    conflict: record.conflict,
+    part_count: record.partCount,
+    part_kinds: record.partKinds,
+    media_types: record.mediaTypes,
+    schemas: record.schemas,
+    replay_count: record.replayCount,
+    transports: record.transports.map((item) => ({ room: item.room, generation: item.generation, sequence: item.sequence, observed_at: item.observedAt })),
+    observed_at: record.observedAt,
+    last_seen_at: record.lastSeenAt,
+    authority: "none",
+    handling: "authenticated-data-only",
+    remote_execution: false,
+    value_settlement: false
+  };
+}
+
+function a2aProtocolView(url = null) {
+  const requestedLimit = Number(url?.searchParams?.get("limit") || 100);
+  const limit = Math.max(1, Math.min(250, Number.isFinite(requestedLimit) ? requestedLimit : 100));
+  const status = String(url?.searchParams?.get("status") || "all").toLowerCase();
+  const requestedType = String(url?.searchParams?.get("type") || "").toUpperCase();
+  const records = normalizeA2AObservations(store.a2aObservations || []);
+  const observations = records
+    .filter((record) => !requestedType || record.frameType === requestedType)
+    .filter((record) => status === "verified" ? record.valid && record.verified : status === "untrusted" ? !record.valid : true)
+    .slice(0, limit)
+    .map(publicA2AObservation);
+  return {
+    profile: A2A_ROOM_PROFILE,
+    version: A2A_WIRE_VERSION,
+    compatibility: "OSA transport profile / edge adapter; not full official A2A HTTP or JSON-RPC compatibility",
+    logical_format: "A2A/<version> <TYPE> <canonical compact JSON header>\\n<canonical compact JSON payload>",
+    technocore_transport_format: "The logical newline is encoded as the two ASCII characters \\ and n; decoding restores exactly one newline before validation.",
+    frame_types: A2A_FRAME_TYPES,
+    limits: { ...A2A_LIMITS, observation_limit: a2aObservationLimit },
+    semantics: {
+      authority: "none",
+      handling: "authenticated-data-only",
+      remote_execution: false,
+      mailbox_routing: false,
+      workspace_dispatch: false,
+      value_settlement: false,
+      signatures_mean: "sender authorship and byte integrity only"
+    },
+    archive: {
+      persisted: true,
+      payloads_persisted: false,
+      record_count: records.length,
+      returned_count: observations.length
+    },
+    observations,
+    generated_at: now()
+  };
 }
 
 function normalizeProtocolTranscripts(records) {
@@ -2040,6 +2290,22 @@ function inspectJobFrame(text, verified) {
 function inspectProtocolTranscript(room, message) {
   const text = String(message?.text || "");
   const verified = verifyTechnocoreDidMessage(room, message);
+  const a2aFrame = inspectA2AEnvelope(text, {
+    transportSender: String(message?.from || ""),
+    transportVerified: verified,
+    allowExpired: true
+  });
+  if (a2aFrame.detected) {
+    return {
+      protocol: A2A_ROOM_PROFILE,
+      frameType: a2aFrame.frameType ? String(a2aFrame.frameType).toLowerCase() : null,
+      objectId: a2aFrame.objectId,
+      verified: a2aFrame.verified,
+      valid: a2aFrame.valid,
+      rejection: a2aFrame.rejection,
+      frame: a2aFrame.valid ? { type: a2aFrame.frameType, header: a2aFrame.header, payload: a2aFrame.payload } : null
+    };
+  }
   // Try job protocol frames (JOB, CLAIM, RESULT, ATTEST)
   const jobFrame = inspectJobFrame(text, verified);
   if (jobFrame) return jobFrame;
@@ -3389,6 +3655,7 @@ async function loadPostgresStore() {
     publicProjectReviews: [],
     publicProjectCopies: [],
       networkChatMessages: [],
+      a2aObservations: [],
       protocolTranscripts: [],
       protocolRoomSync: {},
       protocolPaperDeals: [],
@@ -5725,6 +5992,10 @@ function publicRuntime() {
     technocoreWriteTimeoutMs,
     technocoreWriteAttempts,
     technocoreMetadataTimeoutMs,
+    a2aRoomProfile: A2A_ROOM_PROFILE,
+    a2aWireVersion: A2A_WIRE_VERSION,
+    a2aFrameTypes: A2A_FRAME_TYPES,
+    a2aObservationLimit,
     technocoreAnnounceEnabled: technocoreEnabled && technocoreAnnounceEnabled && Boolean(technocoreAnnounceRoom),
     technocoreAnnounceRoom: technocoreEnabled && technocoreAnnounceRoom ? technocoreAnnounceRoom : null,
     technocoreSignedMessages: technocoreEnabled && technocoreSignedMessages && Boolean(technocoreDid),
@@ -10415,6 +10686,7 @@ async function publicNetworkChatMessages(limit = 60, channel = technocorePublicR
 
 function publicLocalNetworkChatMessage(message, externalMessages = []) {
   const delivery = localNetworkChatTechnocoreDelivery(message, externalMessages);
+  const a2a = localNetworkChatA2AMetadata(message, delivery);
   return {
     id: message.id,
     node_id: message.nodeId,
@@ -10430,8 +10702,18 @@ function publicLocalNetworkChatMessage(message, externalMessages = []) {
     seq: delivery?.seq || undefined,
     signed: delivery?.signed === true,
     verified: delivery?.signed === true,
-    delivery_status: delivery?.deliveryStatus || undefined
+    delivery_status: delivery?.deliveryStatus || undefined,
+    a2a
   };
+}
+
+function localNetworkChatA2AMetadata(message, delivery) {
+  const inspection = inspectA2AEnvelope(String(message.message || ""), {
+    transportSender: delivery?.from || message.technocoreFrom || message.technocore_from || technocoreNick || "",
+    transportVerified: delivery?.signed === true || message.technocoreSigned === true,
+    allowExpired: true
+  });
+  return inspection.valid ? publicA2AMetadata(inspection) : null;
 }
 
 function localNetworkChatTechnocoreDelivery(message, externalMessages) {
@@ -10496,23 +10778,33 @@ async function technocorePublicChatMessages(limit = 60, channel = technocorePubl
     const view = await fetchTechnocoreRoomJson(`/r/${room}`, query);
     technocoreRoomReadBackoff.delete(room);
     const messages = Array.isArray(view?.messages) ? view.messages : [];
-    return messages
+    const generation = Number.isSafeInteger(Number(view?.generation)) && Number(view.generation) >= 0 ? Number(view.generation) : 0;
+    let observationsChanged = false;
+    const output = messages
       .filter((message) => message && Number.isFinite(Number(message.seq)))
       .map((message) => {
         const from = String(message.from || "unknown").slice(0, 120);
         const safeTextLimit = Math.max(1, Math.min(4096, Number(textLimit || 500)));
-        const text = String(message.text || "").trim().replace(/\s+/g, " ").slice(0, safeTextLimit);
+        const rawText = String(message.text || "").slice(0, A2A_LIMITS.maxWireBytes + 1);
+        const text = rawText.trim().replace(/\s+/g, " ").slice(0, safeTextLimit);
         const signatureVerified = verifyTechnocoreDidMessage(room, {
           from,
           nonce: message.nonce,
           sig: message.sig,
-          text
+          text: rawText
         });
+        const initialInspection = inspectA2AEnvelope(rawText, {
+          transportSender: from,
+          transportVerified: signatureVerified
+        });
+        const observation = recordA2AObservation(room, generation, message, initialInspection);
+        observationsChanged = observationsChanged || observation.changed;
+        const inspection = observation.inspection;
         return {
           id: `technocore-chat-${room}-${Number(message.seq)}`,
           node_id: "technocore",
           wallet_address: null,
-          message: text,
+          message: inspection.detected ? summarizeA2AEnvelope(inspection) : text,
           created_at: validIsoTimestamp(message.ts) || now(),
           source: "technocore",
           external: true,
@@ -10522,9 +10814,12 @@ async function technocorePublicChatMessages(limit = 60, channel = technocorePubl
           from,
           seq: Number(message.seq),
           signed: signatureVerified,
-          verified: signatureVerified
+          verified: signatureVerified,
+          a2a: publicA2AMetadata(inspection)
         };
       });
+    if (observationsChanged) await saveStore();
+    return output;
   } catch {
     const failures = Math.min(5, Number(backoff?.failures || 0) + 1);
     technocoreRoomReadBackoff.set(room, {
@@ -10808,10 +11103,24 @@ async function technocoreProtocolOverview() {
     layers: [
       { id: "technocore", label: "Technocore", role: "public transport and rooms", status: technocoreEnabled ? "connected" : "disabled" },
       { id: "did", label: "DID", role: "identity and message signatures", status: technocoreDid ? "ready" : "unavailable" },
-      { id: "work", label: "A2A / Kibble", role: "jobs and work lifecycle", status: "planned" },
+      { id: "work", label: "A2A / Kibble", role: "authenticated room data; no routing or execution authority", status: "observer" },
       { id: "tclk", label: "TCLK", role: "deal and payment coordination", status: technocoreEnabled ? "rehearsal" : "local-rehearsal" },
       { id: "rail", label: "Settlement Rail", role: "value lock and settlement", status: "paper-ready" }
     ],
+    a2a: {
+      profile: A2A_ROOM_PROFILE,
+      version: A2A_WIRE_VERSION,
+      frame_types: A2A_FRAME_TYPES,
+      mode: "read-only-observer",
+      authority: "none",
+      remote_execution: false,
+      mailbox_routing: false,
+      value_settlement: false,
+      observation_count: normalizeA2AObservations(store.a2aObservations || []).length,
+      verified_count: normalizeA2AObservations(store.a2aObservations || []).filter((record) => record.valid && record.verified).length,
+      untrusted_count: normalizeA2AObservations(store.a2aObservations || []).filter((record) => !record.valid).length,
+      payloads_persisted: false
+    },
     tclk: {
       version: "tclk/1",
       offer_room: tclkOfferRoom,
@@ -11884,6 +12193,10 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
       channels: await publicNetworkChannels(url.searchParams.get("limit") || technocoreChannelLimit),
       generated_at: now()
     });
+  }
+
+  if (method === "GET" && path === "/api/protocol/a2a") {
+    return sendJson(res, 200, a2aProtocolView(url));
   }
 
   if (method === "GET" && path === "/api/protocol/overview") {
@@ -13143,6 +13456,7 @@ async function handleApi(req, res, url) {
         publicProjectReviews: [],
         publicProjectCopies: [],
         networkChatMessages: [],
+        a2aObservations: [],
         protocolTranscripts: [],
         protocolRoomSync: {},
         protocolPaperDeals: [],

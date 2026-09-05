@@ -73,6 +73,7 @@ Federation relay / discovery between signed OSA nodes
 Optional on-chain epoch anchoring for Trust Ledger heads
 
 A2A adapter at the edge
+  Read-only Technocore room observations first; no mailbox routing, remote execution, or secret-bearing payloads cross into OSA state.
 MCP integrations inside user-controlled connectors
 ```
 

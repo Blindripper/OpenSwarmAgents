@@ -8,6 +8,15 @@ interface Props {
   dockRightOffset?: number;
 }
 
+export type NetworkChatFilter = "all" | "a2a" | "verified" | "untrusted";
+
+const messageFilters: { value: NetworkChatFilter; label: string; title: string }[] = [
+  { value: "all", label: "All", title: "Show every message" },
+  { value: "a2a", label: "A2A only", title: "Show only observed A2A frames" },
+  { value: "verified", label: "Verified DID", title: "Show only signature-verified Technocore messages" },
+  { value: "untrusted", label: "Untrusted", title: "Show only unsigned or unverified Technocore messages" },
+];
+
 const defaultChannel = "osa-network";
 const pinnedChannelsKey = "osa-network-chat-pinned-channels";
 const slowModeKey = "osa-network-chat-slow-mode";
@@ -51,6 +60,27 @@ function uniqueChannels(channels: string[]): string[] {
 
 function loadSlowMode(): boolean {
   return window.localStorage.getItem(slowModeKey) !== "0";
+}
+
+export function isA2AMessage(message: NetworkChatMessage): boolean {
+  return Boolean(message.a2a?.profile);
+}
+
+export function filterNetworkChatMessages(
+  messages: NetworkChatMessage[],
+  search: string,
+  filter: NetworkChatFilter,
+): NetworkChatMessage[] {
+  const normalizedSearch = search.trim().toLowerCase();
+  return messages.filter((message) => {
+    const matchesSearch = !normalizedSearch || [message.message, message.from, message.wallet_address, messageIdentity(message)]
+      .some((value) => String(value || "").toLowerCase().includes(normalizedSearch));
+    if (!matchesSearch) return false;
+    if (filter === "a2a") return isA2AMessage(message);
+    if (filter === "verified") return message.verified === true;
+    if (filter === "untrusted") return message.source === "technocore" && message.trusted !== true;
+    return true;
+  });
 }
 
 function messageIdentity(message: NetworkChatMessage): string {
@@ -239,6 +269,7 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
   const [activeChannel, setActiveChannel] = useState(() => loadPinnedChannels()[0] || defaultChannel);
   const [channelListOpen, setChannelListOpen] = useState(false);
   const [messageSearch, setMessageSearch] = useState("");
+  const [messageFilter, setMessageFilter] = useState<NetworkChatFilter>("all");
   const [channelSearch, setChannelSearch] = useState("");
   const [slowMode, setSlowMode] = useState(loadSlowMode);
   const slowModeRef = useRef(slowMode);
@@ -272,11 +303,8 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
   const loadingMessages = !initializedChannels.has(activeChannel);
   const messages = messagesByChannel[activeChannel] || [];
   const queuedMessages = queuedMessagesByChannel[activeChannel] || [];
-  const normalizedMessageSearch = messageSearch.trim().toLocaleLowerCase();
-  const visibleMessages = normalizedMessageSearch
-    ? messages.filter((message) => [message.message, message.from, message.wallet_address, messageIdentity(message)]
-      .some((value) => String(value || "").toLocaleLowerCase().includes(normalizedMessageSearch)))
-    : messages;
+  const hasMessageSearch = messageSearch.trim().length > 0;
+  const visibleMessages = filterNetworkChatMessages(messages, messageSearch, messageFilter);
   const visibleSize = minimized ? minimizedChatSize : size;
 
   useEffect(() => {
@@ -490,12 +518,12 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
 
   useEffect(() => {
     const viewport = messageScrollRef.current;
-    if (!viewport || normalizedMessageSearch || !stickToBottomRef.current) return;
+    if (!viewport || hasMessageSearch || !stickToBottomRef.current) return;
     const frame = window.requestAnimationFrame(() => {
       viewport.scrollTop = viewport.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [activeChannel, minimized, normalizedMessageSearch, newestVisibleMessageId, size.height]);
+  }, [activeChannel, minimized, hasMessageSearch, newestVisibleMessageId, size.height]);
 
   function jumpToNewest() {
     stickToBottomRef.current = true;
@@ -786,38 +814,66 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
                 <span style={{ color: "var(--text-dim)", fontSize: 10, lineHeight: 1.35, overflowWrap: "anywhere" }}>{activeRoomInfo}</span>
               </div>
             )}
-            <div style={{ height: 38, width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "0 8px", borderTop: "1px solid #1d2943", boxSizing: "border-box" }}>
-              <input
-                value={messageSearch}
-                onChange={(event) => setMessageSearch(event.currentTarget.value)}
-                placeholder="Search messages"
-                aria-label="Search messages"
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  height: 28,
-                  borderRadius: 6,
-                  border: "1px solid #2a3558",
-                  background: "#0b1020",
-                  color: "var(--text)",
-                  padding: "0 9px",
-                  boxSizing: "border-box",
-                }}
-              />
-              <label
-                title="Slow mode releases bursts in small batches and keeps only the newest buffered messages when traffic is faster than the display."
-                style={{ height: 28, flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "0 8px", border: slowMode ? "1px solid #2a8c72" : "1px solid #2a3558", borderRadius: 6, background: slowMode ? "#10251f" : "#121828", color: slowMode ? "#7ee0c2" : "var(--text-dim)", fontSize: 10, fontWeight: 900, cursor: "pointer" }}
-              >
+            <div style={{ width: "100%", display: "grid", gap: 6, padding: "0 8px 6px", borderTop: "1px solid #1d2943", boxSizing: "border-box" }}>
+              <div style={{ height: 38, width: "100%", display: "flex", alignItems: "center", gap: 8, minWidth: 0, boxSizing: "border-box" }}>
                 <input
-                  type="checkbox"
-                  checked={slowMode}
-                  onChange={(event) => updateSlowMode(event.currentTarget.checked)}
-                  aria-label="Slow mode"
-                  style={{ margin: 0, accentColor: "#16a37b" }}
+                  value={messageSearch}
+                  onChange={(event) => setMessageSearch(event.currentTarget.value)}
+                  placeholder="Search messages"
+                  aria-label="Search messages"
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    height: 28,
+                    borderRadius: 6,
+                    border: "1px solid #2a3558",
+                    background: "#0b1020",
+                    color: "var(--text)",
+                    padding: "0 9px",
+                    boxSizing: "border-box",
+                  }}
                 />
-                Slow mode
-                {queuedMessages.length > 0 && <span>({queuedMessages.length})</span>}
-              </label>
+                <label
+                  title="Slow mode releases bursts in small batches and keeps only the newest buffered messages when traffic is faster than the display."
+                  style={{ height: 28, flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "0 8px", border: slowMode ? "1px solid #2a8c72" : "1px solid #2a3558", borderRadius: 6, background: slowMode ? "#10251f" : "#121828", color: slowMode ? "#7ee0c2" : "var(--text-dim)", fontSize: 10, fontWeight: 900, cursor: "pointer" }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={slowMode}
+                    onChange={(event) => updateSlowMode(event.currentTarget.checked)}
+                    aria-label="Slow mode"
+                    style={{ margin: 0, accentColor: "#16a37b" }}
+                  />
+                  Slow mode
+                  {queuedMessages.length > 0 && <span>({queuedMessages.length})</span>}
+                </label>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {messageFilters.map((filter) => (
+                  <button
+                    key={filter.value}
+                    type="button"
+                    onClick={() => setMessageFilter(filter.value)}
+                    title={filter.title}
+                    aria-pressed={messageFilter === filter.value}
+                    style={{
+                      height: 26,
+                      padding: "0 10px",
+                      borderRadius: 999,
+                      border: `1px solid ${messageFilter === filter.value ? "#2a8c72" : "#2a3558"}`,
+                      background: messageFilter === filter.value ? "#10251f" : "#121828",
+                      color: messageFilter === filter.value ? "#7ee0c2" : "var(--text-dim)",
+                      cursor: "pointer",
+                      fontSize: 10,
+                      fontWeight: 900,
+                      letterSpacing: 0.4,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -839,9 +895,15 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
               <div style={{ color: "var(--text-dim)", fontSize: 12, margin: "auto", textAlign: "center" }}>
                 {loadingMessages
                   ? `Loading ${activeName}...`
-                  : normalizedMessageSearch
+                  : messageSearch.trim()
                     ? `No messages match "${messageSearch.trim()}".`
-                    : `No cached messages in ${activeName}.`}
+                    : messageFilter === "a2a"
+                      ? `No A2A frames are visible in ${activeName}.`
+                      : messageFilter === "verified"
+                        ? `No verified Technocore messages are visible in ${activeName}.`
+                        : messageFilter === "untrusted"
+                          ? `No untrusted Technocore messages are visible in ${activeName}.`
+                          : `No cached messages in ${activeName}.`}
               </div>
             ) : visibleMessages.map((message) => (
               <div key={message.id} style={{ border: "1px solid #273453", borderRadius: 8, background: "#0b1020", padding: 8 }}>
@@ -850,7 +912,7 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
                   <span>{timeLabel(message.created_at)}</span>
                 </div>
                 {message.source === "technocore" && (
-                  <div style={{ marginTop: 5, display: "flex", gap: 6 }}>
+                  <div style={{ marginTop: 5, display: "flex", gap: 6, flexWrap: "wrap" }}>
                     <span style={{ height: 17, display: "inline-flex", alignItems: "center", padding: "0 6px", borderRadius: 5, border: "1px solid #1d4f73", background: "#0b2540", color: "#93c5fd", fontSize: 10, fontWeight: 900 }}>
                       technocore
                     </span>
@@ -871,13 +933,43 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
                     </span>
                   </div>
                 )}
+                {message.a2a && (
+                  <div style={{ marginTop: 6, display: "grid", gap: 6 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      <span style={{ height: 17, display: "inline-flex", alignItems: "center", padding: "0 6px", borderRadius: 5, border: "1px solid #2a8c72", background: "#10251f", color: "#7ee0c2", fontSize: 10, fontWeight: 900 }}>
+                        A2A
+                      </span>
+                      <span style={{ height: 17, display: "inline-flex", alignItems: "center", padding: "0 6px", borderRadius: 5, border: "1px solid #1d4f73", background: "#0b2540", color: "#93c5fd", fontSize: 10, fontWeight: 900 }}>
+                        {message.a2a.type}
+                      </span>
+                      <span style={{ height: 17, display: "inline-flex", alignItems: "center", padding: "0 6px", borderRadius: 5, border: "1px solid #1d4f73", background: "#0b2540", color: "#93c5fd", fontSize: 10, fontWeight: 900 }}>
+                        {message.a2a.transport_form || "canonical transport"}
+                      </span>
+                      <span style={{ height: 17, display: "inline-flex", alignItems: "center", padding: "0 6px", borderRadius: 5, border: `1px solid ${message.a2a.valid ? "#244c35" : "#7f1d1d"}`, background: message.a2a.valid ? "#102419" : "#2a1015", color: message.a2a.valid ? "#86efac" : "#fca5a5", fontSize: 10, fontWeight: 900 }}>
+                        {message.a2a.valid ? "valid" : message.a2a.rejection || "invalid"}
+                      </span>
+                    </div>
+                    <details style={{ border: "1px solid #1e2a47", borderRadius: 6, background: "#0b1525", padding: "6px 8px" }}>
+                      <summary style={{ cursor: "pointer", color: "#93c5fd", fontSize: 10, fontWeight: 900 }}>Inspect A2A frame</summary>
+                      <div style={{ marginTop: 6, display: "grid", gap: 4, color: "var(--text-dim)", fontSize: 10, lineHeight: 1.4 }}>
+                        <div>Profile: <b style={{ color: "#cbd5e1" }}>{message.a2a.profile}</b> · Version: <b style={{ color: "#cbd5e1" }}>{message.a2a.version}</b></div>
+                        <div>Frame id: <b style={{ color: "#cbd5e1" }}>{message.a2a.frame_id || "—"}</b></div>
+                        <div>Sender: <b style={{ color: "#cbd5e1" }}>{message.a2a.sender || "—"}</b> · Recipient: <b style={{ color: "#cbd5e1" }}>{message.a2a.recipient || "—"}</b></div>
+                        <div>Parts: <b style={{ color: "#cbd5e1" }}>{message.a2a.part_count}</b> · Kinds: <b style={{ color: "#cbd5e1" }}>{message.a2a.part_kinds.join(", ") || "—"}</b></div>
+                        <div>Media: <b style={{ color: "#cbd5e1" }}>{message.a2a.media_types.join(", ") || "—"}</b></div>
+                        <div>Replay: <b style={{ color: "#cbd5e1" }}>{message.a2a.replay ? "yes" : "no"}</b> · Conflict: <b style={{ color: "#cbd5e1" }}>{message.a2a.conflict ? "yes" : "no"}</b></div>
+                        <div>Authority: <b style={{ color: "#cbd5e1" }}>{message.a2a.authority}</b> · Routing: <b style={{ color: "#cbd5e1" }}>{message.a2a.handling}</b> · Exec: <b style={{ color: "#cbd5e1" }}>{message.a2a.remote_execution ? "true" : "false"}</b></div>
+                      </div>
+                    </details>
+                  </div>
+                )}
                 <div style={{ marginTop: 5, fontSize: 12, lineHeight: 1.4 }}>{message.message}</div>
               </div>
             ))}
             {error && <div style={{ color: "#ff8a8a", fontSize: 11 }}>{error}</div>}
               </div>
             </div>
-            {showNewest && !normalizedMessageSearch && (
+            {showNewest && !hasMessageSearch && (
               <button
                 type="button"
                 onClick={jumpToNewest}

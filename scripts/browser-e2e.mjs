@@ -145,6 +145,78 @@ try {
     connector_exit_code: null,
     connector_error: null
   };
+  const browserA2AObservation = {
+    id: "a2a-observation-browser-1",
+    profile: "osa-a2a-room/1",
+    version: "1",
+    type: "MESSAGE",
+    frame_id: "frame-browser-a2a-1",
+    correlation_id: "corr-browser-a2a-1",
+    context_id: "ctx-browser-a2a-1",
+    message_id: "msg-browser-a2a-1",
+    sender: testTechnocoreDid,
+    recipient: testTechnocoreDid,
+    envelope_hash: "b".repeat(64),
+    header_hash: "c".repeat(64),
+    payload_hash: "d".repeat(64),
+    wire_bytes: 180,
+    transport_form: "technocore-escaped-line",
+    verified: true,
+    valid: true,
+    rejection: null,
+    replay: false,
+    conflict: false,
+    part_count: 1,
+    part_kinds: ["text"],
+    media_types: ["text/plain"],
+    schemas: [],
+    transports: [{ room: "osa-network", generation: 1, sequence: 92, observed_at: "2026-09-04T08:00:00.000Z" }],
+    observed_at: "2026-09-04T08:00:00.000Z",
+    last_seen_at: "2026-09-04T08:00:00.000Z",
+    authority: "none",
+    handling: "authenticated-data-only",
+    remote_execution: false,
+    value_settlement: false
+  };
+  const browserA2AOverview = {
+    profile: "osa-a2a-room/1",
+    version: "1",
+    compatibility: "OSA transport profile / edge adapter; not full official A2A HTTP or JSON-RPC compatibility",
+    logical_format: "A2A/1 TYPE {canonical header}\\n{canonical payload}",
+    technocore_transport_format: "The logical newline is encoded as the two ASCII characters \\ and n; decoding restores exactly one newline before validation.",
+    frame_types: ["MESSAGE", "TASK", "STATUS", "RESULT", "ARTIFACT", "ERROR", "ACK"],
+    limits: {
+      maxWireBytes: 4096,
+      maxLogicalBytes: 3584,
+      maxHeaderBytes: 1400,
+      maxPayloadBytes: 2600,
+      maxParts: 8,
+      maxTextPartBytes: 1024,
+      maxDataPartBytes: 1536,
+      maxFileBytes: 10485760,
+      maxDepth: 12,
+      maxTtlMs: 604800000,
+      maxFutureSkewMs: 300000,
+      observation_limit: 1000
+    },
+    semantics: {
+      authority: "none",
+      handling: "authenticated-data-only",
+      remote_execution: false,
+      mailbox_routing: false,
+      workspace_dispatch: false,
+      value_settlement: false,
+      signatures_mean: "sender authorship and byte integrity only"
+    },
+    archive: {
+      persisted: true,
+      payloads_persisted: false,
+      record_count: 1,
+      returned_count: 1
+    },
+    observations: [browserA2AObservation],
+    generated_at: "2026-09-04T08:00:00.000Z"
+  };
   await page.route("**/api/network/chat**", async (route) => {
     if (route.request().method() === "POST") {
       const body = route.request().postDataJSON();
@@ -199,13 +271,28 @@ try {
       return route.fulfill({ status: 200, contentType: "application/json", body: "{" });
     }
     const response = await route.fetch();
-    if (!sentChatFixture) return route.fulfill({ response });
     const payload = await response.json();
-    payload.messages = [
-      ...(payload.messages || []),
-      { ...sentChatFixture, id: "technocore-chat-osa-network-9001", source: "technocore", external: true },
-      sentChatFixture
-    ];
+    payload.messages = [...(payload.messages || []), {
+      id: browserA2AObservation.id,
+      node_id: "technocore",
+      wallet_address: null,
+      message: "A2A/1 MESSAGE · 1 part · frame-browser-a2a-1",
+      created_at: "2026-09-02T05:32:00.000Z",
+      source: "technocore",
+      external: true,
+      untrusted: false,
+      trusted: true,
+      room: "osa-network",
+      from: testTechnocoreDid,
+      seq: 92,
+      signed: true,
+      verified: true,
+      delivery_status: "sent",
+      a2a: browserA2AObservation
+    }];
+    if (sentChatFixture) {
+      payload.messages.push({ ...sentChatFixture, id: "technocore-chat-osa-network-9001", source: "technocore", external: true });
+    }
     return route.fulfill({ response, json: payload });
   });
   await page.route("**/api/network/channels**", async (route) => {
@@ -230,6 +317,7 @@ try {
         archive: { persisted: true, record_count: 1, limit: 2000 },
         layers: [],
         timeline: [],
+        a2a: browserA2AOverview,
         paper: { enabled: true, rail: "paper", asset: "FLOP", has_value: false, stages: [], deals: [] },
         tclk: {
           version: "tclk/1",
@@ -262,6 +350,7 @@ try {
       })
     });
   });
+  await page.route("**/api/protocol/a2a", async (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(browserA2AOverview) }));
   await page.route("**/api/protocol/offers/accept", async (route) => {
     if (!protocolAcceptMockEnabled) return route.continue();
     protocolAcceptMockEnabled = false;
@@ -342,6 +431,7 @@ try {
   assert(await page.getByRole("button", { name: "Copy" }).count() >= 1, "topbar should expose a copyable DID when signing is active");
   await page.getByRole("button", { name: "Market & Deals" }).click();
   await expectText(page, "body", "TCLK Offer Observer");
+  await expectText(page, "body", "A2A Room Observer");
   await page.getByRole("button", { name: "Accept Offer" }).click();
   await expectText(page, "body", "Browser TCLK workspace");
   assert((await getJson("/api/sessions")).some((session) => session.id === browserTclkSession.id) === false, "browser Accept test should not require a real backend task fixture");
@@ -404,6 +494,10 @@ try {
   assert(await chatMessages.getByText("Browser signed DID delivery", { exact: true }).count() === 1, "a signed osa-network message and its Technocore mirror should render only once");
   await expectText(page, '[data-testid="network-chat-messages"]', "z6MkvG23xu...");
   await expectText(page, '[data-testid="network-chat-messages"]', "verified DID");
+  await page.getByRole("button", { name: "A2A only" }).click();
+  await expectText(page, '[data-testid="network-chat-messages"]', "A2A/1 MESSAGE");
+  await expectText(page, '[data-testid="network-chat-messages"]', "Inspect A2A frame");
+  await page.getByRole("button", { name: "All" }).click();
   await page.getByRole("button", { name: "#" }).click();
   await expectText(page, "body", "Main channels");
   await expectText(page, "body", "Other channels");

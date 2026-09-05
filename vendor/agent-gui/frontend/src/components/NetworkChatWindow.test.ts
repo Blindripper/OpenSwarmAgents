@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NetworkChatMessage } from "../types";
-import { flushQueuedMessages, isNearChatBottom, mergeMessages, requestWithTimeout, shouldCompleteInitialChannelLoad, stageIncomingMessages } from "./NetworkChatWindow";
+import { filterNetworkChatMessages, flushQueuedMessages, isA2AMessage, isNearChatBottom, mergeMessages, requestWithTimeout, shouldCompleteInitialChannelLoad, stageIncomingMessages } from "./NetworkChatWindow";
 
 function message(index: number): NetworkChatMessage {
   return {
@@ -10,6 +10,41 @@ function message(index: number): NetworkChatMessage {
     created_at: `2026-09-01T12:00:${String(index).padStart(2, "0")}.000Z`,
     source: "technocore",
     seq: index,
+  };
+}
+
+function a2aMessage(index: number): NetworkChatMessage {
+  return {
+    ...message(index),
+    message: `A2A/${index} MESSAGE frame`,
+    source: "technocore",
+    external: true,
+    signed: true,
+    verified: true,
+    trusted: true,
+    a2a: {
+      profile: "osa-a2a-room/1",
+      version: "1",
+      type: "MESSAGE",
+      frame_id: `frame-${index}`,
+      sender: "did:key:z6MkA2ATest",
+      recipient: "did:key:z6MkA2ATarget",
+      envelope_hash: "a".repeat(64),
+      wire_bytes: 128,
+      verified: true,
+      valid: true,
+      rejection: null,
+      replay: false,
+      conflict: false,
+      part_count: 1,
+      part_kinds: ["text"],
+      media_types: ["text/plain"],
+      schemas: [],
+      authority: "none",
+      handling: "authenticated-data-only",
+      remote_execution: false,
+      value_settlement: false,
+    },
   };
 }
 
@@ -146,5 +181,27 @@ describe("Technocore delivery reconciliation", () => {
       trusted: true,
     };
     expect(mergeMessages([external], [local])).toEqual([local]);
+  });
+});
+
+describe("Technocore A2A message filtering", () => {
+  it("recognizes A2A metadata on inspected messages", () => {
+    expect(isA2AMessage(a2aMessage(1))).toBe(true);
+    expect(isA2AMessage(message(1))).toBe(false);
+  });
+
+  it("filters the message list by A2A and signature state", () => {
+    const messages: NetworkChatMessage[] = [
+      message(1),
+      { ...message(2), source: "technocore", verified: true, trusted: true },
+      { ...message(3), source: "technocore", verified: false, trusted: false },
+      a2aMessage(4),
+    ];
+
+    expect(filterNetworkChatMessages(messages, "", "all")).toHaveLength(4);
+    expect(filterNetworkChatMessages(messages, "", "a2a")).toEqual([messages[3]]);
+    expect(filterNetworkChatMessages(messages, "", "verified")).toEqual([messages[1], messages[3]]);
+    expect(filterNetworkChatMessages(messages, "", "untrusted")).toEqual([messages[0], messages[2]]);
+    expect(filterNetworkChatMessages(messages, "frame", "a2a")).toEqual([messages[3]]);
   });
 });

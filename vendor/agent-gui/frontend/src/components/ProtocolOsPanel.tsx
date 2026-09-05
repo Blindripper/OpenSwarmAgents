@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { NetworkEvent } from "../api/client";
 import { api } from "../api/client";
-import type { ProtocolLayerStatus, ProtocolOverview, ProtocolPaperDeal, ProtocolTimelineEntry, TclkOfferProjection } from "../types";
+import type { ProtocolA2AOverview, ProtocolLayerStatus, ProtocolOverview, ProtocolPaperDeal, ProtocolTimelineEntry, TclkOfferProjection } from "../types";
 import { NetworkActivityPanel } from "./NetworkActivityPanel";
 
 interface Props {
@@ -276,6 +276,7 @@ async function apiProtocolLockOffer(offerId: string): Promise<any> {
 export function ProtocolOsPanel({ events, live, activityLoading = false, onRefreshActivity, onOpenProject }: Props) {
   const [view, setView] = useState<"protocols" | "activity">("protocols");
   const [overview, setOverview] = useState<ProtocolOverview | null>(null);
+  const [a2aOverview, setA2AOverview] = useState<ProtocolA2AOverview | null>(null);
   const [protocolView, setProtocolView] = useState<"offers" | "dealbook" | "timeline">("offers");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -289,7 +290,12 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
     setLoading(true);
     setError(null);
     try {
-      setOverview(await api.protocol.overview());
+      const [protocolState, a2aState] = await Promise.all([
+        api.protocol.overview(),
+        api.protocol.a2a().catch(() => null),
+      ]);
+      setOverview(protocolState);
+      setA2AOverview(a2aState);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Protocol overview unavailable");
     } finally {
@@ -367,6 +373,10 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
   }, [refresh]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  const a2aProjection = a2aOverview || overview?.a2a || null;
+  const a2aObservations = a2aProjection?.observations || [];
+  const a2aSemantics = a2aProjection?.semantics || null;
 
   if (view === "activity") {
     return (
@@ -490,6 +500,35 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
                 <div>Source: <b style={{ color: overview?.room_sync?.stale ? "#facc15" : "#7ee0c2" }}>{overview?.room_sync?.source || "archive"}</b></div>
                 {overview?.room_sync?.error && <div style={{ color: "#fca5a5" }}>{overview.room_sync.error}</div>}
               </div>
+            </div>
+            <div style={{ border: "1px solid #273453", borderRadius: 10, padding: 14, background: "rgba(12,20,34,.92)" }}>
+              <div style={{ fontSize: 14, fontWeight: 900 }}>A2A Room Observer</div>
+              <div style={{ marginTop: 8, display: "grid", gap: 6, color: "var(--text-dim)", fontSize: 13 }}>
+                <div>Profile: <b style={{ color: "#cbd5e1" }}>{a2aProjection?.profile || "osa-a2a-room/1"}</b></div>
+                <div>Frame types: <b style={{ color: "#cbd5e1" }}>{a2aProjection?.frame_types?.join(", ") || "MESSAGE, TASK, STATUS, RESULT, ARTIFACT, ERROR, ACK"}</b></div>
+                <div>Observed: <b style={{ color: "#cbd5e1" }}>{a2aProjection?.archive?.record_count ?? 0}</b> · Returned: <b style={{ color: "#cbd5e1" }}>{a2aProjection?.archive?.returned_count ?? 0}</b></div>
+                <div>Verified: <b style={{ color: "#7ee0c2" }}>{a2aObservations.filter((item) => item.valid && item.verified).length}</b> · Untrusted: <b style={{ color: "#fca5a5" }}>{a2aObservations.filter((item) => !item.valid).length}</b></div>
+                <div>Transport: <b style={{ color: "#cbd5e1" }}>{a2aProjection?.technocore_transport_format || "A2A/1 TYPE header\\npayload"}</b></div>
+                <div>Execution: <b style={{ color: "#cbd5e1" }}>{a2aSemantics?.remote_execution ? "true" : "false"}</b> · Mailbox routing: <b style={{ color: "#cbd5e1" }}>{a2aSemantics?.mailbox_routing ? "true" : "false"}</b></div>
+              </div>
+              {a2aObservations.slice(0, 3).length > 0 && (
+                <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
+                  {a2aObservations.slice(0, 3).map((observation) => (
+                    <div key={observation.id} style={{ border: "1px solid #1e2a45", borderRadius: 8, background: "#0b1525", padding: 8, display: "grid", gap: 4 }}>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                        <span style={{ padding: "2px 7px", borderRadius: 5, border: "1px solid #1d4f73", background: "#0b2540", color: "#93c5fd", fontSize: 10, fontWeight: 900 }}>{observation.type}</span>
+                        <span style={{ padding: "2px 7px", borderRadius: 5, border: `1px solid ${observation.valid ? "#244c35" : "#7f1d1d"}`, background: observation.valid ? "#102419" : "#2a1015", color: observation.valid ? "#86efac" : "#fca5a5", fontSize: 10, fontWeight: 900 }}>{observation.valid ? "valid" : observation.rejection || "invalid"}</span>
+                      </div>
+                      <div style={{ color: "var(--text-dim)", fontSize: 11, lineHeight: 1.4 }}>
+                        {observation.sender || "unknown sender"} · {observation.part_count} part{observation.part_count === 1 ? "" : "s"} · {observation.transport_form || "canonical transport"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!a2aObservations.length && (
+                <div style={{ marginTop: 10, color: "var(--text-dim)", fontSize: 11, lineHeight: 1.4 }}>Read-only archive ready. Observe A2A room frames here once Technocore traffic includes them.</div>
+              )}
             </div>
             <div style={{ border: "1px solid #854d0e", borderRadius: 10, padding: 14, background: "rgba(43,33,12,.9)", color: "#fde68a", fontSize: 13, lineHeight: 1.5 }}>
               {overview?.tclk.warning || "Observer mode only. No settlement actions are available."}

@@ -90,14 +90,22 @@ The deterministic path is `kv/osa-delegations/d-<sha256(delegationId)[0:40]>`. T
 
 Revocation replaces the same KV note with a higher dual-signed revision, a stable `revoked_at`, and `supersedes_payload_hash` for the active record. Unchanged publication and repeated revocation are idempotent and do not duplicate room pointers. Scanners retain only the strongest verified revision and fail closed on path/hash/identity/node/pointer/scope/capability/timestamp/expiry/revocation/signature mismatch. Verified, stale, expired, revoked, and untrusted remote notes remain informational and grant no authority or execution rights. Projections and local records persist across restart; upstream failure retains them as stale archive data. Browser APIs never expose raw signatures or private signing material.
 
-## A2A Compatibility Plan
+## A2A Room Protocol
 
-The current API is not full A2A yet. The intended adapter mapping is:
+Phase 4.1 standardizes the Technocore room envelope at the edge:
+
+```text
+A2A/<version> TYPE <canonical JSON header>\n<canonical JSON payload>
+```
+
+The canonical transport keeps the newline as the two ASCII characters `\` and `n` so the frame survives single-line Technocore normalization. OSA validates the pinned version and allowlisted frame types, bounds ids/DIDs/timestamps/expiry/payload sizes, rejects sensitive authority/execution/secret/wallet/settlement fields, and binds the sender to the Technocore transport signature. Exact replays are tracked idempotently; conflicting reuse of a frame id fails closed. The server persists only a read-only observation projection and never turns A2A into mailbox routing or remote execution.
+
+The intended adapter mapping remains:
 
 ```text
 A2A Agent Card -> OSA agent registration
 A2A Task       -> OSA task lease
-A2A Message    -> Result content / Review content
+A2A Message    -> read-only room observation / result content / review content
 A2A Artifact   -> OSA artifact record
 ```
 
@@ -107,7 +115,7 @@ Keep the platform scheduler and trust logic internal. Treat A2A as an edge proto
 
 1. Move persistence from the transitional Postgres snapshot into normalized Postgres tables.
 2. Replace polling with WebSocket or Redis/NATS stream delivery.
-3. Add A2A Agent Card ingestion and outbound task adapter.
+3. Add Phase 4.2 agent chat over Technocore only after Phase 4.1 stays green in RC/browser checks.
 4. Deepen OpenClaw/Codex connector adapters with richer task-result mapping and install diagnostics.
 5. Add claim contradiction tracking.
 6. Add connector reputation events and richer token policy controls; basic connector token rotation and owner-visible audit metadata are in place.

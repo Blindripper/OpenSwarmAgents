@@ -184,6 +184,40 @@ export interface NetworkChatMessage {
   verified?: boolean;
   delivery_status?: "sent" | "pending" | "duplicate" | string;
   warning?: string | null;
+  a2a?: NetworkChatA2AMetadata | null;
+}
+
+export interface NetworkChatA2AMetadata {
+  profile: string;
+  version: string;
+  type: string;
+  frame_id?: string | null;
+  correlation_id?: string | null;
+  context_id?: string | null;
+  task_id?: string | null;
+  message_id?: string | null;
+  sender?: string | null;
+  recipient?: string | null;
+  created_at?: string | null;
+  expires_at?: string | null;
+  envelope_hash: string;
+  header_hash?: string | null;
+  payload_hash?: string | null;
+  wire_bytes: number;
+  transport_form?: "logical-two-line" | "technocore-escaped-line" | string | null;
+  verified: boolean;
+  valid: boolean;
+  rejection?: string | null;
+  replay: boolean;
+  conflict: boolean;
+  part_count: number;
+  part_kinds: string[];
+  media_types: string[];
+  schemas: string[];
+  authority: "none" | string;
+  handling: "authenticated-data-only" | string;
+  remote_execution: false;
+  value_settlement: false;
 }
 
 export interface NetworkChannel {
@@ -312,6 +346,84 @@ export interface ProtocolOverview {
     invalid_frame_count: number;
     offers: TclkOfferProjection[];
   };
+  a2a?: ProtocolA2AOverview;
+}
+
+export interface ProtocolA2AObservation {
+  id: string;
+  profile: string;
+  version: string;
+  type: string;
+  frame_id?: string | null;
+  correlation_id?: string | null;
+  context_id?: string | null;
+  task_id?: string | null;
+  message_id?: string | null;
+  sender?: string | null;
+  recipient?: string | null;
+  created_at?: string | null;
+  expires_at?: string | null;
+  envelope_hash: string;
+  header_hash?: string | null;
+  payload_hash?: string | null;
+  wire_bytes: number;
+  transport_form?: "logical-two-line" | "technocore-escaped-line" | string | null;
+  verified: boolean;
+  valid: boolean;
+  rejection?: string | null;
+  conflict: boolean;
+  part_count: number;
+  part_kinds: string[];
+  media_types: string[];
+  schemas: string[];
+  replay_count: number;
+  transports: { room: string; generation: number; sequence: number; observed_at: string }[];
+  observed_at: string;
+  last_seen_at: string;
+  authority: "none" | string;
+  handling: "authenticated-data-only" | string;
+  remote_execution: false;
+  value_settlement: false;
+}
+
+export interface ProtocolA2AOverview {
+  profile: string;
+  version: string;
+  compatibility: string;
+  logical_format: string;
+  technocore_transport_format: string;
+  frame_types: string[];
+  limits: {
+    maxWireBytes: number;
+    maxLogicalBytes: number;
+    maxHeaderBytes: number;
+    maxPayloadBytes: number;
+    maxParts: number;
+    maxTextPartBytes: number;
+    maxDataPartBytes: number;
+    maxFileBytes: number;
+    maxDepth: number;
+    maxTtlMs: number;
+    maxFutureSkewMs: number;
+    observation_limit: number;
+  };
+  semantics: {
+    authority: "none" | string;
+    handling: "authenticated-data-only" | string;
+    remote_execution: false;
+    mailbox_routing: false;
+    workspace_dispatch: false;
+    value_settlement: false;
+    signatures_mean: string;
+  };
+  archive: {
+    persisted: true;
+    payloads_persisted: false;
+    record_count: number;
+    returned_count: number;
+  };
+  observations: ProtocolA2AObservation[];
+  generated_at: string;
 }
 
 export interface ToolsetMeta {

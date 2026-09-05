@@ -8,6 +8,7 @@ import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { encodeFrame as encodeTclkFrame, makeOffer as makeTclkOffer } from "@flop-labs/tclk";
+import { encodeA2AEnvelope } from "../apps/server/src/a2a-room-protocol.mjs";
 
 const rootDir = join(import.meta.dirname, "..");
 const port = Number(process.env.OSA_RC_SMOKE_PORT || 19080 + Math.floor(Math.random() * 800));
@@ -217,6 +218,61 @@ try {
   assert(!bridgedEvent, "OSA Network Activity should not include raw Technocore room messages");
   const publicChannel = await getJson("/api/network/chat?limit=10&channel=osa-network");
   assert(publicChannel.messages.some((item) => item.source === "technocore" && item.room === "osa-network"), "osa-network should include the Technocore OSA room");
+  const a2aRecipient = didKeyFromEd25519PublicKey(generateKeyPairSync("ed25519").publicKey);
+  const a2aFrame = encodeA2AEnvelope({
+    type: "MESSAGE",
+    header: {
+      id: "frame-rc-a2a-1",
+      correlation_id: "corr-rc-a2a-1",
+      context_id: "ctx-rc-a2a-1",
+      message_id: "msg-rc-a2a-1",
+      sender: health.runtime.technocoreDid,
+      recipient: a2aRecipient,
+      created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+    },
+    payload: {
+      role: "agent",
+      parts: [{ kind: "text", text: "RC smoke A2A observer frame" }],
+    },
+  }, { nowMs: Date.now() });
+  await postJson("/api/network/chat", {
+    channel: "osa-network",
+    message: a2aFrame.transport,
+  });
+  const conflictingA2AFrame = encodeA2AEnvelope({
+    type: "MESSAGE",
+    header: {
+      id: "frame-rc-a2a-1",
+      correlation_id: "corr-rc-a2a-1",
+      context_id: "ctx-rc-a2a-1",
+      message_id: "msg-rc-a2a-1",
+      sender: health.runtime.technocoreDid,
+      recipient: a2aRecipient,
+      created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+    },
+    payload: {
+      role: "agent",
+      parts: [{ kind: "text", text: "RC smoke A2A observer frame - conflicting replay" }],
+    },
+  }, { nowMs: Date.now() });
+  await postJson("/api/network/chat", {
+    channel: "osa-network",
+    message: conflictingA2AFrame.transport,
+  });
+  const a2aChannel = await getJson("/api/network/chat?limit=20&channel=osa-network");
+  const a2aMessage = a2aChannel.messages.find((item) => item.a2a?.profile === "osa-a2a-room/1");
+  assert(a2aMessage?.message.startsWith("A2A/1 MESSAGE") && a2aMessage?.a2a?.valid === true, "osa-network should project observed A2A room frames with read-only metadata");
+  let a2aProtocol = await getJson("/api/protocol/a2a");
+  for (let attempt = 0; attempt < 40 && !a2aProtocol.observations?.some((item) => item.frame_id === "frame-rc-a2a-1" && item.conflict === true); attempt += 1) {
+    await delay(50);
+    a2aProtocol = await getJson("/api/protocol/a2a");
+  }
+  const conflictObservation = a2aProtocol.observations?.find((item) => item.frame_id === "frame-rc-a2a-1" && item.conflict === true);
+  assert(a2aProtocol.profile === "osa-a2a-room/1" && a2aProtocol.archive?.record_count >= 1, "A2A protocol observer should expose the archived read-only projection");
+  assert(conflictObservation?.valid === false && conflictObservation?.rejection === "frame_id_conflict", "Conflicting A2A frame ids should fail closed in the archive projection");
+  assert(a2aProtocol.semantics?.remote_execution === false && a2aProtocol.semantics?.mailbox_routing === false, "A2A protocol observer must stay read-only and non-routed");
   const labChannel = await getJson("/api/network/chat?limit=10&channel=osa-lab");
   assert(labChannel.messages.some((item) => item.source === "technocore" && item.room === "osa-lab"), "Pinned Technocore channels should read their selected room");
   const unsignedDidClaim = labChannel.messages.find((item) => item.message === "External bridge fixture message");

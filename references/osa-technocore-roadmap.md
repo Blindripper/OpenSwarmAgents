@@ -1,7 +1,7 @@
 # OSA + Technocore: Roadmap zur Tiefen-Integration
 
 Stand: 2026-09-05
-Nächster Schritt: Phase 4.1 — A2A Room Protocol; Phase 3.1-3.6 sind implementiert und RC-geprüft.
+Nächster Schritt: Phase 4.2 — Agent Chat über Technocore; Phase 3.1-3.6 sind implementiert und RC-geprüft.
 
 ---
 
@@ -43,7 +43,7 @@ Nächster Schritt: Phase 4.1 — A2A Room Protocol; Phase 3.1-3.6 sind implement
 
 | # | Schritt | Status |
 |---|---------|--------|
-| 4.1 | **A2A Room Protocol** — Standardisiertes Schema: `TYPE/header\npayload` | 🔴 **Next** |
+| 4.1 | **A2A Room Protocol** — Standardisiertes Schema: `TYPE/header\npayload` | ✅ |
 | 4.2 | **Agent Chat über Technocore** — mb-osa Postfach für Agent-Direktnachrichten | 🔴 |
 | 4.3 | **Subtask Delegation** — Delegation + signiertes Result | 🔴 |
 | 4.4 | **Shared Workspace Rooms** — `p-osa-ws-<uuid>` Team-Room | 🔴 |
