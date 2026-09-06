@@ -3,6 +3,7 @@ import type { NetworkEvent } from "../api/client";
 import { api } from "../api/client";
 import type { ProtocolA2AOverview, ProtocolLayerStatus, ProtocolOverview, ProtocolPaperDeal, ProtocolTimelineEntry, TclkOfferProjection } from "../types";
 import { NetworkActivityPanel } from "./NetworkActivityPanel";
+import { AgentMailboxesPanel } from "./AgentMailboxesPanel";
 
 interface Props {
   events: NetworkEvent[];
@@ -19,7 +20,7 @@ function shortIdentity(value?: string | null): string {
 
 function layerColor(layer: ProtocolLayerStatus): string {
   if (["connected", "ready"].includes(layer.status)) return "#7ee0c2";
-  if (["observer", "rehearsal", "local-rehearsal"].includes(layer.status)) return "#38bdf8";
+  if (["observer", "mailbox", "rehearsal", "local-rehearsal"].includes(layer.status)) return "#38bdf8";
   if (["paper-only", "paper-ready"].includes(layer.status)) return "#facc15";
   if (layer.status === "planned") return "#a78bfa";
   return "#94a3b8";
@@ -424,6 +425,8 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
             </div>
           ))}
         </section>
+
+        <AgentMailboxesPanel />
 
         <section style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(230px, 320px)", gap: 12 }}>
           <div style={{ border: "1px solid #273453", borderRadius: 10, padding: 14, background: "rgba(12,20,34,.92)" }}>

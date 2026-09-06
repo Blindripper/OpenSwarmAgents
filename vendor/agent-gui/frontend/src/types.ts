@@ -411,7 +411,8 @@ export interface ProtocolA2AOverview {
     authority: "none" | string;
     handling: "authenticated-data-only" | string;
     remote_execution: false;
-    mailbox_routing: false;
+    mailbox_routing: boolean;
+    mailbox_profile?: string;
     workspace_dispatch: false;
     value_settlement: false;
     signatures_mean: string;
@@ -424,6 +425,111 @@ export interface ProtocolA2AOverview {
   };
   observations: ProtocolA2AObservation[];
   generated_at: string;
+}
+
+export interface AgentMailboxIdentity {
+  key?: string;
+  source: "local" | "federated" | "unknown";
+  agent_id: string | null;
+  name: string;
+  tagline?: string;
+  did: string;
+  node_id: string | null;
+  node_did?: string | null;
+  verified?: boolean;
+  stale?: boolean;
+  eligibility?: string;
+  mailbox_room?: string;
+  provenance?: {
+    kind: "local" | "technocore" | string;
+    room?: string | null;
+    seq?: number | null;
+    announced_at?: string | null;
+    kv_path?: string | null;
+    payload_hash?: string | null;
+    node_id?: string | null;
+  } | null;
+}
+
+export interface AgentMailboxMessage {
+  id: string;
+  box: "inbox" | "outbox" | "quarantine";
+  profile: string;
+  frame_type: "MESSAGE" | "ACK" | null;
+  frame_id?: string | null;
+  message_id?: string | null;
+  acknowledged_id?: string | null;
+  ack_outcome?: "received" | "accepted" | "rejected" | "duplicate" | null;
+  client_message_id?: string | null;
+  reply_to?: string | null;
+  sender: AgentMailboxIdentity;
+  recipient: AgentMailboxIdentity;
+  room: string;
+  text?: string | null;
+  created_at: string;
+  expires_at: string;
+  correlation_id?: string | null;
+  context_id?: string | null;
+  envelope_hash: string;
+  payload_hash?: string | null;
+  verified: boolean;
+  trust: "verified" | "untrusted";
+  rejection?: string | null;
+  delivery_status: "pending" | "sent" | "duplicate" | "ambiguous" | "failed" | "received" | "quarantined" | string;
+  sequence?: number | null;
+  generation?: number;
+  observed_at?: string | null;
+  last_seen_at: string;
+  read_at?: string | null;
+  warning?: string | null;
+  public_unlisted: true;
+  authority: "none";
+  handling: "bounded-chat-text-only";
+  remote_execution: false;
+}
+
+export interface AgentMailboxOverview {
+  profile: string;
+  a2a_profile: string;
+  generated_at: string;
+  derivation: {
+    algorithm: string;
+    hash: "sha256" | string;
+    hash_bits: number;
+    prefix: string;
+    room_limit: number;
+  };
+  limits: {
+    maxRoomLength: number;
+    hashHexLength: number;
+    maxTextBytes: number;
+    maxTtlMs: number;
+    maxClientMessageIdLength: number;
+    projection_limit: number;
+    sync_room_limit: number;
+  };
+  policy: {
+    visibility: "public-unlisted";
+    warning: string;
+    acknowledgement_field: string;
+    accepted_frame_types: string[];
+    sent_frame_types: string[];
+    authority: "none";
+    signatures_mean: string;
+    remote_execution: false;
+    task_dispatch: false;
+    session_spawning: false;
+    workspace_creation: false;
+    connector_spawning: false;
+  };
+  senders: { agent_id: string; name: string; did: string; node_id: string; mailbox_room: string }[];
+  selected_sender: { agent_id: string; name: string; did: string; node_id: string; mailbox_room: string } | null;
+  recipients: AgentMailboxIdentity[];
+  sync?: { room: string; generation: number; last_seq: number; last_attempt_at?: string | null; last_synced_at?: string | null; source: string; stale: boolean; error?: string | null } | null;
+  counts: { inbox: number; outbox: number; quarantine: number };
+  inbox: AgentMailboxMessage[];
+  outbox: AgentMailboxMessage[];
+  quarantine: AgentMailboxMessage[];
 }
 
 export interface ToolsetMeta {

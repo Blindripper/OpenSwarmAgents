@@ -9,6 +9,7 @@ import { keccak_256 } from "@noble/hashes/sha3.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { encodeFrame as encodeTclkFrame, makeOffer as makeTclkOffer } from "@flop-labs/tclk";
 import { encodeA2AEnvelope } from "../apps/server/src/a2a-room-protocol.mjs";
+import { buildAgentMailboxMessage, deriveAgentMailboxRoom } from "../apps/server/src/agent-mailbox.mjs";
 
 const rootDir = join(import.meta.dirname, "..");
 const port = Number(process.env.OSA_RC_SMOKE_PORT || 19080 + Math.floor(Math.random() * 800));
@@ -36,6 +37,8 @@ let server = null;
 let technocoreServer = null;
 let technocoreTclkUnavailable = false;
 let technocoreRegistryUnavailable = false;
+let technocoreMailboxUnavailable = false;
+let technocoreMailboxAmbiguousOnce = false;
 
 const externalRegistryNode = generateKeyPairSync("ed25519");
 const externalRegistryAgent = generateKeyPairSync("ed25519");
@@ -44,38 +47,37 @@ const externalRegistryNodeDid = didKeyFromEd25519PublicKey(externalRegistryNode.
 const externalRegistryAgentDid = didKeyFromEd25519PublicKey(externalRegistryAgent.publicKey);
 const externalReviewSubjectDid = didKeyFromEd25519PublicKey(externalReviewSubject.publicKey);
 const externalRegistryNodeId = nodeIdForPublicKey(externalRegistryNode.publicKey.export({ type: "spki", format: "pem" }));
+const osaServerEnv = {
+  ...process.env,
+  HOST: "127.0.0.1",
+  PORT: String(port),
+  OSA_DATA_DIR: dataDir,
+  OSA_IDENTITY_PATH: join(dataDir, "node-identity.json"),
+  OSA_LOCAL_PASSWORD_REQUIRED: "1",
+  OSA_DEMO_ENDPOINTS: "0",
+  OSA_RATE_LIMIT_MULTIPLIER: "0",
+  OSA_TECHNOCORE_ENABLED: "1",
+  OSA_TECHNOCORE_URL: technocoreBaseUrl,
+  OSA_TECHNOCORE_PUBLIC_ROOM: "osa-network",
+  OSA_TECHNOCORE_ROOMS: "osa-lab",
+  OSA_TECHNOCORE_ROOM_LIMIT: "2",
+  OSA_TECHNOCORE_WRITE_TIMEOUT_MS: "1000",
+  OSA_TECHNOCORE_WRITE_ATTEMPTS: "1",
+  OSA_CAPABILITY_REGISTRY_STALE_MS: "500",
+  OSA_REPUTATION_STALE_MS: "500",
+  OSA_REVIEW_BRIDGE_STALE_MS: "500",
+  OSA_DELEGATION_STALE_MS: "500",
+  OSA_TECHNOCORE_ANNOUNCE: "1",
+  OSA_PUBLIC_URL: "https://osa.example",
+  AGENTSWARM_PROPOSAL_VOTING_MS: "1",
+  OSA_GITHUB_CLIENT_ID: "rc-smoke-github-client",
+  OSA_GITHUB_CLIENT_SECRET: "rc-smoke-github-secret"
+};
 
 try {
   await assertProductionLocalValidation();
   technocoreServer = await startTechnocoreFixture();
-  server = spawn(process.execPath, ["apps/server/src/server.mjs"], {
-    cwd: rootDir,
-    env: {
-      ...process.env,
-      HOST: "127.0.0.1",
-      PORT: String(port),
-      OSA_DATA_DIR: dataDir,
-      OSA_IDENTITY_PATH: join(dataDir, "node-identity.json"),
-      OSA_LOCAL_PASSWORD_REQUIRED: "1",
-      OSA_DEMO_ENDPOINTS: "0",
-      OSA_RATE_LIMIT_MULTIPLIER: "0",
-      OSA_TECHNOCORE_ENABLED: "1",
-      OSA_TECHNOCORE_URL: technocoreBaseUrl,
-      OSA_TECHNOCORE_PUBLIC_ROOM: "osa-network",
-      OSA_TECHNOCORE_ROOMS: "osa-lab",
-      OSA_TECHNOCORE_ROOM_LIMIT: "2",
-      OSA_CAPABILITY_REGISTRY_STALE_MS: "500",
-      OSA_REPUTATION_STALE_MS: "500",
-      OSA_REVIEW_BRIDGE_STALE_MS: "500",
-      OSA_DELEGATION_STALE_MS: "500",
-      OSA_TECHNOCORE_ANNOUNCE: "1",
-      OSA_PUBLIC_URL: "https://osa.example",
-      AGENTSWARM_PROPOSAL_VOTING_MS: "1",
-      OSA_GITHUB_CLIENT_ID: "rc-smoke-github-client",
-      OSA_GITHUB_CLIENT_SECRET: "rc-smoke-github-secret"
-    },
-    stdio: ["ignore", "pipe", "pipe"]
-  });
+  server = spawnOsaServer();
 
   const logs = collectLogs(server);
   await waitForHealth(logs);
@@ -272,7 +274,7 @@ try {
   const conflictObservation = a2aProtocol.observations?.find((item) => item.frame_id === "frame-rc-a2a-1" && item.conflict === true);
   assert(a2aProtocol.profile === "osa-a2a-room/1" && a2aProtocol.archive?.record_count >= 1, "A2A protocol observer should expose the archived read-only projection");
   assert(conflictObservation?.valid === false && conflictObservation?.rejection === "frame_id_conflict", "Conflicting A2A frame ids should fail closed in the archive projection");
-  assert(a2aProtocol.semantics?.remote_execution === false && a2aProtocol.semantics?.mailbox_routing === false, "A2A protocol observer must stay read-only and non-routed");
+  assert(a2aProtocol.semantics?.remote_execution === false && a2aProtocol.semantics?.mailbox_routing === true && a2aProtocol.semantics?.mailbox_profile === "osa-agent-mailbox/1", "A2A protocol should expose only the bounded Phase-4.2 mailbox adapter while remote execution stays disabled");
   const labChannel = await getJson("/api/network/chat?limit=10&channel=osa-lab");
   assert(labChannel.messages.some((item) => item.source === "technocore" && item.room === "osa-lab"), "Pinned Technocore channels should read their selected room");
   const unsignedDidClaim = labChannel.messages.find((item) => item.message === "External bridge fixture message");
@@ -332,6 +334,16 @@ try {
   assert(lockedState.stats.users === 0, "unauthenticated state should not expose user counts");
   await expectGetStatus("/api/trust-ledger", 401);
   await expectGetStatus("/api/events/stream", 401);
+  await expectGetStatus("/api/agent-mailboxes", 401);
+  await expectStatus("/api/agent-mailboxes/send", 401, {
+    sender_agent_id: "coder",
+    sender_did: health.runtime.technocoreDid,
+    recipient: { source: "local", agent_id: "coder", did: health.runtime.technocoreDid, node_id: health.runtime.node.nodeId },
+    text: "Unauthenticated mailbox send must fail",
+    expires_in_minutes: 60,
+    client_message_id: "unauthenticated-mailbox-send",
+    public_unlisted_acknowledged: true
+  });
   await expectStatus("/api/agents/register", 401, {
     name: "Unauthenticated Agent",
     goalId: "goal-agent-collab",
@@ -621,6 +633,134 @@ try {
   const unsafeSkillSearch = await getJson("/api/agents/find?skill=coding&source=federated&include_untrusted=1");
   assert(unsafeSkillSearch.matches.some((agent) => agent.agent_id === "remote-tampered" && agent.eligible === false && agent.verification.label === "UNTRUSTED"), "Skill finder should clearly label explicitly requested untrusted claims and keep them unusable");
   assert(!/\"signature\"|privateKey|PRIVATE KEY|seed|pkcs8/i.test(JSON.stringify(firstSkillSearch)), "Skill finder must not expose raw signatures, keys, or deterministic seeds");
+
+  // Phase 4.2: deterministic public/unlisted agent mailboxes over canonical
+  // osa-a2a-room/1 MESSAGE frames. These checks intentionally bracket all
+  // task/session counts to prove that chat never dispatches work.
+  const localCoderDid = didListing.agents.find((agent) => agent.agent_id === "coder")?.did;
+  const localTechnocoreDid = didListing.agents.find((agent) => agent.agent_id === "technocore-specialist")?.did;
+  assert(localCoderDid && localTechnocoreDid, "Mailbox smoke requires managed local Agent DIDs");
+  const localRecipient = { source: "local", agent_id: "coder", did: localCoderDid, node_id: health.runtime.node.nodeId };
+  const remoteRecipient = { source: "federated", agent_id: "remote-coder", did: externalRegistryAgentDid, node_id: externalRegistryNodeId };
+  const mailboxStateBefore = await getJson("/api/state", headers);
+  const mailboxSessionsBefore = await getJson("/api/sessions");
+  const mailboxOverview = await getJson("/api/agent-mailboxes?agent_id=technocore-specialist", headers);
+  assert(mailboxOverview.profile === "osa-agent-mailbox/1" && mailboxOverview.a2a_profile === "osa-a2a-room/1", "Mailbox API should extend the existing Phase-4.1 profile instead of defining a competing wire protocol");
+  assert(mailboxOverview.derivation.hash_bits === 160 && mailboxOverview.derivation.room_limit === 48 && deriveAgentMailboxRoom(localCoderDid).length <= 48, "Mailbox API should disclose deterministic collision-resistant room derivation without key material");
+  assert(mailboxOverview.recipients.some((item) => item.source === "local" && item.agent_id === "coder") && mailboxOverview.recipients.some((item) => item.source === "federated" && item.agent_id === "remote-coder"), "Mailbox recipients should include local managed and fresh verified federated identities");
+  assert(!/privateKey|PRIVATE KEY|pkcs8|\"signature\"|connectorToken|tokenHash/i.test(JSON.stringify(mailboxOverview)), "Mailbox browser API must exclude raw signatures, keys, seeds, and connector tokens");
+
+  const baseMailboxSend = {
+    sender_agent_id: "technocore-specialist",
+    sender_did: localTechnocoreDid,
+    recipient: localRecipient,
+    text: "Hello Coder, this is bounded public mailbox chat.",
+    expires_in_minutes: 60,
+    client_message_id: "rc-mailbox-local-1",
+    public_unlisted_acknowledged: true
+  };
+  await expectStatus("/api/agent-mailboxes/send", 400, { ...baseMailboxSend, client_message_id: "rc-mailbox-no-confirm", public_unlisted_acknowledged: false }, headers);
+  await expectStatus("/api/agent-mailboxes/send", 403, { ...baseMailboxSend, client_message_id: "rc-mailbox-unbound-connector" }, tclkConnectorHeaders);
+  await expectStatus("/api/agent-mailboxes/send", 403, { ...baseMailboxSend, client_message_id: "rc-mailbox-sender-mismatch", sender_did: localCoderDid }, headers);
+  await expectStatus("/api/agent-mailboxes/send", 400, { ...baseMailboxSend, client_message_id: "rc-mailbox-control", text: "line one\nline two" }, headers);
+  await expectStatus("/api/agent-mailboxes/send", 400, { ...baseMailboxSend, client_message_id: "rc-mailbox-secret", text: "api_key=must-never-be-public" }, headers);
+  await expectStatus("/api/agent-mailboxes/send", 400, { ...baseMailboxSend, client_message_id: "rc-mailbox-long", text: "x".repeat(1001) }, headers);
+  await expectStatus("/api/agent-mailboxes/send", 400, { ...baseMailboxSend, client_message_id: "rc-mailbox-task", task_id: "forbidden-task" }, headers);
+  await expectStatus("/api/agent-mailboxes/send", 403, {
+    ...baseMailboxSend,
+    client_message_id: "rc-mailbox-untrusted-recipient",
+    recipient: { source: "federated", agent_id: "remote-tampered", did: externalRegistryAgentDid, node_id: externalRegistryNodeId }
+  }, headers);
+
+  const localMailboxSend = await postJson("/api/agent-mailboxes/send", baseMailboxSend, headers);
+  assert(localMailboxSend.message?.room === deriveAgentMailboxRoom(localCoderDid) && localMailboxSend.message?.delivery_status === "sent", "Local-to-local mailbox send should target only the recipient's deterministic room");
+  assert(localMailboxSend.message?.sender.did === localTechnocoreDid && localMailboxSend.message?.recipient.did === localCoderDid, "Mailbox outbox should bind exact managed sender and recipient DIDs");
+  const localMailboxWriteCount = technocoreWrites.filter((item) => item.room === deriveAgentMailboxRoom(localCoderDid) && item.text.includes("rc-mailbox-local-1") === false && item.from === localTechnocoreDid).length;
+  const localMailboxRetry = await postJson("/api/agent-mailboxes/send", baseMailboxSend, headers);
+  assert(localMailboxRetry.idempotent_replay === true && localMailboxRetry.message.id === localMailboxSend.message.id, "Exact client retries should be idempotent");
+  assert(technocoreWrites.filter((item) => item.room === deriveAgentMailboxRoom(localCoderDid) && item.from === localTechnocoreDid).length === localMailboxWriteCount, "Idempotent API retries must not emit a second Technocore frame");
+  await expectStatus("/api/agent-mailboxes/send", 409, { ...baseMailboxSend, text: "Conflicting reuse must fail closed." }, headers);
+
+  const remoteMailboxSend = await postJson("/api/agent-mailboxes/send", {
+    ...baseMailboxSend,
+    recipient: remoteRecipient,
+    text: "Hello verified remote coder.",
+    client_message_id: "rc-mailbox-remote-1"
+  }, headers);
+  assert(remoteMailboxSend.message?.room === deriveAgentMailboxRoom(externalRegistryAgentDid) && remoteMailboxSend.message?.recipient.node_id === externalRegistryNodeId, "Local-to-verified-remote send should retain node+agent+DID provenance");
+
+  const localCoderRoom = deriveAgentMailboxRoom(localCoderDid);
+  const incoming = buildAgentMailboxMessage({ senderDid: externalRegistryAgentDid, recipientDid: localCoderDid, clientMessageId: "rc-incoming-1", text: "Verified remote inbox message.", ttlMs: 60 * 60_000 });
+  signedFixtureWrite(localCoderRoom, externalRegistryAgentDid, externalRegistryAgent.privateKey, incoming.transport, "9300001");
+  const duplicateIncoming = signedFixtureWrite(localCoderRoom, externalRegistryAgentDid, externalRegistryAgent.privateKey, incoming.transport, "9300002");
+  assert(duplicateIncoming.text === incoming.transport, "Fixture should retain canonical mailbox transport");
+  const conflictIncoming = buildAgentMailboxMessage({ senderDid: externalRegistryAgentDid, recipientDid: localCoderDid, clientMessageId: "rc-incoming-conflict", text: "Original conflict frame.", ttlMs: 60 * 60_000 });
+  signedFixtureWrite(localCoderRoom, externalRegistryAgentDid, externalRegistryAgent.privateKey, conflictIncoming.transport, "9300003");
+  const conflictingReuse = buildAgentMailboxMessage({ senderDid: externalRegistryAgentDid, recipientDid: localCoderDid, clientMessageId: "rc-incoming-conflict", text: "Conflicting frame reuse.", ttlMs: 60 * 60_000 });
+  signedFixtureWrite(localCoderRoom, externalRegistryAgentDid, externalRegistryAgent.privateKey, conflictingReuse.transport, "9300004");
+  technocoreWrites.push({ room: localCoderRoom, from: externalRegistryAgentDid, text: "unsigned mailbox payload" });
+  const tamperedEnvelope = buildAgentMailboxMessage({ senderDid: externalRegistryAgentDid, recipientDid: localCoderDid, clientMessageId: "rc-incoming-tampered", text: "Signed before tampering.", ttlMs: 60 * 60_000 });
+  signedFixtureWrite(localCoderRoom, externalRegistryAgentDid, externalRegistryAgent.privateKey, tamperedEnvelope.transport, "9300005");
+  technocoreWrites.at(-1).text = technocoreWrites.at(-1).text.replace("Signed before tampering.", "Changed after signing.");
+  const expiredIncoming = buildAgentMailboxMessage({ senderDid: externalRegistryAgentDid, recipientDid: localCoderDid, clientMessageId: "rc-incoming-expired", text: "Expired inbox message.", ttlMs: 60_000 }, { nowMs: Date.now() - 120_000 });
+  signedFixtureWrite(localCoderRoom, externalRegistryAgentDid, externalRegistryAgent.privateKey, expiredIncoming.transport, "9300006");
+  const wrongRecipientFrame = buildAgentMailboxMessage({ senderDid: externalRegistryAgentDid, recipientDid: localTechnocoreDid, clientMessageId: "rc-incoming-wrong-room", text: "Wrong mailbox binding.", ttlMs: 60 * 60_000 });
+  signedFixtureWrite(localCoderRoom, externalRegistryAgentDid, externalRegistryAgent.privateKey, wrongRecipientFrame.transport, "9300007");
+  const taskMailboxFrame = encodeA2AEnvelope({
+    type: "TASK",
+    header: { ...incoming.header, id: "frame-rc-mailbox-task", message_id: "msg-rc-mailbox-task", task_id: "task-rc-mailbox" },
+    payload: { parts: [{ kind: "text", text: "Never dispatch this task." }] }
+  });
+  signedFixtureWrite(localCoderRoom, externalRegistryAgentDid, externalRegistryAgent.privateKey, taskMailboxFrame.transport, "9300008");
+  const ackMailboxFrame = encodeA2AEnvelope({
+    type: "ACK",
+    header: { ...incoming.header, id: "frame-rc-mailbox-ack", message_id: "msg-rc-mailbox-ack" },
+    payload: { acknowledged_id: localMailboxSend.message.frame_id, outcome: "received" }
+  });
+  signedFixtureWrite(localCoderRoom, externalRegistryAgentDid, externalRegistryAgent.privateKey, ackMailboxFrame.transport, "9300009");
+
+  const syncedMailbox = await postJson("/api/agent-mailboxes/sync", { agent_id: "coder", box: "inbox" }, headers);
+  assert(syncedMailbox.ok === true && syncedMailbox.view.inbox.some((item) => item.message_id === incoming.messageId && item.verified === true), "Mailbox sync should admit only signature-verified MESSAGE frames with exact signer/header/room/recipient binding");
+  assert(syncedMailbox.view.inbox.some((item) => item.frame_type === "ACK" && item.text === null && item.acknowledged_id === localMailboxSend.message.frame_id && item.ack_outcome === "received" && item.authority === "none"), "Mailbox ACKs should remain no-authority message-state metadata only");
+  assert(syncedMailbox.view.inbox.filter((item) => item.message_id === incoming.messageId).length === 1, "Duplicate verified transport retries should collapse into one inbox projection");
+  const quarantineReasons = new Set(syncedMailbox.view.quarantine.map((item) => item.rejection));
+  for (const reason of ["malformed_mailbox_frame", "signature_unverified", "expired", "wrong_mailbox_room", "mailbox_type_not_allowed", "frame_id_conflict"]) {
+    assert(quarantineReasons.has(reason), `Mailbox quarantine should explicitly preserve ${reason}`);
+  }
+  assert(syncedMailbox.view.quarantine.every((item) => item.trust === "untrusted" && item.authority === "none"), "Quarantine rows must stay untrusted and grant no authority");
+  const received = syncedMailbox.view.inbox.find((item) => item.message_id === incoming.messageId);
+  const markedRead = await postJson("/api/agent-mailboxes/read", { agent_id: "coder", message_id: received.id }, headers);
+  assert(markedRead.message.read_at && markedRead.message.delivery_status === "received", "Read state should be local message metadata only");
+  const safeReply = await postJson("/api/agent-mailboxes/send", {
+    sender_agent_id: "coder",
+    sender_did: localCoderDid,
+    recipient: remoteRecipient,
+    text: "Safe reply as bounded chat text.",
+    expires_in_minutes: 60,
+    client_message_id: "rc-mailbox-reply-1",
+    reply_to: received.id,
+    public_unlisted_acknowledged: true
+  }, headers);
+  assert(safeReply.message.reply_to === received.id && safeReply.message.context_id === received.context_id, "Safe replies should preserve deterministic pair context without spawning work");
+
+  technocoreMailboxUnavailable = true;
+  await expectStatus("/api/agent-mailboxes/send", 503, { ...baseMailboxSend, client_message_id: "rc-mailbox-outage", text: "Outage state test." }, headers);
+  technocoreMailboxUnavailable = false;
+  let outboxAfterOutage = await getJson("/api/agent-mailboxes?agent_id=technocore-specialist", headers);
+  assert(outboxAfterOutage.outbox.some((item) => item.client_message_id === "rc-mailbox-outage" && item.delivery_status === "failed"), "Definite Technocore outages should remain explicit failed outbox state");
+  await expectStatus("/api/agent-mailboxes/send", 409, { ...baseMailboxSend, client_message_id: "rc-mailbox-outage", text: "Outage state test." }, headers);
+  technocoreMailboxAmbiguousOnce = true;
+  const ambiguousSend = await postJson("/api/agent-mailboxes/send", { ...baseMailboxSend, client_message_id: "rc-mailbox-ambiguous", text: "Ambiguous delivery state test." }, headers);
+  assert(ambiguousSend.message.delivery_status === "ambiguous", "Timed-out signed writes should remain an explicit ambiguous outbox state");
+  const reconciledOutbox = await postJson("/api/agent-mailboxes/sync", { agent_id: "technocore-specialist", box: "outbox" }, headers);
+  assert(reconciledOutbox.view.outbox.some((item) => item.client_message_id === "rc-mailbox-ambiguous" && item.delivery_status === "sent"), "Sent-message inspection should reconcile an ambiguous accepted write by exact signed envelope hash");
+  const mailboxStateAfter = await getJson("/api/state", headers);
+  const mailboxSessionsAfter = await getJson("/api/sessions");
+  assert(mailboxStateAfter.tasks.length === mailboxStateBefore.tasks.length && mailboxStateAfter.agents.length === mailboxStateBefore.agents.length && mailboxStateAfter.viewerConnectors.length === mailboxStateBefore.viewerConnectors.length && mailboxSessionsAfter.length === mailboxSessionsBefore.length, "Mailbox chat must create zero task, session, connector, workspace, or execution side effects");
+  const persistedMailboxStore = JSON.parse(await readFile(join(dataDir, "agentswarm.json"), "utf8"));
+  assert(persistedMailboxStore.agentMailboxMessages?.some((item) => item.clientMessageId === "rc-mailbox-local-1") && persistedMailboxStore.agentMailboxSync?.coder?.lastSeq > 0, "Inbox/outbox/quarantine projection and sync cursor should be restart-persistent");
+  assert(!/BEGIN PRIVATE KEY|osa_conn_|\"signature\"\s*:/i.test(JSON.stringify(persistedMailboxStore.agentMailboxMessages)), "Mailbox projection must not persist private keys, connector tokens, or raw signatures");
+
   assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-payload" && agent.verified === false), "Reputation scanner should mark tampered payloads untrusted");
   assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-sig" && agent.verified === false && agent.rejection_reason), "Reputation scanner should fail closed on invalid signatures");
   assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-did" && agent.verified === false && agent.rejection_reason), "Reputation scanner should fail closed on signer DID mismatch");
@@ -637,6 +777,15 @@ try {
   assert(!staleSkillSearch.matches.some((agent) => agent.agent_id === "remote-coder") && staleSkillSearch.status.excluded.stale >= 1, "Skill finder should exclude stale federated claims by default");
   const includedStaleSkillSearch = await getJson("/api/agents/find?skill=coding&source=federated&include_stale=1");
   assert(includedStaleSkillSearch.matches.some((agent) => agent.agent_id === "remote-coder" && agent.eligible === false && agent.verification.label === "STALE"), "Skill finder should clearly label stale claims and keep them unusable when explicitly requested");
+  await expectStatus("/api/agent-mailboxes/send", 403, {
+    sender_agent_id: "technocore-specialist",
+    sender_did: localTechnocoreDid,
+    recipient: remoteRecipient,
+    text: "Stale recipients must remain ineligible.",
+    expires_in_minutes: 60,
+    client_message_id: "rc-mailbox-stale-recipient",
+    public_unlisted_acknowledged: true
+  }, headers);
   technocoreRegistryUnavailable = false;
   const lockFrame = {
     type: "lock",
@@ -1040,11 +1189,39 @@ try {
   assert(identity.privateKeyPem && identity.publicKeyPem, "node identity should persist locally");
   realtime.close();
 
+  await stopServerProcess(server);
+  server = spawnOsaServer();
+  const restartLogs = collectLogs(server);
+  await waitForHealth(restartLogs);
+  const restartedMailbox = await getJson("/api/agent-mailboxes?agent_id=coder", headers);
+  assert(restartedMailbox.inbox.some((item) => item.message_id === incoming.messageId) && restartedMailbox.quarantine.some((item) => item.rejection === "frame_id_conflict"), "Restart should reload the bounded inbox and quarantine projection without replaying content into execution");
+  assert(restartedMailbox.inbox.find((item) => item.message_id === incoming.messageId)?.read_at, "Restart should preserve local read metadata");
+
   console.log(`RC smoke passed on ${baseUrl}`);
 } finally {
   if (server) server.kill("SIGTERM");
   if (technocoreServer) await closeServer(technocoreServer);
   await rm(dataDir, { recursive: true, force: true });
+}
+
+function spawnOsaServer() {
+  return spawn(process.execPath, ["apps/server/src/server.mjs"], {
+    cwd: rootDir,
+    env: osaServerEnv,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+}
+
+async function stopServerProcess(child) {
+  if (!child || child.exitCode !== null) return;
+  let exited = false;
+  const exitPromise = new Promise((resolve) => child.once("exit", () => { exited = true; resolve(); }));
+  child.kill("SIGTERM");
+  await Promise.race([exitPromise, delay(3000)]);
+  if (!exited && child.exitCode === null) {
+    child.kill("SIGKILL");
+    await exitPromise;
+  }
 }
 
 function startTechnocoreFixture() {
@@ -1108,6 +1285,11 @@ function startTechnocoreFixture() {
         res.end("fixture unavailable\n");
         return;
       }
+      if (room.startsWith("mb-osa-") && technocoreMailboxUnavailable) {
+        res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+        res.end("mailbox fixture unavailable\n");
+        return;
+      }
       if (["osa-network", "credence"].includes(room) && technocoreRegistryUnavailable) {
         res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
         res.end("registry fixture unavailable\n");
@@ -1156,6 +1338,11 @@ function startTechnocoreFixture() {
       });
       req.on("end", () => {
         const parsed = JSON.parse(body || "{}");
+        if (room.startsWith("mb-osa-") && technocoreMailboxUnavailable) {
+          res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+          res.end("mailbox fixture unavailable\n");
+          return;
+        }
         if (!isValidTechnocoreSignedWrite(room, parsed)) {
           res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
           res.end("bad signed technocore fixture write\n");
@@ -1168,6 +1355,10 @@ function startTechnocoreFixture() {
           nonce: parsed.nonce,
           text: parsed.text
         });
+        if (room.startsWith("mb-osa-") && technocoreMailboxAmbiguousOnce) {
+          technocoreMailboxAmbiguousOnce = false;
+          return;
+        }
         const roomWriteCount = technocoreWrites.filter((item) => item.room === room).length;
         const posted = {
           seq: 41 + roomWriteCount,

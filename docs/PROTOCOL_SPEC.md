@@ -98,14 +98,18 @@ Phase 4.1 standardizes the Technocore room envelope at the edge:
 A2A/<version> TYPE <canonical JSON header>\n<canonical JSON payload>
 ```
 
-The canonical transport keeps the newline as the two ASCII characters `\` and `n` so the frame survives single-line Technocore normalization. OSA validates the pinned version and allowlisted frame types, bounds ids/DIDs/timestamps/expiry/payload sizes, rejects sensitive authority/execution/secret/wallet/settlement fields, and binds the sender to the Technocore transport signature. Exact replays are tracked idempotently; conflicting reuse of a frame id fails closed. The server persists only a read-only observation projection and never turns A2A into mailbox routing or remote execution.
+The canonical transport keeps the newline as the two ASCII characters `\` and `n` so the frame survives single-line Technocore normalization. OSA validates the pinned version and allowlisted frame types, bounds ids/DIDs/timestamps/expiry/payload sizes, rejects sensitive authority/execution/secret/wallet/settlement fields, and binds the sender to the Technocore transport signature. Exact replays are tracked idempotently; conflicting reuse of a frame id fails closed. The general observer persists metadata only and never turns arbitrary A2A frames into execution.
+
+Phase 4.2 adds the narrow `osa-agent-mailbox/1` transport adapter without changing the Phase-4.1 wire profile. A recipient mailbox is `mb-osa-<sha256(recipient DID)[0:40]>`; the 160-bit lowercase hex suffix keeps the full name at 47 characters. Sending accepts only one `MESSAGE` with one bounded `text/plain` text part and a 1-minute-to-24-hour expiry. The authenticated caller selects an exact local managed sender DID and an exact eligible recipient identity tuple. Eligible recipients are local managed agents or fresh verified Capability Registry identities with node+agent+DID provenance. Client ids deterministically bind frame/message ids; sender/recipient pairs deterministically bind correlation/context ids. Exact retries are idempotent and changed reuse fails closed.
+
+Inbox sync admits only signature-verified `MESSAGE`/`ACK` frames with exact transport-signer/header-sender, header-recipient/local-agent, and deterministic-room bindings. Expired, malformed, unsigned, tampered, wrong-room, wrong-recipient, non-chat, sensitive, and conflicting frames remain bounded quarantine records. Inbox, outbox, quarantine, cursors, delivery ambiguity, and read metadata persist across restart. Text was public on Technocore and remains authenticated data only: it is never injected into an agent prompt or used to create tasks, sessions, connectors, workspaces, tools, delegation, results, or settlement. Safe reply repeats the same explicit send gate; read state is local metadata only.
 
 The intended adapter mapping remains:
 
 ```text
 A2A Agent Card -> OSA agent registration
 A2A Task       -> OSA task lease
-A2A Message    -> read-only room observation / result content / review content
+A2A Message    -> read-only room observation or explicit public/unlisted mailbox chat projection
 A2A Artifact   -> OSA artifact record
 ```
 
@@ -115,7 +119,7 @@ Keep the platform scheduler and trust logic internal. Treat A2A as an edge proto
 
 1. Move persistence from the transitional Postgres snapshot into normalized Postgres tables.
 2. Replace polling with WebSocket or Redis/NATS stream delivery.
-3. Add Phase 4.2 agent chat over Technocore only after Phase 4.1 stays green in RC/browser checks.
+3. Add Phase 4.3 signed subtask delegation only after the non-executing Phase 4.2 mailbox boundary stays green in RC/browser checks.
 4. Deepen OpenClaw/Codex connector adapters with richer task-result mapping and install diagnostics.
 5. Add claim contradiction tracking.
 6. Add connector reputation events and richer token policy controls; basic connector token rotation and owner-visible audit metadata are in place.

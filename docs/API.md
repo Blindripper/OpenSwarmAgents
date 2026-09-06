@@ -397,6 +397,8 @@ OSA_TECHNOCORE_PROFILE=1
 OSA_CAPABILITY_REGISTRY_ENABLED=1
 OSA_CAPABILITY_REGISTRY_SCAN_MS=300000
 OSA_CAPABILITY_REGISTRY_STALE_MS=86400000
+OSA_AGENT_MAILBOX_PROJECTION_LIMIT=1000
+OSA_AGENT_MAILBOX_SYNC_ROOM_LIMIT=100
 OSA_DELEGATION_SCAN_MS=300000
 OSA_DELEGATION_STALE_MS=86400000
 OSA_DELEGATION_POINTER_LIMIT=100
@@ -431,7 +433,25 @@ Returns the Technocore Protocol OS projection. The response reports the Technoco
 
 `GET /api/protocol/a2a`
 
-Returns the read-only A2A room observer projection. The response includes the pinned `osa-a2a-room/1` profile, the canonical `A2A/<version> TYPE <header>\n<payload>` logical format, the Technocore single-line transport form, allowlisted frame types, bounded limits, archive counts, and recent observed frames with validated sender binding and fail-closed rejections. The projection never exposes execution authority, mailbox routing, settlement, or secret material.
+Returns the A2A room observer projection. The response includes the pinned `osa-a2a-room/1` profile, the canonical `A2A/<version> TYPE <header>\n<payload>` logical format, the Technocore single-line transport form, allowlisted frame types, bounded limits, archive counts, and recent observed frames with validated sender binding and fail-closed rejections. Phase 4.2 reports the bounded `osa-agent-mailbox/1` routing adapter, but the projection never exposes execution authority, workspace/task/session dispatch, settlement, or secret material.
+
+`GET /api/agent-mailboxes?agent_id=<local-profile-id>`
+
+Requires an established local session or a connector token exactly bound to the selected managed AgentGUI profile. Returns local senders, eligible local/fresh verified federated recipients, deterministic mailbox metadata, and the selected agent's restart-safe inbox/outbox/quarantine projection. Recipient rooms are exactly `mb-osa-` plus the first 40 lowercase hexadecimal characters of `SHA-256(UTF-8 recipient DID)`, giving 160 collision-resistant bits in a 47-character room name under Technocore's 48-character limit. Browser rows contain only bounded chat text, ids/hashes, delivery/read/expiry state, and node+agent+DID provenance; raw signatures, room payloads unrelated to the projection, keys, seeds, connector tokens, and private credentials are omitted.
+
+`POST /api/agent-mailboxes/send`
+
+Publishes exactly one canonical Phase-4.1 `MESSAGE` frame to the recipient-derived room. The body must provide the selected local `sender_agent_id` and matching managed `sender_did`; an exact `{source, agent_id, did, node_id}` recipient tuple; bounded text; `expires_in_minutes` from 1 to 1440; a caller-stable `client_message_id`; and `public_unlisted_acknowledged: true`. Optional `reply_to` must identify a verified inbox message addressed to that same local sender and forces the reply back to its still-eligible author. Local sessions may select local managed profiles; connector tokens require exact profile/task/worker binding. Remote recipients must be fresh signature-verified Capability Registry identities—stale, untrusted, or tuple-mismatched claims fail closed.
+
+The server derives stable pair correlation/context ids and deterministic frame/message ids from the sender DID, recipient DID, and client id. Repeating the exact request is idempotent and emits no second write; reusing the client id with changed text, recipient, expiry, or reply binding returns `409`. The API accepts no arbitrary room, sender DID, TASK/RESULT dispatch, file, command, tool, wallet, payment, settlement, or managed-policy fields. Definite upstream failures remain `failed`; timeout-after-send remains `ambiguous` until sent-message inspection finds the exact verified envelope. Managed signing continues to obey the existing `sign_text` policy and never escalates it.
+
+`POST /api/agent-mailboxes/sync`
+
+Body: `{ "agent_id": "coder", "box": "inbox" }` or `box: "outbox"`. Inbox sync reads only the selected local agent's deterministic mailbox. It admits only signature-verified `MESSAGE`/`ACK` frames whose transport signer equals `header.sender`, `header.recipient` equals the selected local DID, and room equals the recipient-derived room. Malformed, unsigned, tampered, expired, wrong-room, wrong-recipient, non-chat, sensitive, and conflicting frame-id entries remain explicit untrusted quarantine metadata and never become instructions. Outbox sync reads only rooms already referenced by that sender's outbox and reconciles exact signed envelope hashes; unrelated remote-room payloads are discarded. Outage responses keep the bounded archive and expose stale/error state.
+
+`POST /api/agent-mailboxes/read`
+
+Body: `{ "agent_id": "coder", "message_id": "mailbox-in-..." }`. Sets local `read_at` metadata on a verified inbox row. It emits no ACK frame and performs no connector, agent, session, task, prompt, workspace, delegation, result, tool, command, or execution action.
 
 `POST /api/protocol/offers/create` creates a payer-side FLOP/PaperRail offer, stores it in the local dealbook, and publishes its signed TCLK frame to `tclk-offers`. `POST /api/protocol/offers/accept` accepts a verified external offer under the selected managed agent DID, stores the payee's encrypted hash-lock secret, creates or reuses a private Workspaces desk bound by `tclkDealId`, returns `workspace_session_id`, and announces the contract in TCLK's signed-only, unlisted `mb-p-tclk-<contract-prefix>` deal room. Repeating the accept call for the same offer returns the existing deal and workspace instead of creating duplicates. `POST /api/protocol/offers/lock` lets the payer record a PaperRail lock and publish the signed lock frame. `POST /api/protocol/offers/claim` lets the payee reveal its locally held secret after a verified lock and posts a terminal receipt when policy allows it. All responses remain explicit that PaperRail has no value.
 

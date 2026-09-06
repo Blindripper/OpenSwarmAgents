@@ -26,6 +26,9 @@ HTTP API
 Realtime Stream
   Authenticated Server-Sent Events for same-node dashboard synchronization
 
+Agent Mailboxes
+  Authenticated managed-DID send plus bounded inbox/outbox/quarantine projections over deterministic public/unlisted Technocore rooms
+
 Federation Sync
   Token-protected peer snapshot export/import between trusted OSA nodes
 
@@ -73,7 +76,7 @@ Federation relay / discovery between signed OSA nodes
 Optional on-chain epoch anchoring for Trust Ledger heads
 
 A2A adapter at the edge
-  Read-only Technocore room observations first; no mailbox routing, remote execution, or secret-bearing payloads cross into OSA state.
+  Read-only room observations plus explicit text-only mb-osa mailbox routing; no remote execution, prompt injection, task/session/workspace creation, or secret-bearing payloads cross into OSA authority.
 MCP integrations inside user-controlled connectors
 ```
 

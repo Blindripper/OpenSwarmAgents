@@ -43,6 +43,18 @@ import {
   inspectA2AEnvelope,
   summarizeA2AEnvelope
 } from "./a2a-room-protocol.mjs";
+import {
+  AGENT_MAILBOX_LIMITS,
+  AGENT_MAILBOX_PROFILE,
+  PUBLIC_UNLISTED_ACK_FIELD,
+  buildAgentMailboxMessage,
+  deriveAgentMailboxRoom,
+  inspectAgentMailboxFrame,
+  mailboxErrorCode,
+  mailboxRequestHash,
+  validateClientMessageId,
+  validateMailboxText
+} from "./agent-mailbox.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "../../..");
@@ -128,6 +140,8 @@ const technocoreWriteTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_WRITE_
 const technocoreWriteAttempts = Math.round(boundedNumber(process.env.OSA_TECHNOCORE_WRITE_ATTEMPTS, 2, 1, 4));
 const protocolTranscriptLimit = Math.round(boundedNumber(process.env.OSA_PROTOCOL_TRANSCRIPT_LIMIT, 2000, 100, 10000));
 const a2aObservationLimit = Math.round(boundedNumber(process.env.OSA_A2A_OBSERVATION_LIMIT, 1000, 100, 5000));
+const agentMailboxProjectionLimit = Math.round(boundedNumber(process.env.OSA_AGENT_MAILBOX_PROJECTION_LIMIT, AGENT_MAILBOX_LIMITS.projectionLimit, 100, 5000));
+const agentMailboxSyncRoomLimit = Math.round(boundedNumber(process.env.OSA_AGENT_MAILBOX_SYNC_ROOM_LIMIT, AGENT_MAILBOX_LIMITS.syncRoomLimit, 10, 200));
 const technocoreChannelTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_CHANNEL_TIMEOUT_MS, Math.max(technocoreTimeoutMs, 12000), 1000, 15000);
 const technocoreMetadataTimeoutMs = boundedNumber(process.env.OSA_TECHNOCORE_METADATA_TIMEOUT_MS, 60000, 5000, 120000);
 const technocoreAnnounceEnabled = process.env.OSA_TECHNOCORE_ANNOUNCE === "1";
@@ -193,6 +207,7 @@ const technocoreLocalMirrorCache = new Map();
 const technocoreDidPublicKeyCache = new Map();
 const agentSigningIdentityCache = new Map();
 const protocolRoomSyncPromises = new Map();
+const agentMailboxSyncPromises = new Map();
 const protocolPaperDealPromises = new Map();
 const reputationPublishTimers = new Map();
 let technocoreReadRequestCounter = 0;
@@ -306,6 +321,8 @@ async function loadStore() {
       managerAudits: [],
       networkChatMessages: [],
       a2aObservations: [],
+      agentMailboxMessages: [],
+      agentMailboxSync: {},
       protocolTranscripts: [],
       protocolRoomSync: {},
       protocolPaperDeals: [],
@@ -369,6 +386,8 @@ function normalizeStore(input) {
     managerAudits: normalizeManagerAudits(input.managerAudits || []),
     networkChatMessages: normalizeNetworkChatMessages(input.networkChatMessages || []),
     a2aObservations: normalizeA2AObservations(input.a2aObservations || []),
+    agentMailboxMessages: normalizeAgentMailboxMessages(input.agentMailboxMessages || []),
+    agentMailboxSync: normalizeAgentMailboxSync(input.agentMailboxSync || {}),
     protocolTranscripts: normalizeProtocolTranscripts(input.protocolTranscripts || []),
     protocolRoomSync: normalizeProtocolRoomSync(input.protocolRoomSync || {}),
     protocolPaperDeals: normalizeProtocolPaperDeals(input.protocolPaperDeals || []),
@@ -1142,6 +1161,101 @@ function normalizeA2AObservations(records) {
     .slice(0, a2aObservationLimit);
 }
 
+function normalizeAgentMailboxMessages(records) {
+  if (!Array.isArray(records)) return [];
+  const byId = new Map();
+  for (const raw of records) {
+    const id = String(raw?.id || "").slice(0, 180);
+    const room = normalizeTechnocoreName(raw?.room);
+    const box = ["inbox", "outbox", "quarantine"].includes(raw?.box) ? raw.box : null;
+    const senderDid = String(raw?.senderDid || raw?.sender_did || "").slice(0, 150);
+    const recipientDid = String(raw?.recipientDid || raw?.recipient_did || "").slice(0, 150);
+    const envelopeHash = String(raw?.envelopeHash || raw?.envelope_hash || "").toLowerCase();
+    if (!id || !room || !box || !senderDid || !recipientDid || !/^[a-f0-9]{64}$/.test(envelopeHash)) continue;
+    const item = {
+      id,
+      box,
+      frameType: ["MESSAGE", "ACK"].includes(raw.frameType || raw.frame_type) ? String(raw.frameType || raw.frame_type) : null,
+      frameId: raw.frameId || raw.frame_id ? String(raw.frameId || raw.frame_id).slice(0, 128) : null,
+      messageId: raw.messageId || raw.message_id ? String(raw.messageId || raw.message_id).slice(0, 128) : null,
+      acknowledgedId: raw.acknowledgedId || raw.acknowledged_id ? String(raw.acknowledgedId || raw.acknowledged_id).slice(0, 128) : null,
+      ackOutcome: ["received", "accepted", "rejected", "duplicate"].includes(raw.ackOutcome || raw.ack_outcome) ? String(raw.ackOutcome || raw.ack_outcome) : null,
+      clientMessageId: raw.clientMessageId || raw.client_message_id ? String(raw.clientMessageId || raw.client_message_id).slice(0, 128) : null,
+      requestHash: /^[a-f0-9]{64}$/.test(String(raw.requestHash || raw.request_hash || "")) ? String(raw.requestHash || raw.request_hash) : null,
+      replyTo: raw.replyTo || raw.reply_to ? String(raw.replyTo || raw.reply_to).slice(0, 180) : null,
+      senderAgentId: raw.senderAgentId || raw.sender_agent_id ? String(raw.senderAgentId || raw.sender_agent_id).slice(0, 80) : null,
+      senderName: String(raw.senderName || raw.sender_name || "Unknown agent").slice(0, 80),
+      senderDid,
+      senderNodeId: raw.senderNodeId || raw.sender_node_id ? String(raw.senderNodeId || raw.sender_node_id).slice(0, 100) : null,
+      senderNodeDid: raw.senderNodeDid || raw.sender_node_did ? String(raw.senderNodeDid || raw.sender_node_did).slice(0, 150) : null,
+      senderSource: raw.senderSource === "local" ? "local" : raw.senderSource === "federated" ? "federated" : "unknown",
+      recipientAgentId: raw.recipientAgentId || raw.recipient_agent_id ? String(raw.recipientAgentId || raw.recipient_agent_id).slice(0, 80) : null,
+      recipientName: String(raw.recipientName || raw.recipient_name || "Unknown agent").slice(0, 80),
+      recipientDid,
+      recipientNodeId: raw.recipientNodeId || raw.recipient_node_id ? String(raw.recipientNodeId || raw.recipient_node_id).slice(0, 100) : null,
+      recipientNodeDid: raw.recipientNodeDid || raw.recipient_node_did ? String(raw.recipientNodeDid || raw.recipient_node_did).slice(0, 150) : null,
+      recipientSource: raw.recipientSource === "local" ? "local" : raw.recipientSource === "federated" ? "federated" : "unknown",
+      room,
+      text: raw.text ? truncateUtf8(String(raw.text), AGENT_MAILBOX_LIMITS.maxTextBytes) : null,
+      createdAt: validIsoTimestamp(raw.createdAt || raw.created_at) || now(),
+      expiresAt: validIsoTimestamp(raw.expiresAt || raw.expires_at) || now(),
+      correlationId: raw.correlationId || raw.correlation_id ? String(raw.correlationId || raw.correlation_id).slice(0, 128) : null,
+      contextId: raw.contextId || raw.context_id ? String(raw.contextId || raw.context_id).slice(0, 128) : null,
+      envelopeHash,
+      payloadHash: /^[a-f0-9]{64}$/.test(String(raw.payloadHash || raw.payload_hash || "")) ? String(raw.payloadHash || raw.payload_hash) : null,
+      verified: raw.verified === true,
+      trust: raw.trust === "verified" ? "verified" : "untrusted",
+      rejection: raw.rejection ? String(raw.rejection).replace(/[^a-zA-Z0-9_:-]/g, "").slice(0, 160) : null,
+      deliveryStatus: ["pending", "sent", "duplicate", "ambiguous", "failed", "received", "quarantined"].includes(raw.deliveryStatus || raw.delivery_status)
+        ? String(raw.deliveryStatus || raw.delivery_status)
+        : box === "outbox" ? "pending" : box === "quarantine" ? "quarantined" : "received",
+      sequence: finitePositiveNumber(raw.sequence || raw.seq),
+      generation: Math.max(0, Number(raw.generation || 0)),
+      observedAt: validIsoTimestamp(raw.observedAt || raw.observed_at) || null,
+      lastSeenAt: validIsoTimestamp(raw.lastSeenAt || raw.last_seen_at) || validIsoTimestamp(raw.observedAt || raw.observed_at) || now(),
+      readAt: validIsoTimestamp(raw.readAt || raw.read_at) || null,
+      warning: raw.warning ? sanitizeDisplayText(raw.warning, 240) : null,
+      publicUnlisted: true,
+      authority: "none"
+    };
+    const existing = byId.get(id);
+    if (!existing || String(item.lastSeenAt).localeCompare(String(existing.lastSeenAt)) >= 0) byId.set(id, item);
+  }
+  return [...byId.values()]
+    .sort((a, b) => String(b.lastSeenAt).localeCompare(String(a.lastSeenAt)) || a.id.localeCompare(b.id))
+    .slice(0, agentMailboxProjectionLimit);
+}
+
+function normalizeAgentMailboxSync(input) {
+  const output = {};
+  if (!input || typeof input !== "object" || Array.isArray(input)) return output;
+  for (const [agentId, raw] of Object.entries(input)) {
+    const id = String(agentId || "").slice(0, 80);
+    const room = normalizeTechnocoreName(raw?.room);
+    if (!id || !room) continue;
+    output[id] = {
+      room,
+      generation: Math.max(0, Number(raw.generation || 0)),
+      lastSeq: Math.max(0, Number(raw.lastSeq || raw.last_seq || 0)),
+      lastAttemptAt: validIsoTimestamp(raw.lastAttemptAt || raw.last_attempt_at) || null,
+      lastSyncedAt: validIsoTimestamp(raw.lastSyncedAt || raw.last_synced_at) || null,
+      lastError: raw.lastError || raw.last_error ? sanitizeDisplayText(raw.lastError || raw.last_error, 300) : null
+    };
+  }
+  return output;
+}
+
+function truncateUtf8(value, maxBytes) {
+  const text = String(value || "");
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  let output = "";
+  for (const character of text) {
+    if (Buffer.byteLength(output + character, "utf8") > maxBytes) break;
+    output += character;
+  }
+  return output;
+}
+
 function recordA2AObservation(room, generation, message, inspection, observedAt = now()) {
   if (!inspection?.detected) return { inspection, changed: false };
   store.a2aObservations = normalizeA2AObservations(store.a2aObservations || []);
@@ -1304,7 +1418,8 @@ function a2aProtocolView(url = null) {
       authority: "none",
       handling: "authenticated-data-only",
       remote_execution: false,
-      mailbox_routing: false,
+      mailbox_routing: true,
+      mailbox_profile: AGENT_MAILBOX_PROFILE,
       workspace_dispatch: false,
       value_settlement: false,
       signatures_mean: "sender authorship and byte integrity only"
@@ -1318,6 +1433,540 @@ function a2aProtocolView(url = null) {
     observations,
     generated_at: now()
   };
+}
+
+function mailboxAccessFromReq(req) {
+  const connector = connectorTokenFromReq(req);
+  if (connector) {
+    if (connector.token.mode !== "worker") {
+      return { ok: false, statusCode: 403, message: "Connector token is not scoped to a managed worker agent" };
+    }
+    const task = store.tasks.find((item) => item.agentGuiConnectorId === connector.token.id && item.agentGuiAgent);
+    const worker = connector.token.agentId ? findAgent(connector.token.agentId) : null;
+    if (!task || (connector.token.agentId && (!worker || worker.connectorTokenId !== connector.token.id))) {
+      return { ok: false, statusCode: 403, message: "Connector token has no exact managed-agent mailbox binding" };
+    }
+    const profile = agentGuiProfileById(task.agentGuiAgent);
+    if (!profile) return { ok: false, statusCode: 403, message: "Connector mailbox profile binding is unavailable" };
+    return { ok: true, kind: "connector", connector, auth: null, user: connector.user, agentIds: [profile.id] };
+  }
+  const auth = authFromReq(req);
+  if (!auth) return { ok: false, statusCode: 401, message: "Authenticate with a local session or exactly scoped connector token before using agent mailboxes" };
+  return { ok: true, kind: "session", connector: null, auth, user: auth.user, agentIds: agentGuiAgents().map((agent) => agent.id) };
+}
+
+function assertMailboxProfileAccess(access, agentId) {
+  const id = String(agentId || "").slice(0, 80);
+  const profile = agentGuiProfileById(id);
+  if (!profile) mailboxFail("Unknown local managed agent", 404);
+  if (!access?.ok || !access.agentIds.includes(id)) mailboxFail("Mailbox access is not bound to this local managed agent", 403);
+  return profile;
+}
+
+function eligibleMailboxRecipients() {
+  markCapabilityProjectionStaleness();
+  const local = agentGuiAgents().map((agent) => ({
+    key: `local:${nodeIdentity.nodeId}:${agent.id}:${agent.did || agentDidForProfile(agent.id)}`,
+    source: "local",
+    agent_id: agent.id,
+    name: sanitizeDisplayText(agent.name || agent.id, 80),
+    tagline: sanitizeDisplayText(agent.tagline || "", 160),
+    did: agent.did || agentDidForProfile(agent.id),
+    node_id: nodeIdentity.nodeId,
+    node_did: technocoreDid || null,
+    verified: true,
+    stale: false,
+    eligibility: "local_managed",
+    provenance: { kind: "local", node_id: nodeIdentity.nodeId }
+  }));
+  const remote = normalizeCapabilityRegistryProjection(store.capabilityRegistryProjection || [])
+    .map(publicDiscoveredCapability)
+    .filter((record) => record.node_id !== nodeIdentity.nodeId && record.verified === true && record.stale !== true)
+    .map((record) => ({
+      key: `federated:${record.node_id}:${record.agent_id}:${record.did}`,
+      source: "federated",
+      agent_id: record.agent_id,
+      name: sanitizeDisplayText(record.name || record.agent_id, 80),
+      tagline: sanitizeDisplayText(record.tagline || "", 160),
+      did: record.did,
+      node_id: record.node_id,
+      node_did: record.node_did || null,
+      verified: true,
+      stale: false,
+      eligibility: "fresh_verified_capability_registry",
+      provenance: {
+        kind: "technocore",
+        room: record.provenance?.room || null,
+        seq: record.provenance?.seq || null,
+        announced_at: record.provenance?.announced_at || null,
+        kv_path: record.kv_path || null,
+        payload_hash: record.payload_hash || null
+      }
+    }));
+  const byKey = new Map();
+  for (const recipient of [...local, ...remote]) {
+    const identityKey = `${recipient.node_id}\0${recipient.agent_id}\0${recipient.did}`;
+    if (!byKey.has(identityKey)) byKey.set(identityKey, { ...recipient, mailbox_room: deriveAgentMailboxRoom(recipient.did) });
+  }
+  return [...byKey.values()].sort((a, b) => (a.source === b.source ? 0 : a.source === "local" ? -1 : 1) || a.name.localeCompare(b.name) || a.did.localeCompare(b.did));
+}
+
+function exactMailboxRecipient(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) mailboxFail("recipient identity tuple is required", 400);
+  const allowed = new Set(["source", "agent_id", "did", "node_id"]);
+  for (const key of Object.keys(raw)) if (!allowed.has(key)) mailboxFail(`Unsupported recipient field: ${key}`, 400);
+  const source = String(raw.source || "");
+  const agentId = String(raw.agent_id || "").slice(0, 80);
+  const did = String(raw.did || "").slice(0, 150);
+  const nodeId = String(raw.node_id || "").slice(0, 100);
+  const recipient = eligibleMailboxRecipients().find((item) => item.source === source && item.agent_id === agentId && item.did === did && item.node_id === nodeId);
+  if (!recipient) mailboxFail("Recipient is not an eligible local managed agent or fresh verified federated identity", 403);
+  return recipient;
+}
+
+function mailboxIdentityForDid(did) {
+  const eligible = eligibleMailboxRecipients().find((item) => item.did === did);
+  if (eligible) return eligible;
+  const discovered = normalizeCapabilityRegistryProjection(store.capabilityRegistryProjection || []).map(publicDiscoveredCapability).find((item) => item.did === did);
+  if (discovered) {
+    return {
+      source: "federated",
+      agent_id: discovered.agent_id,
+      name: sanitizeDisplayText(discovered.name || discovered.agent_id, 80),
+      did: discovered.did,
+      node_id: discovered.node_id,
+      node_did: discovered.node_did || null,
+      verified: discovered.verified === true,
+      stale: discovered.stale === true,
+      provenance: discovered.provenance || null
+    };
+  }
+  return { source: "unknown", agent_id: null, name: "Unknown DID", did, node_id: null, node_did: null, verified: false, stale: false, provenance: null };
+}
+
+function publicAgentMailboxMessage(record) {
+  return {
+    id: record.id,
+    box: record.box,
+    profile: AGENT_MAILBOX_PROFILE,
+    frame_type: record.frameType,
+    frame_id: record.frameId,
+    message_id: record.messageId,
+    acknowledged_id: record.acknowledgedId,
+    ack_outcome: record.ackOutcome,
+    client_message_id: record.clientMessageId,
+    reply_to: record.replyTo,
+    sender: {
+      source: record.senderSource,
+      agent_id: record.senderAgentId,
+      name: record.senderName,
+      did: record.senderDid,
+      node_id: record.senderNodeId,
+      node_did: record.senderNodeDid
+    },
+    recipient: {
+      source: record.recipientSource,
+      agent_id: record.recipientAgentId,
+      name: record.recipientName,
+      did: record.recipientDid,
+      node_id: record.recipientNodeId,
+      node_did: record.recipientNodeDid
+    },
+    room: record.room,
+    text: record.text,
+    created_at: record.createdAt,
+    expires_at: record.expiresAt,
+    correlation_id: record.correlationId,
+    context_id: record.contextId,
+    envelope_hash: record.envelopeHash,
+    payload_hash: record.payloadHash,
+    verified: record.verified,
+    trust: record.trust,
+    rejection: record.rejection,
+    delivery_status: record.deliveryStatus,
+    sequence: record.sequence,
+    generation: record.generation,
+    observed_at: record.observedAt,
+    last_seen_at: record.lastSeenAt,
+    read_at: record.readAt,
+    warning: record.warning,
+    public_unlisted: true,
+    authority: "none",
+    handling: "bounded-chat-text-only",
+    remote_execution: false
+  };
+}
+
+function publicAgentMailboxView(access, selectedAgentId = "") {
+  const senders = access.agentIds.map((id) => agentGuiProfileById(id)).filter(Boolean).map((agent) => ({
+    agent_id: agent.id,
+    name: agent.name,
+    did: agent.did || agentDidForProfile(agent.id),
+    node_id: nodeIdentity.nodeId,
+    mailbox_room: deriveAgentMailboxRoom(agent.did || agentDidForProfile(agent.id))
+  }));
+  const selected = senders.find((sender) => sender.agent_id === selectedAgentId) || senders[0] || null;
+  const records = normalizeAgentMailboxMessages(store.agentMailboxMessages || []);
+  const scoped = selected ? records.filter((record) => (
+    (record.box === "outbox" && record.senderAgentId === selected.agent_id)
+    || (record.box !== "outbox" && record.recipientAgentId === selected.agent_id)
+  )) : [];
+  const inbox = scoped.filter((record) => record.box === "inbox").map(publicAgentMailboxMessage);
+  const outbox = scoped.filter((record) => record.box === "outbox").map(publicAgentMailboxMessage);
+  const quarantine = scoped.filter((record) => record.box === "quarantine").map(publicAgentMailboxMessage);
+  const sync = selected ? normalizeAgentMailboxSync(store.agentMailboxSync || {})[selected.agent_id] || null : null;
+  return {
+    profile: AGENT_MAILBOX_PROFILE,
+    a2a_profile: A2A_ROOM_PROFILE,
+    generated_at: now(),
+    derivation: {
+      algorithm: "mb-osa- + first 40 lowercase hex characters of SHA-256(UTF-8 recipient DID)",
+      hash: "sha256",
+      hash_bits: 160,
+      prefix: "mb-osa-",
+      room_limit: AGENT_MAILBOX_LIMITS.maxRoomLength
+    },
+    limits: { ...AGENT_MAILBOX_LIMITS, projection_limit: agentMailboxProjectionLimit, sync_room_limit: agentMailboxSyncRoomLimit },
+    policy: {
+      visibility: "public-unlisted",
+      warning: "Mailbox content is public on Technocore. Never include secrets.",
+      acknowledgement_field: PUBLIC_UNLISTED_ACK_FIELD,
+      accepted_frame_types: ["MESSAGE", "ACK"],
+      sent_frame_types: ["MESSAGE"],
+      authority: "none",
+      signatures_mean: "authorship and integrity only",
+      remote_execution: false,
+      task_dispatch: false,
+      session_spawning: false,
+      workspace_creation: false,
+      connector_spawning: false
+    },
+    senders,
+    selected_sender: selected,
+    recipients: eligibleMailboxRecipients(),
+    sync: sync ? {
+      room: sync.room,
+      generation: sync.generation,
+      last_seq: sync.lastSeq,
+      last_attempt_at: sync.lastAttemptAt,
+      last_synced_at: sync.lastSyncedAt,
+      source: sync.lastError ? "archive" : "live",
+      stale: Boolean(sync.lastError),
+      error: sync.lastError
+    } : null,
+    counts: { inbox: inbox.length, outbox: outbox.length, quarantine: quarantine.length },
+    inbox,
+    outbox,
+    quarantine
+  };
+}
+
+async function sendAgentMailboxMessage(req, body = {}, access) {
+  const allowed = new Set(["sender_agent_id", "sender_did", "recipient", "text", "expires_in_minutes", "client_message_id", "reply_to", PUBLIC_UNLISTED_ACK_FIELD]);
+  for (const key of Object.keys(body || {})) if (!allowed.has(key)) mailboxFail(`Unsupported mailbox send field: ${key}`, 400);
+  if (body[PUBLIC_UNLISTED_ACK_FIELD] !== true) mailboxFail("Explicit public/unlisted Technocore acknowledgement is required", 400);
+  if (!technocoreEnabled || !technocoreSignedMessages) mailboxFail("Signed Technocore mailbox transport is unavailable", 503);
+  const sender = assertMailboxProfileAccess(access, body.sender_agent_id);
+  const senderDid = sender.did || agentDidForProfile(sender.id);
+  if (String(body.sender_did || "") !== senderDid) mailboxFail("Sender DID does not match the selected local managed agent", 403);
+  const clientMessageId = validateClientMessageId(body.client_message_id);
+  const text = validateMailboxText(body.text);
+  const ttlMinutes = Number(body.expires_in_minutes);
+  if (!Number.isSafeInteger(ttlMinutes) || ttlMinutes < 1 || ttlMinutes > 24 * 60) mailboxFail("expires_in_minutes must be an integer from 1 to 1440", 400);
+  const rawRecipient = body.recipient && typeof body.recipient === "object" ? body.recipient : {};
+  const requestInput = {
+    senderDid,
+    recipientDid: String(rawRecipient.did || ""),
+    recipientSource: String(rawRecipient.source || ""),
+    recipientAgentId: String(rawRecipient.agent_id || ""),
+    recipientNodeId: String(rawRecipient.node_id || ""),
+    clientMessageId,
+    text,
+    ttlMs: ttlMinutes * 60_000,
+    replyTo: body.reply_to || null
+  };
+  const requestHash = mailboxRequestHash(requestInput);
+  store.agentMailboxMessages = normalizeAgentMailboxMessages(store.agentMailboxMessages || []);
+  const existing = store.agentMailboxMessages.find((record) => record.box === "outbox" && record.senderDid === senderDid && record.clientMessageId === clientMessageId);
+  if (existing) {
+    if (existing.requestHash !== requestHash) mailboxFail("Conflicting reuse of client_message_id", 409);
+    if (existing.deliveryStatus === "failed") {
+      const error = new Error("The previous definitive mailbox write failed; retry with a new client_message_id");
+      error.statusCode = 409;
+      error.mailboxMessage = publicAgentMailboxMessage(existing);
+      throw error;
+    }
+    return { ok: true, idempotent_replay: true, message: publicAgentMailboxMessage(existing) };
+  }
+  const recipient = exactMailboxRecipient(rawRecipient);
+  let replyTo = null;
+  if (body.reply_to) {
+    replyTo = store.agentMailboxMessages.find((record) => record.id === String(body.reply_to) && record.box === "inbox" && record.recipientAgentId === sender.id && record.trust === "verified");
+    if (!replyTo) mailboxFail("Reply target is not a verified inbox message for this local agent", 403);
+    if (replyTo.senderDid !== recipient.did) mailboxFail("Reply recipient does not match the verified original sender", 409);
+  }
+  const createdMs = Date.now();
+  const frame = buildAgentMailboxMessage({
+    senderDid,
+    recipientDid: recipient.did,
+    clientMessageId,
+    text,
+    ttlMs: ttlMinutes * 60_000
+  }, { nowMs: createdMs });
+  const record = normalizeAgentMailboxMessages([{
+    id: `mailbox-out-${frame.envelopeHash.slice(0, 40)}`,
+    box: "outbox",
+    frameType: "MESSAGE",
+    frameId: frame.frameId,
+    messageId: frame.messageId,
+    clientMessageId,
+    requestHash,
+    replyTo: replyTo?.id || null,
+    senderAgentId: sender.id,
+    senderName: sender.name,
+    senderDid,
+    senderNodeId: nodeIdentity.nodeId,
+    senderNodeDid: technocoreDid || null,
+    senderSource: "local",
+    recipientAgentId: recipient.agent_id,
+    recipientName: recipient.name,
+    recipientDid: recipient.did,
+    recipientNodeId: recipient.node_id,
+    recipientNodeDid: recipient.node_did,
+    recipientSource: recipient.source,
+    room: frame.room,
+    text,
+    createdAt: frame.createdAt,
+    expiresAt: frame.expiresAt,
+    correlationId: frame.correlationId,
+    contextId: frame.contextId,
+    envelopeHash: frame.envelopeHash,
+    payloadHash: frame.payloadHash,
+    verified: true,
+    trust: "verified",
+    deliveryStatus: "pending",
+    lastSeenAt: now()
+  }])[0];
+  store.agentMailboxMessages = normalizeAgentMailboxMessages([record, ...store.agentMailboxMessages]);
+  await saveStore();
+  try {
+    const delivery = await technocoreSayAsAgent(sender.id, frame.room, frame.transport, "sign_text");
+    record.deliveryStatus = delivery.ambiguous ? "ambiguous" : delivery.duplicate ? "duplicate" : "sent";
+    record.sequence = delivery.seq || null;
+    record.observedAt = delivery.createdAt || null;
+    record.lastSeenAt = now();
+    record.warning = delivery.warning || null;
+    store.agentMailboxMessages = normalizeAgentMailboxMessages([record, ...store.agentMailboxMessages.filter((item) => item.id !== record.id)]);
+    event("agent_mailbox_message_sent", "Agent mailbox message published", {
+      senderAgentId: sender.id,
+      recipientAgentId: recipient.agent_id,
+      recipientNodeId: recipient.node_id,
+      room: frame.room,
+      frameId: frame.frameId,
+      deliveryStatus: record.deliveryStatus,
+      publicUnlisted: true,
+      authority: "none"
+    });
+    await saveStore();
+    return { ok: true, idempotent_replay: false, message: publicAgentMailboxMessage(record) };
+  } catch (error) {
+    record.deliveryStatus = isTechnocoreAmbiguousWriteError(error) ? "ambiguous" : "failed";
+    record.warning = sanitizeDisplayText(error.message || "Technocore mailbox write failed", 240);
+    record.lastSeenAt = now();
+    store.agentMailboxMessages = normalizeAgentMailboxMessages([record, ...store.agentMailboxMessages.filter((item) => item.id !== record.id)]);
+    await saveStore();
+    error.mailboxMessage = publicAgentMailboxMessage(record);
+    throw error;
+  }
+}
+
+async function syncAgentMailboxInbox(agent, access) {
+  assertMailboxProfileAccess(access, agent.id);
+  const recipientDid = agent.did || agentDidForProfile(agent.id);
+  const room = deriveAgentMailboxRoom(recipientDid);
+  const key = `inbox:${agent.id}`;
+  if (agentMailboxSyncPromises.has(key)) return agentMailboxSyncPromises.get(key);
+  const promise = (async () => {
+    store.agentMailboxSync = normalizeAgentMailboxSync(store.agentMailboxSync || {});
+    const previous = store.agentMailboxSync[agent.id] || { room, generation: 0, lastSeq: 0, lastAttemptAt: null, lastSyncedAt: null, lastError: null };
+    const attemptedAt = now();
+    try {
+      const query = { format: "json", limit: agentMailboxSyncRoomLimit };
+      if (previous.lastSeq > 0) { query.since = previous.lastSeq; query.wait = 1; }
+      let view = await fetchTechnocoreRoomJson(`/r/${room}`, query);
+      let generation = Number(view?.generation ?? previous.generation ?? 0);
+      if (!Number.isSafeInteger(generation) || generation < 0) generation = 0;
+      if (previous.lastSyncedAt && generation !== previous.generation) {
+        view = await fetchTechnocoreRoomJson(`/r/${room}`, { format: "json", limit: agentMailboxSyncRoomLimit });
+        generation = Number(view?.generation ?? generation);
+        if (!Number.isSafeInteger(generation) || generation < 0) generation = 0;
+      }
+      const observedAt = now();
+      const messages = (Array.isArray(view?.messages) ? view.messages : []).filter((message) => message && Number.isSafeInteger(Number(message.seq)) && Number(message.seq) >= 0);
+      for (const message of messages) projectAgentMailboxInboxMessage(agent, room, generation, message, observedAt);
+      const observedLastSeq = messages.reduce((max, message) => Math.max(max, Number(message.seq || 0)), 0);
+      const responseLastSeq = Number(view?.last_seq);
+      store.agentMailboxSync[agent.id] = {
+        room,
+        generation,
+        lastSeq: Math.max(generation === previous.generation ? previous.lastSeq : 0, Number.isSafeInteger(responseLastSeq) ? responseLastSeq : 0, observedLastSeq),
+        lastAttemptAt: attemptedAt,
+        lastSyncedAt: observedAt,
+        lastError: null
+      };
+      await saveStore();
+      return { ok: true, source: "live", view: publicAgentMailboxView(access, agent.id) };
+    } catch (error) {
+      store.agentMailboxSync[agent.id] = { ...previous, room, lastAttemptAt: attemptedAt, lastError: sanitizeDisplayText(error.message || "Mailbox sync failed", 300) };
+      await saveStore();
+      return { ok: false, source: "archive", error: store.agentMailboxSync[agent.id].lastError, view: publicAgentMailboxView(access, agent.id) };
+    }
+  })();
+  agentMailboxSyncPromises.set(key, promise);
+  try { return await promise; }
+  finally { if (agentMailboxSyncPromises.get(key) === promise) agentMailboxSyncPromises.delete(key); }
+}
+
+function projectAgentMailboxInboxMessage(agent, room, generation, message, observedAt) {
+  const rawText = String(message.text || "").slice(0, A2A_LIMITS.maxWireBytes + 1);
+  const from = String(message.from || "").slice(0, 150);
+  const signatureVerified = verifyTechnocoreDidMessage(room, { from, nonce: message.nonce, sig: message.sig, text: rawText });
+  const inspection = inspectAgentMailboxFrame(rawText, {
+    room,
+    localRecipientDid: agent.did || agentDidForProfile(agent.id),
+    transportSender: from,
+    transportVerified: signatureVerified,
+    nowMs: Date.now()
+  });
+  const header = inspection.header || {};
+  const envelopeHash = String(inspection.envelopeHash || createHash("sha256").update(rawText).digest("hex"));
+  const frameId = header.id ? String(header.id).slice(0, 128) : null;
+  store.agentMailboxMessages = normalizeAgentMailboxMessages(store.agentMailboxMessages || []);
+  const conflicts = frameId ? store.agentMailboxMessages.filter((record) => record.senderDid === from && record.frameId === frameId && record.envelopeHash !== envelopeHash) : [];
+  const conflicted = conflicts.length > 0;
+  if (conflicted) {
+    store.agentMailboxMessages = store.agentMailboxMessages.map((record) => conflicts.some((conflict) => conflict.id === record.id)
+      ? { ...record, box: "quarantine", trust: "untrusted", verified: false, rejection: "frame_id_conflict", deliveryStatus: "quarantined", lastSeenAt: observedAt }
+      : record);
+  }
+  const accepted = inspection.mailboxValid === true && !conflicted;
+  const senderIdentity = mailboxIdentityForDid(header.sender || from);
+  const recipientIdentity = mailboxIdentityForDid(header.recipient || (agent.did || agentDidForProfile(agent.id)));
+  const rejection = conflicted ? "frame_id_conflict" : inspection.mailboxRejection || "mailbox_validation_failed";
+  const text = accepted ? inspection.text : safeMailboxInspectionText(inspection, rejection);
+  const id = accepted
+    ? `mailbox-in-${createHash("sha256").update(`${from}\0${envelopeHash}`).digest("hex").slice(0, 40)}`
+    : `mailbox-quarantine-${createHash("sha256").update(`${room}\0${generation}\0${message.seq}\0${envelopeHash}`).digest("hex").slice(0, 40)}`;
+  const existingProjection = store.agentMailboxMessages.find((item) => item.id === id);
+  const record = {
+    id,
+    box: accepted ? "inbox" : "quarantine",
+    frameType: inspection.frameType || null,
+    frameId,
+    messageId: header.message_id || null,
+    acknowledgedId: inspection.frameType === "ACK" ? inspection.payload?.acknowledged_id || null : null,
+    ackOutcome: inspection.frameType === "ACK" ? inspection.payload?.outcome || null : null,
+    senderAgentId: senderIdentity.agent_id,
+    senderName: senderIdentity.name,
+    senderDid: header.sender || from || "unknown",
+    senderNodeId: senderIdentity.node_id,
+    senderNodeDid: senderIdentity.node_did,
+    senderSource: senderIdentity.source,
+    recipientAgentId: agent.id,
+    recipientName: agent.name,
+    recipientDid: header.recipient || (agent.did || agentDidForProfile(agent.id)),
+    recipientNodeId: recipientIdentity.node_id || nodeIdentity.nodeId,
+    recipientNodeDid: recipientIdentity.node_did || technocoreDid || null,
+    recipientSource: recipientIdentity.source === "unknown" ? "local" : recipientIdentity.source,
+    room,
+    text,
+    createdAt: validIsoTimestamp(header.created_at) || validIsoTimestamp(message.ts) || observedAt,
+    expiresAt: validIsoTimestamp(header.expires_at) || observedAt,
+    correlationId: header.correlation_id || null,
+    contextId: header.context_id || null,
+    envelopeHash,
+    payloadHash: inspection.payloadHash || null,
+    verified: accepted,
+    trust: accepted ? "verified" : "untrusted",
+    rejection: accepted ? null : rejection,
+    deliveryStatus: accepted ? "received" : "quarantined",
+    sequence: Number(message.seq),
+    generation,
+    observedAt: existingProjection?.observedAt || observedAt,
+    lastSeenAt: observedAt,
+    readAt: existingProjection?.readAt || null
+  };
+  store.agentMailboxMessages = normalizeAgentMailboxMessages([record, ...store.agentMailboxMessages.filter((item) => item.id !== id)]);
+  if (accepted) {
+    const outbox = store.agentMailboxMessages.find((item) => item.box === "outbox" && item.envelopeHash === envelopeHash && item.senderDid === from);
+    if (outbox) {
+      outbox.deliveryStatus = "sent";
+      outbox.sequence = Number(message.seq);
+      outbox.generation = generation;
+      outbox.observedAt = observedAt;
+      outbox.lastSeenAt = observedAt;
+    }
+  }
+}
+
+function safeMailboxInspectionText(inspection, rejection) {
+  const raw = inspection?.frameType === "MESSAGE" && inspection.payload?.parts?.length === 1 && inspection.payload.parts[0]?.kind === "text"
+    ? inspection.payload.parts[0].text
+    : null;
+  if (typeof raw !== "string") return null;
+  try { return validateMailboxText(raw); }
+  catch { return rejection === "mailbox_sensitive_content" ? "[content withheld by mailbox safety policy]" : null; }
+}
+
+async function syncAgentMailboxOutbox(agent, access) {
+  assertMailboxProfileAccess(access, agent.id);
+  store.agentMailboxMessages = normalizeAgentMailboxMessages(store.agentMailboxMessages || []);
+  const records = store.agentMailboxMessages.filter((record) => record.box === "outbox" && record.senderAgentId === agent.id).slice(0, 100);
+  const rooms = [...new Set(records.map((record) => record.room))].slice(0, 20);
+  const errors = [];
+  for (const room of rooms) {
+    try {
+      const view = await fetchTechnocoreRoomJson(`/r/${room}`, { format: "json", limit: agentMailboxSyncRoomLimit });
+      const generation = Math.max(0, Number(view?.generation || 0));
+      for (const message of Array.isArray(view?.messages) ? view.messages : []) {
+        const rawText = String(message?.text || "").slice(0, A2A_LIMITS.maxWireBytes + 1);
+        const from = String(message?.from || "").slice(0, 150);
+        const verified = verifyTechnocoreDidMessage(room, { from, nonce: message?.nonce, sig: message?.sig, text: rawText });
+        const inspection = inspectAgentMailboxFrame(rawText, { room, transportSender: from, transportVerified: verified, nowMs: Date.now() });
+        if (!inspection.mailboxValid) continue;
+        const matching = records.find((record) => record.envelopeHash === inspection.envelopeHash && record.senderDid === from && record.room === room);
+        if (!matching) continue;
+        matching.deliveryStatus = "sent";
+        matching.sequence = finitePositiveNumber(message.seq);
+        matching.generation = generation;
+        matching.observedAt = validIsoTimestamp(message.ts) || now();
+        matching.lastSeenAt = now();
+        matching.warning = null;
+      }
+    } catch (error) {
+      errors.push({ room, error: sanitizeDisplayText(error.message || "Sent mailbox inspection failed", 240) });
+    }
+  }
+  store.agentMailboxMessages = normalizeAgentMailboxMessages(store.agentMailboxMessages);
+  await saveStore();
+  return { ok: errors.length === 0, source: errors.length ? "archive" : "live", errors, view: publicAgentMailboxView(access, agent.id) };
+}
+
+async function markAgentMailboxRead(agent, messageId, access) {
+  assertMailboxProfileAccess(access, agent.id);
+  store.agentMailboxMessages = normalizeAgentMailboxMessages(store.agentMailboxMessages || []);
+  const record = store.agentMailboxMessages.find((item) => item.id === messageId && item.box === "inbox" && item.recipientAgentId === agent.id && item.trust === "verified");
+  if (!record) mailboxFail("Verified inbox message not found", 404);
+  record.readAt = record.readAt || now();
+  record.lastSeenAt = now();
+  await saveStore();
+  return publicAgentMailboxMessage(record);
+}
+
+function mailboxFail(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  throw error;
 }
 
 function normalizeProtocolTranscripts(records) {
@@ -3654,12 +4303,14 @@ async function loadPostgresStore() {
     agentDonations: [],
     publicProjectReviews: [],
     publicProjectCopies: [],
-      networkChatMessages: [],
-      a2aObservations: [],
-      protocolTranscripts: [],
-      protocolRoomSync: {},
-      protocolPaperDeals: [],
-      protocolPaperNotes: {},
+    networkChatMessages: [],
+    a2aObservations: [],
+    agentMailboxMessages: [],
+    agentMailboxSync: {},
+    protocolTranscripts: [],
+    protocolRoomSync: {},
+    protocolPaperDeals: [],
+    protocolPaperNotes: {},
     projectManifests: [],
     agentCapabilities: [],
     capabilityRegistryRecords: [],
@@ -5996,6 +6647,9 @@ function publicRuntime() {
     a2aWireVersion: A2A_WIRE_VERSION,
     a2aFrameTypes: A2A_FRAME_TYPES,
     a2aObservationLimit,
+    agentMailboxProfile: AGENT_MAILBOX_PROFILE,
+    agentMailboxRoomPrefix: "mb-osa-",
+    agentMailboxProjectionLimit,
     technocoreAnnounceEnabled: technocoreEnabled && technocoreAnnounceEnabled && Boolean(technocoreAnnounceRoom),
     technocoreAnnounceRoom: technocoreEnabled && technocoreAnnounceRoom ? technocoreAnnounceRoom : null,
     technocoreSignedMessages: technocoreEnabled && technocoreSignedMessages && Boolean(technocoreDid),
@@ -11103,7 +11757,7 @@ async function technocoreProtocolOverview() {
     layers: [
       { id: "technocore", label: "Technocore", role: "public transport and rooms", status: technocoreEnabled ? "connected" : "disabled" },
       { id: "did", label: "DID", role: "identity and message signatures", status: technocoreDid ? "ready" : "unavailable" },
-      { id: "work", label: "A2A / Kibble", role: "authenticated room data; no routing or execution authority", status: "observer" },
+      { id: "work", label: "A2A / Mailboxes", role: "public/unlisted authenticated chat data; no routing or execution authority", status: "mailbox" },
       { id: "tclk", label: "TCLK", role: "deal and payment coordination", status: technocoreEnabled ? "rehearsal" : "local-rehearsal" },
       { id: "rail", label: "Settlement Rail", role: "value lock and settlement", status: "paper-ready" }
     ],
@@ -11111,10 +11765,11 @@ async function technocoreProtocolOverview() {
       profile: A2A_ROOM_PROFILE,
       version: A2A_WIRE_VERSION,
       frame_types: A2A_FRAME_TYPES,
-      mode: "read-only-observer",
+      mode: "observer+agent-mailboxes",
       authority: "none",
       remote_execution: false,
-      mailbox_routing: false,
+      mailbox_routing: true,
+      mailbox_profile: AGENT_MAILBOX_PROFILE,
       value_settlement: false,
       observation_count: normalizeA2AObservations(store.a2aObservations || []).length,
       verified_count: normalizeA2AObservations(store.a2aObservations || []).filter((record) => record.valid && record.verified).length,
@@ -11389,27 +12044,33 @@ async function technocoreSayAsAgent(agentId, room, text, action = "sign_text") {
     throw error;
   }
   const identity = assertManagedSigningAllowed(agentId, action);
-  return await technocoreWriteWithRetry(() => technocoreSaySignedWithIdentity(room, text, identity), {
+  const prepared = prepareTechnocoreSignedWrite(room, text, identity);
+  return await technocoreWriteWithRetry(() => technocoreSaySignedWithIdentity(room, text, identity, prepared), {
     signed: true,
     from: identity.did,
     agentId: identity.agentId
   });
 }
 
-async function technocoreSaySignedWithIdentity(room, text, identity) {
+function prepareTechnocoreSignedWrite(room, text, identity) {
   const nonce = nextTechnocoreNonce(room);
-  // Technocore normalizes newlines to spaces before verifying the signature,
-  // so we must do the same when constructing the payload to sign.
   const singleLine = text.replace(/\r?\n/g, " ").slice(0, 4096);
   const payload = `${room}|${nonce}|${singleLine}`;
   const sig = signPayload(null, Buffer.from(payload, "utf8"), identity.privateKey).toString("base64url");
+  return { did: identity.did, sig, nonce, text: singleLine };
+}
+
+async function technocoreSaySignedWithIdentity(room, text, identity, prepared = null) {
+  // A prepared write fixes nonce, text, and signature across timeout retries so
+  // Technocore's duplicate filter can resolve an ambiguous first attempt.
+  const signedWrite = prepared || prepareTechnocoreSignedWrite(room, text, identity);
   const response = await fetchTechnocoreWrite(`/r/${room}`, {
     method: "POST",
     headers: {
       accept: "application/json",
       "content-type": "application/json"
     },
-    body: JSON.stringify({ did: identity.did, sig, nonce, text: singleLine })
+    body: JSON.stringify(signedWrite)
   });
   if (!response.ok) throw technocoreWriteHttpError(response.status);
   let view = null;
@@ -12197,6 +12858,59 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
 
   if (method === "GET" && path === "/api/protocol/a2a") {
     return sendJson(res, 200, a2aProtocolView(url));
+  }
+
+  if (method === "GET" && path === "/api/agent-mailboxes") {
+    const access = mailboxAccessFromReq(req);
+    if (!access.ok) return access.statusCode === 401 ? unauthorized(res, access.message) : forbidden(res, access.message);
+    try {
+      const requestedAgentId = String(url.searchParams.get("agent_id") || "").slice(0, 80);
+      if (requestedAgentId) assertMailboxProfileAccess(access, requestedAgentId);
+      return sendJson(res, 200, publicAgentMailboxView(access, requestedAgentId));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to read agent mailboxes" });
+    }
+  }
+
+  if (method === "POST" && path === "/api/agent-mailboxes/send") {
+    const access = mailboxAccessFromReq(req);
+    if (!access.ok) return access.statusCode === 401 ? unauthorized(res, access.message) : forbidden(res, access.message);
+    if (!enforceRateLimit(req, res, "agent-mailbox-send", rateIdentity(req, access.auth, `:${access.user?.id || access.connector?.token?.id || "local"}`), { limit: 20, windowMs: 60 * 1000 })) return;
+    try {
+      return sendJson(res, 201, await sendAgentMailboxMessage(req, await readJson(req), access));
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, {
+        detail: error.message || mailboxErrorCode(error),
+        message: error.mailboxMessage || undefined
+      });
+    }
+  }
+
+  if (method === "POST" && path === "/api/agent-mailboxes/sync") {
+    const access = mailboxAccessFromReq(req);
+    if (!access.ok) return access.statusCode === 401 ? unauthorized(res, access.message) : forbidden(res, access.message);
+    try {
+      const body = await readJson(req);
+      const agent = assertMailboxProfileAccess(access, body.agent_id);
+      const box = body.box === "outbox" ? "outbox" : "inbox";
+      const result = box === "outbox" ? await syncAgentMailboxOutbox(agent, access) : await syncAgentMailboxInbox(agent, access);
+      return sendJson(res, 200, result);
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to sync agent mailbox" });
+    }
+  }
+
+  if (method === "POST" && path === "/api/agent-mailboxes/read") {
+    const access = mailboxAccessFromReq(req);
+    if (!access.ok) return access.statusCode === 401 ? unauthorized(res, access.message) : forbidden(res, access.message);
+    try {
+      const body = await readJson(req);
+      const agent = assertMailboxProfileAccess(access, body.agent_id);
+      const message = await markAgentMailboxRead(agent, String(body.message_id || "").slice(0, 180), access);
+      return sendJson(res, 200, { ok: true, message });
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to mark mailbox message read" });
+    }
   }
 
   if (method === "GET" && path === "/api/protocol/overview") {
@@ -13457,6 +14171,8 @@ async function handleApi(req, res, url) {
         publicProjectCopies: [],
         networkChatMessages: [],
         a2aObservations: [],
+        agentMailboxMessages: [],
+        agentMailboxSync: {},
         protocolTranscripts: [],
         protocolRoomSync: {},
         protocolPaperDeals: [],

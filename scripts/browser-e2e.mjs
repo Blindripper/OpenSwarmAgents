@@ -203,7 +203,8 @@ try {
       authority: "none",
       handling: "authenticated-data-only",
       remote_execution: false,
-      mailbox_routing: false,
+      mailbox_routing: true,
+      mailbox_profile: "osa-agent-mailbox/1",
       workspace_dispatch: false,
       value_settlement: false,
       signatures_mean: "sender authorship and byte integrity only"
@@ -217,6 +218,46 @@ try {
     observations: [browserA2AObservation],
     generated_at: "2026-09-04T08:00:00.000Z"
   };
+  const browserMailboxRemoteDid = "did:key:z6MktCjMnQxY8SdzpQwL2oCePJqBM2SYA11vngd4D2fa5g9Z";
+  const browserMailboxInbox = {
+    id: "mailbox-in-browser-1", box: "inbox", profile: "osa-agent-mailbox/1", frame_type: "MESSAGE", frame_id: "frame-browser-mailbox-1", message_id: "msg-browser-mailbox-1",
+    sender: { source: "federated", agent_id: "remote-coder", name: "Remote Coder", did: browserMailboxRemoteDid, node_id: "node-browser-remote" },
+    recipient: { source: "local", agent_id: "technocore-specialist", name: "Technocore Specialist", did: testTechnocoreDid, node_id: "node-browser-local" },
+    room: "mb-osa-browser-local", text: "Verified browser mailbox inbox message", created_at: "2026-09-05T10:00:00.000Z", expires_at: "2026-09-05T12:00:00.000Z",
+    correlation_id: "corr-mb-browser", context_id: "ctx-mb-browser", envelope_hash: "e".repeat(64), verified: true, trust: "verified", delivery_status: "received", last_seen_at: "2026-09-05T10:00:00.000Z",
+    public_unlisted: true, authority: "none", handling: "bounded-chat-text-only", remote_execution: false
+  };
+  const browserMailboxQuarantine = {
+    ...browserMailboxInbox, id: "mailbox-quarantine-browser-1", box: "quarantine", text: null, envelope_hash: "f".repeat(64), verified: false, trust: "untrusted", rejection: "signature_unverified", delivery_status: "quarantined"
+  };
+  const browserMailboxOverview = {
+    profile: "osa-agent-mailbox/1", a2a_profile: "osa-a2a-room/1", generated_at: "2026-09-05T10:00:00.000Z",
+    derivation: { algorithm: "mb-osa- + first 40 lowercase hex characters of SHA-256(UTF-8 recipient DID)", hash: "sha256", hash_bits: 160, prefix: "mb-osa-", room_limit: 48 },
+    limits: { maxRoomLength: 48, hashHexLength: 40, maxTextBytes: 1000, maxTtlMs: 86400000, maxClientMessageIdLength: 128, projection_limit: 1000, sync_room_limit: 100 },
+    policy: { visibility: "public-unlisted", warning: "Mailbox content is public on Technocore. Never include secrets.", acknowledgement_field: "public_unlisted_acknowledged", accepted_frame_types: ["MESSAGE", "ACK"], sent_frame_types: ["MESSAGE"], authority: "none", signatures_mean: "authorship and integrity only", remote_execution: false, task_dispatch: false, session_spawning: false, workspace_creation: false, connector_spawning: false },
+    senders: [{ agent_id: "technocore-specialist", name: "Technocore Specialist", did: testTechnocoreDid, node_id: "node-browser-local", mailbox_room: "mb-osa-browser-local" }],
+    selected_sender: { agent_id: "technocore-specialist", name: "Technocore Specialist", did: testTechnocoreDid, node_id: "node-browser-local", mailbox_room: "mb-osa-browser-local" },
+    recipients: [{ key: `federated:node-browser-remote:remote-coder:${browserMailboxRemoteDid}`, source: "federated", agent_id: "remote-coder", name: "Remote Coder", did: browserMailboxRemoteDid, node_id: "node-browser-remote", verified: true, stale: false, eligibility: "fresh_verified_capability_registry", mailbox_room: "mb-osa-browser-remote" }],
+    sync: { room: "mb-osa-browser-local", generation: 0, last_seq: 7, source: "live", stale: false }, counts: { inbox: 1, outbox: 0, quarantine: 1 },
+    inbox: [browserMailboxInbox], outbox: [], quarantine: [browserMailboxQuarantine]
+  };
+  let browserMailboxSendBody = null;
+  await page.route("**/api/agent-mailboxes**", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (request.method() === "GET") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(browserMailboxOverview) });
+    const body = request.postDataJSON();
+    if (pathname.endsWith("/send")) {
+      browserMailboxSendBody = body;
+      const outbox = { ...browserMailboxInbox, id: "mailbox-out-browser-1", box: "outbox", sender: browserMailboxInbox.recipient, recipient: browserMailboxInbox.sender, text: body.text, client_message_id: body.client_message_id, delivery_status: "sent", envelope_hash: "9".repeat(64) };
+      browserMailboxOverview.outbox = [outbox];
+      browserMailboxOverview.counts.outbox = 1;
+      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ok: true, idempotent_replay: false, message: outbox }) });
+    }
+    if (pathname.endsWith("/sync")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, source: "live", view: browserMailboxOverview }) });
+    if (pathname.endsWith("/read")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, message: { ...browserMailboxInbox, read_at: "2026-09-05T10:01:00.000Z" } }) });
+    return route.continue();
+  });
   await page.route("**/api/network/chat**", async (route) => {
     if (route.request().method() === "POST") {
       const body = route.request().postDataJSON();
@@ -432,6 +473,25 @@ try {
   await page.getByRole("button", { name: "Market & Deals" }).click();
   await expectText(page, "body", "TCLK Offer Observer");
   await expectText(page, "body", "A2A Room Observer");
+  await expectText(page, "body", "Agent Mailboxes");
+  await expectText(page, '[data-testid="agent-mailboxes"]', "PUBLIC / UNLISTED ON TECHNOCORE");
+  await expectText(page, '[data-testid="agent-mailboxes"]', "Verified browser mailbox inbox message");
+  await page.getByRole("textbox", { name: "Mailbox message" }).fill("Browser mailbox public confirmation message");
+  await page.getByRole("checkbox", { name: "Acknowledge public unlisted mailbox" }).check();
+  await page.getByRole("button", { name: "Review public send" }).click();
+  await expectText(page, '[data-testid="agent-mailboxes"]', "Confirm public send");
+  assert(browserMailboxSendBody === null, "mailbox UI must not send before the second explicit confirmation");
+  await page.getByRole("button", { name: "Confirm and publish" }).click();
+  await expectText(page, '[data-testid="agent-mailboxes"]', "Browser mailbox public confirmation message");
+  assert(browserMailboxSendBody?.public_unlisted_acknowledged === true && browserMailboxSendBody?.sender_did === testTechnocoreDid, "mailbox UI should send the exact managed DID tuple and explicit public acknowledgement");
+  assert(!browserMailboxSendBody?.room && !browserMailboxSendBody?.task_id && !browserMailboxSendBody?.command, "mailbox UI must not choose arbitrary rooms or dispatch tasks/commands");
+  await page.getByRole("button", { name: "Quarantine (1)" }).click();
+  await expectText(page, '[data-testid="agent-mailboxes"]', "Quarantined: signature_unverified");
+  await expectText(page, '[data-testid="agent-mailboxes"]', "UNTRUSTED");
+  await page.getByRole("button", { name: "Inbox (1)" }).click();
+  await page.getByRole("button", { name: "Reply safely" }).click();
+  await expectText(page, '[data-testid="agent-mailboxes"]', "Replying to verified message");
+  assert(!(await page.getByTestId("agent-mailboxes").innerText()).match(/BEGIN PRIVATE KEY|pkcs8|signature:\s*[A-Za-z0-9_-]{32,}|osa_conn_/i), "mailbox UI must not render secrets, raw signatures, or connector tokens");
   await page.getByRole("button", { name: "Accept Offer" }).click();
   await expectText(page, "body", "Browser TCLK workspace");
   assert((await getJson("/api/sessions")).some((session) => session.id === browserTclkSession.id) === false, "browser Accept test should not require a real backend task fixture");

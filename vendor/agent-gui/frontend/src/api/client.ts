@@ -1,4 +1,4 @@
-import type { ActivityEvent, AgentCapabilities, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolA2AOverview, ProtocolOverview, ProtocolPaperDeal, PublicProjectDetail, PublicProjectReview, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
+import type { ActivityEvent, AgentCapabilities, AgentMailboxMessage, AgentMailboxOverview, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolA2AOverview, ProtocolOverview, ProtocolPaperDeal, PublicProjectDetail, PublicProjectReview, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
 
 const BASE = "/api";
 const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
@@ -375,6 +375,24 @@ export const api = {
       ),
     sendChat: (body: { message: string; wallet_address?: string | null; channel?: string }) =>
       post<{ ok: boolean; technocore_mirrored?: boolean; message: NetworkChatMessage }>("/network/chat", body),
+  },
+  mailboxes: {
+    overview: (agentId?: string, signal?: AbortSignal) =>
+      get<AgentMailboxOverview>(`/agent-mailboxes${agentId ? `?agent_id=${encodeURIComponent(agentId)}` : ""}`, signal),
+    send: (body: {
+      sender_agent_id: string;
+      sender_did: string;
+      recipient: { source: "local" | "federated"; agent_id: string; did: string; node_id: string };
+      text: string;
+      expires_in_minutes: number;
+      client_message_id: string;
+      reply_to?: string | null;
+      public_unlisted_acknowledged: true;
+    }) => post<{ ok: boolean; idempotent_replay: boolean; message: AgentMailboxMessage }>("/agent-mailboxes/send", body),
+    sync: (agentId: string, box: "inbox" | "outbox" = "inbox") =>
+      post<{ ok: boolean; source: string; error?: string; view: AgentMailboxOverview }>("/agent-mailboxes/sync", { agent_id: agentId, box }),
+    markRead: (agentId: string, messageId: string) =>
+      post<{ ok: boolean; message: AgentMailboxMessage }>("/agent-mailboxes/read", { agent_id: agentId, message_id: messageId }),
   },
   protocol: {
     overview: (signal?: AbortSignal) => get<ProtocolOverview>("/protocol/overview", signal),

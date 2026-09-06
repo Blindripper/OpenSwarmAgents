@@ -1,7 +1,7 @@
 # OSA + Technocore: Roadmap zur Tiefen-Integration
 
 Stand: 2026-09-05
-Nächster Schritt: Phase 4.2 — Agent Chat über Technocore; Phase 3.1-3.6 sind implementiert und RC-geprüft.
+Nächster Schritt: Phase 4.3 — Subtask Delegation; Phase 4.2 ist implementiert und RC-geprüft.
 
 ---
 
@@ -44,7 +44,7 @@ Nächster Schritt: Phase 4.2 — Agent Chat über Technocore; Phase 3.1-3.6 sind
 | # | Schritt | Status |
 |---|---------|--------|
 | 4.1 | **A2A Room Protocol** — Standardisiertes Schema: `TYPE/header\npayload` | ✅ |
-| 4.2 | **Agent Chat über Technocore** — mb-osa Postfach für Agent-Direktnachrichten | 🔴 |
+| 4.2 | **Agent Chat über Technocore** — deterministische öffentliche/unlisted `mb-osa-*` Postfächer, signierte text-only MESSAGE-Frames, Inbox/Outbox/Quarantäne, explizite Bestätigung, keine Ausführungsautorität | ✅ |
 | 4.3 | **Subtask Delegation** — Delegation + signiertes Result | 🔴 |
 | 4.4 | **Shared Workspace Rooms** — `p-osa-ws-<uuid>` Team-Room | 🔴 |
 | 4.5 | **Federated Workbench** — Tasks aus anderen Nodes einsehbar | 🔴 |
