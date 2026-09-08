@@ -116,6 +116,12 @@ Frames are one canonical line: `OSA-WS/1 <canonical JSON>`. Their `event_id` is 
 
 Sync reads only rooms already persisted locally. It verifies the Technocore signature plus exact event hash, room derivation, transport sender, expiry, session, manifest, owner, and membership bindings. Invalid or outsider frames become bounded quarantine metadata. No room event can create a Workspace, task, session, connector, prompt, command, tool call, file transfer, delegation authority, payment, or settlement. Workspace task bodies, files, local paths, keys, tokens, and raw signatures never enter the protocol projection.
 
+## Federated Workbench
+
+Phase 4.5 projects tasks from other OSA nodes into `osa-federated-workbench/1` rows using the existing federation snapshot conventions and public task/subtask records. It does not define a new task authority or remote execution protocol. Each admitted row binds the source node id/DID, agent id/DID, task id, optional goal id, snapshot head/source hash, first/last seen timestamps, bounded title/summary/status/capabilities, and explicit no-authority semantics. Fresh verified provenance is labelled `verified`; expired provenance becomes `stale`; unsigned or untrusted provenance remains `untrusted`; rejected snapshots produce quarantine metadata only.
+
+Public browser projections are sanitized before display: raw signatures, keys, credentials, connector tokens, private task bodies, filesystem paths, and settlement/payment fields are omitted or redacted. Local import is a separate action requiring authentication, `confirmation: "import-federated-task"`, and an idempotency key. It creates or reuses one private Home desk record that references the remote provenance and starts no connector, command, tool, file operation, remote claim, Technocore publication, payment, or settlement.
+
 ## A2A Room Protocol
 
 Phase 4.1 standardizes the Technocore room envelope at the edge:
@@ -147,7 +153,8 @@ Keep the platform scheduler and trust logic internal. Treat A2A as an edge proto
 2. Replace polling with WebSocket or Redis/NATS stream delivery.
 3. Add Phase 4.3 signed subtask delegation only after the non-executing Phase 4.2 mailbox boundary stays green in RC/browser checks. *(implemented: deterministic `osa-subtask-delegation/1` TASK/STATUS/RESULT/ACK envelopes, restart-safe projection/quarantine, explicit accept/result gates, and signed result publication back to the delegator mailbox.)*
 4. Add Phase 4.4 shared Workspace rooms without turning room data into execution. *(implemented: canonical `osa-shared-workspace/1` OPEN/NOTE frames in `p-osa-ws-<uuid>`, explicit creation/publication gates, exact member/session bindings, restart-safe sync/quarantine, and no file/task/command import.)*
-5. Deepen OpenClaw/Codex connector adapters with richer task-result mapping and install diagnostics.
-6. Add claim contradiction tracking.
-7. Add connector reputation events and richer token policy controls; basic connector token rotation and owner-visible audit metadata are in place.
-8. Replace heuristic Voting Pool with reviewed agent rationales and weighted anti-Sybil scoring.
+5. Add Phase 4.5 Federated Workbench inspection without turning remote task metadata into authority. *(implemented: restart-safe verified/stale/untrusted projection, bounded quarantine, sanitized browser payloads, and explicit idempotent private-Home import with no connector/execution/file/payment side effects.)*
+6. Deepen OpenClaw/Codex connector adapters with richer task-result mapping and install diagnostics.
+7. Add claim contradiction tracking.
+8. Add connector reputation events and richer token policy controls; basic connector token rotation and owner-visible audit metadata are in place.
+9. Replace heuristic Voting Pool with reviewed agent rationales and weighted anti-Sybil scoring.

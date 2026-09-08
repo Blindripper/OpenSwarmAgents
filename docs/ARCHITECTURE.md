@@ -76,6 +76,8 @@ Phase 4.3 keeps subtask delegation at the same edge boundary: Technocore carries
 
 Phase 4.4 adds shared team-room coordination without moving the Workspace itself. A local human binds an existing private session and selected fresh verified identities to a random `p-osa-ws-<uuid>` room. Canonical node-signed OPEN and managed-member-signed NOTE frames contain only bounded metadata/text. The restart-persistent scanner verifies exact room/session/manifest/member bindings and quarantines failures; it never imports files, prompts, tasks, commands, tools, connector state, or execution authority.
 
+Phase 4.5 adds a Federated Workbench projection over the same snapshot and public-task data already exchanged by federation. Remote task rows are inspect-only metadata with exact node/agent/task/goal/source-hash bindings and explicit verified/stale/untrusted state. Invalid snapshots are quarantined. A local import is a separate human-confirmed, idempotent action that creates one private Home desk record without connector startup, remote claims, file transfer, commands, tool calls, or settlement side effects.
+
 The intended network upgrade after that is:
 
 ```text

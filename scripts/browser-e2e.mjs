@@ -345,6 +345,7 @@ try {
   let browserMailboxSendBody = null;
   let browserSharedCreateBody = null;
   let browserSharedNoteBody = null;
+  let browserFederatedImportBody = null;
   const browserSharedRoom = {
     id: "123e4567-e89b-42d3-a456-426614174000",
     workspace_id: "123e4567-e89b-42d3-a456-426614174000",
@@ -373,6 +374,68 @@ try {
     candidates: [{ key: `local:node-browser-local:technocore-specialist:${testTechnocoreDid}`, source: "local", agent_id: "technocore-specialist", name: "Technocore Specialist", did: testTechnocoreDid, node_id: "node-browser-local", verified: true, stale: false }],
     rooms: [],
   };
+  const browserFederatedTask = {
+    id: "fwb-browser-verified-1",
+    kind: "task",
+    state: "verified",
+    importable: true,
+    origin_node_id: "node-browser-remote",
+    origin_node_did: null,
+    origin_agent_id: "remote-coder",
+    origin_agent_name: "Remote Coder",
+    origin_agent_did: null,
+    task_id: "task-browser-remote-1",
+    goal_id: "goal-browser-remote-1",
+    goal_title: "Remote browser goal",
+    title: "Remote browser task",
+    summary: "Inspect this remote task as public metadata only.",
+    status: "open",
+    task_type: "research",
+    required_capabilities: ["research", "synthesis"],
+    priority: 83,
+    created_at: "2026-09-05T10:00:00.000Z",
+    updated_at: "2026-09-05T10:01:00.000Z",
+    last_seen_at: "2026-09-05T10:02:00.000Z",
+    imported_session_id: null,
+    imported_task_id: null,
+    trust: { state: "verified", stale: false, verified: true, reason: "trusted_peer_snapshot" },
+    identity_binding: { node_id: "node-browser-remote", node_did: null, agent_id: "remote-coder", agent_did: null, task_id: "task-browser-remote-1", goal_id: "goal-browser-remote-1" },
+    provenance: { source: "osa-federation-snapshot", node_id: "node-browser-remote", observed_at: "2026-09-05T10:02:00.000Z", head: "head-browser", source_hash: "7".repeat(64) },
+    authority: "inspect_only",
+    remote_execution: false,
+    connector_spawning: false,
+    files_shared: false,
+    no_payment: true,
+    no_settlement: true,
+    source_hash: "7".repeat(64),
+  };
+  const browserFederatedOverview = {
+    schema: "osa-federated-workbench/1",
+    version: 1,
+    generated_at: "2026-09-05T10:03:00.000Z",
+    policy: { visibility: "federated-public-task-metadata-only", authority: "inspect_only_until_explicit_local_import", signatures_mean: "trusted peer snapshots authenticate node provenance and integrity only", no_automatic_execution: true, remote_execution: false, connector_spawning: false, files_shared: false, no_payment: true, no_settlement: true },
+    status: { enabled: true, stale_after_ms: 60000, task_count: 3, verified_count: 1, stale_count: 1, untrusted_count: 1, imported_count: 0, quarantine_count: 1, last_import_at: null, last_error: null },
+    tasks: [
+      browserFederatedTask,
+      { ...browserFederatedTask, id: "fwb-browser-stale-1", state: "stale", importable: false, title: "Remote stale task", task_id: "task-browser-stale-1", trust: { state: "stale", stale: true, verified: false, reason: "stale" }, source_hash: "8".repeat(64), provenance: { ...browserFederatedTask.provenance, source_hash: "8".repeat(64) } },
+      { ...browserFederatedTask, id: "fwb-browser-untrusted-1", state: "untrusted", importable: false, title: "Remote untrusted task", task_id: "task-browser-untrusted-1", trust: { state: "untrusted", stale: false, verified: false, reason: "federation_signature_verification_disabled" }, source_hash: "9".repeat(64), provenance: { ...browserFederatedTask.provenance, source_hash: "9".repeat(64) } },
+    ],
+    quarantine: [{ id: "fwbq-browser-1", kind: "quarantine", state: "quarantined", origin_node_id: "node-browser-remote", origin_node_did: null, reason: "stale_snapshot_rejected", first_seen_at: "2026-09-05T10:04:00.000Z", last_seen_at: "2026-09-05T10:04:00.000Z", authority: "none", remote_execution: false, connector_spawning: false, files_shared: false, no_payment: true, no_settlement: true }],
+  };
+  await page.route("**/api/federated-workbench**", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (request.method() === "GET" && pathname === "/api/federated-workbench") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(browserFederatedOverview) });
+    }
+    if (request.method() === "POST" && pathname.endsWith("/import")) {
+      browserFederatedImportBody = request.postDataJSON();
+      browserFederatedOverview.tasks = browserFederatedOverview.tasks.map((task) => task.id === browserFederatedTask.id ? { ...task, state: "imported", importable: false, imported_session_id: "session-browser-fwb-1", imported_task_id: "task-browser-fwb-1" } : task);
+      browserFederatedOverview.status.imported_count = 1;
+      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ok: true, idempotent_replay: false, task: { id: "task-browser-fwb-1" }, session: { id: "session-browser-fwb-1", title: "Remote browser task", team_id: "home-room", agent: "technocore-specialist" }, status: browserFederatedOverview }) });
+    }
+    return route.continue();
+  });
   await page.route("**/api/shared-workspaces**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
@@ -637,6 +700,11 @@ try {
     contentType: "application/json",
     body: JSON.stringify({ ...browserTclkSession, id: "session-browser-subtask-1", title: "Browser subtask workspace", agent: "coder", status: "done" }),
   }));
+  await page.route("**/api/sessions/session-browser-fwb-1", async (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ ...browserTclkSession, id: "session-browser-fwb-1", title: "Remote browser task", agent: "technocore-specialist", team_id: "home-room", connector_status: "disconnected" }),
+  }));
   await page.route("**/api/health", async (route) => {
     const response = await route.fetch();
     const payload = await response.json();
@@ -868,6 +936,25 @@ try {
   await page.getByRole("button", { name: "Confirm revoke" }).click();
   await expectText(page, "body", "REVOKED");
   assert(!(await page.locator("body").innerText()).match(/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}|\bsig\b/i), "Vault registry UI should not render raw signatures or signing material");
+  await page.getByRole("button", { name: "Work", exact: true }).click();
+  await expectText(page, '[data-testid="federated-workbench"]', "Federated Workbench");
+  await expectText(page, '[data-testid="federated-workbench"]', "Remote browser task");
+  await expectText(page, '[data-testid="federated-workbench"]', "VERIFIED");
+  assert(!(await page.getByTestId("federated-workbench").innerText()).match(/privateKey|PRIVATE KEY|seed|pkcs8|signature:\s*[A-Za-z0-9_-]{32,}|\/home|\/tmp|[A-Za-z]:\\/i), "Federated Workbench UI should not render signatures, key material, or filesystem paths");
+  await page.locator('[data-testid="federated-workbench"]').getByRole("button", { name: "Stale (1)" }).click();
+  await expectText(page, '[data-testid="federated-workbench"]', "Remote stale task");
+  await page.locator('[data-testid="federated-workbench"]').getByRole("button", { name: "Untrusted (1)" }).click();
+  await expectText(page, '[data-testid="federated-workbench"]', "Remote untrusted task");
+  await page.locator('[data-testid="federated-workbench"]').getByRole("button", { name: "Quarantine (1)" }).click();
+  await expectText(page, '[data-testid="federated-workbench"]', "stale_snapshot_rejected");
+  await page.locator('[data-testid="federated-workbench"]').getByRole("button", { name: "Verified (1)" }).click();
+  await page.getByRole("button", { name: "Review import" }).click();
+  assert(browserFederatedImportBody === null, "Federated Workbench UI must not import before the second explicit confirmation");
+  await expectText(page, "body", "Import verified task into Home?");
+  await page.getByRole("button", { name: "Confirm import" }).click();
+  assert(browserFederatedImportBody?.confirmation === "import-federated-task" && browserFederatedImportBody?.idempotency_key, "Federated Workbench import should send only explicit confirmation and idempotency");
+  assert(!browserFederatedImportBody?.command && !browserFederatedImportBody?.files && !browserFederatedImportBody?.connector && !browserFederatedImportBody?.payment, "Federated Workbench import UI must not send command/file/connector/payment fields");
+  await expectText(page, "body", "Remote browser task");
   await page.getByRole("button", { name: "Work", exact: true }).click();
   await expectText(page, "body", "Find Agent by Skill");
   await page.getByRole("combobox", { name: "Skill search" }).fill("coding");

@@ -27,7 +27,7 @@ try {
   await assertSignatureEnforcement(nodeA, nodeB);
   await assertPeerAnnouncements(nodeA, nodeB, userB.headers);
   await assertTrustedPeerDiscovery(nodeA, nodeB, nodeC, userA.headers);
-  await assertPublicProjectSharing(nodeA, nodeB);
+  await assertPublicProjectSharing(nodeA, nodeB, userA.headers, userB.headers);
   await assertNetworkChatFederation(nodeA, nodeB, userB.headers);
 
   const proposal = await createProposal(nodeA, userA.headers);
@@ -258,6 +258,7 @@ async function startNode(label, port, peerPorts) {
     federationHeaders: { "x-osa-federation-token": federationToken }
   };
   await waitForHealth(node);
+  node.snapshotNodeId = (await getJson(node, "/api/federation/snapshot", node.federationHeaders)).node.nodeId;
   return node;
 }
 
@@ -377,7 +378,7 @@ async function sync(from, to) {
   return imported;
 }
 
-async function assertPublicProjectSharing(nodeA, nodeB) {
+async function assertPublicProjectSharing(nodeA, nodeB, headersA, headersB) {
   const shareA = await createAndShareDashboardProject(nodeA, "Node A Alpha Project", "A private revenue project");
   const idA = shareA.project.id.replace("public-project-", "");
   assert(idA !== "project-local", "shared project ids should be scoped to the publishing node");
@@ -408,10 +409,31 @@ async function assertPublicProjectSharing(nodeA, nodeB) {
   });
   await sync(nodeA, nodeB);
   await expectPostStatus(nodeB, "/api/federation/import", 409, { snapshot: firstSnapshotA }, nodeB.federationHeaders);
+  const staleWorkbenchB = await getJson(nodeB, "/api/federated-workbench", headersB);
+  assert(staleWorkbenchB.quarantine.some((item) => item.reason === "stale_snapshot_rejected"), "Federated Workbench should quarantine stale peer snapshots without rolling back task projection");
   await assertTopProjects(nodeB, ["Node A Alpha Project"]);
   await assertTopProject(nodeB, "Node A Alpha Project", (project) => project.donation_total_flop === 2, "FLOP pledge totals should federate");
   await assertTopProject(nodeB, "Node A Alpha Project", (project) => project.review_count === 1, "project reviews should federate");
   await assertNoImportedHomeDesk(nodeB, "A private revenue project");
+  const workbenchB = await getJson(nodeB, "/api/federated-workbench", headersB);
+  const taskA = workbenchB.tasks.find((item) => item.title === "A private revenue project");
+  assert(taskA?.trust?.state === "verified" && taskA.importable === true, "node B should project node A public task as a verified inspect-only Workbench record");
+  assert(taskA.identity_binding.node_id === nodeA.snapshotNodeId && taskA.identity_binding.task_id, "Federated Workbench tasks should bind exact origin node and task ids");
+  assert(taskA.remote_execution === false && taskA.connector_spawning === false && taskA.no_payment === true && taskA.no_settlement === true, "Federated Workbench projection must carry no-execution and no-settlement semantics");
+  assert(!/signature|privateKey|BEGIN|secret|osa_conn_|\/tmp|\/home|[A-Za-z]:\\/i.test(JSON.stringify(taskA)), "Federated Workbench browser payload should not expose raw signatures, secrets, connector tokens, or filesystem paths");
+  const beforeImportSessions = await getJson(nodeB, "/api/sessions");
+  const beforeHomeDeskCount = beforeImportSessions.filter((session) => session.team_id === "home-room").length;
+  const imported = await postJson(nodeB, `/api/federated-workbench/${encodeURIComponent(taskA.id)}/import`, { idempotency_key: "fwb-import-node-a-alpha", confirmation: "import-federated-task" }, headersB);
+  assert(imported.session?.id && imported.task?.id, "confirmed Federated Workbench import should create one local private desk record");
+  const importedRetry = await postJson(nodeB, `/api/federated-workbench/${encodeURIComponent(taskA.id)}/import`, { idempotency_key: "fwb-import-node-a-alpha", confirmation: "import-federated-task" }, headersB);
+  assert(importedRetry.idempotent_replay === true && importedRetry.session.id === imported.session.id, "Federated Workbench import retries should be idempotent");
+  const afterImportSessions = await getJson(nodeB, "/api/sessions");
+  assert(afterImportSessions.filter((session) => session.id === imported.session.id).length === 1, "Federated Workbench import should not duplicate desks");
+  assert(afterImportSessions.filter((session) => session.team_id === "home-room").length === beforeHomeDeskCount + 1, "Federated Workbench import should create exactly one private Home desk after confirmation");
+  const importedSession = afterImportSessions.find((session) => session.id === imported.session.id);
+  assert(importedSession?.team_id === "home-room" && !importedSession.connector_status && importedSession.is_running === false, "Imported federated tasks should stay private and disconnected until local action");
+  const workbenchAfterImport = await getJson(nodeB, "/api/federated-workbench", headersB);
+  assert(workbenchAfterImport.tasks.find((item) => item.id === taskA.id)?.state === "imported", "Federated Workbench should persist imported state on the projection");
 
   const shareB = await createAndShareDashboardProject(nodeB, "Node B Beta Project", "B private security project");
   const idB = shareB.project.id.replace("public-project-", "");
@@ -421,6 +443,8 @@ async function assertPublicProjectSharing(nodeA, nodeB) {
   await assertTopProjects(nodeA, ["Node A Alpha Project", "Node B Beta Project"]);
   await assertTopProjects(nodeB, ["Node A Alpha Project", "Node B Beta Project"]);
   await assertNoImportedHomeDesk(nodeA, "B private security project");
+  const workbenchA = await getJson(nodeA, "/api/federated-workbench", headersA);
+  assert(workbenchA.tasks.some((item) => item.title === "B private security project" && item.trust.state === "verified"), "node A should inspect node B public task through Federated Workbench");
 
   await postJson(nodeB, `/api/sessions/${encodeURIComponent(shareA.project.id)}/copy`, {});
   await assertSignedCopyEventTamperRejected(nodeB, nodeA, idA);

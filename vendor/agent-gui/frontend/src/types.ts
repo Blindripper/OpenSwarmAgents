@@ -562,6 +562,90 @@ export interface SharedWorkspaceOverview {
   rooms: SharedWorkspaceRoom[];
 }
 
+export interface FederatedWorkbenchTask {
+  id: string;
+  kind: "task" | string;
+  state: "verified" | "stale" | "untrusted" | "imported" | string;
+  importable: boolean;
+  origin_node_id: string;
+  origin_node_did?: string | null;
+  origin_agent_id?: string | null;
+  origin_agent_name?: string | null;
+  origin_agent_did?: string | null;
+  task_id: string;
+  goal_id?: string | null;
+  goal_title?: string | null;
+  title: string;
+  summary: string;
+  status: string;
+  task_type: string;
+  required_capabilities: string[];
+  priority: number;
+  created_at: string;
+  updated_at: string;
+  last_seen_at: string;
+  imported_session_id?: string | null;
+  imported_task_id?: string | null;
+  trust: { state: "verified" | "stale" | "untrusted" | string; stale: boolean; verified: boolean; reason?: string };
+  identity_binding: { node_id: string; node_did?: string | null; agent_id?: string | null; agent_did?: string | null; task_id: string; goal_id?: string | null };
+  provenance: { source: string; node_id: string; observed_at: string; head?: string | null; source_hash: string };
+  authority: "inspect_only" | string;
+  remote_execution: false;
+  connector_spawning: false;
+  files_shared: false;
+  no_payment: true;
+  no_settlement: true;
+  source_hash: string;
+}
+
+export interface FederatedWorkbenchQuarantine {
+  id: string;
+  kind: "quarantine" | string;
+  state: "quarantined" | string;
+  origin_node_id?: string | null;
+  origin_node_did?: string | null;
+  reason: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  authority: "none" | string;
+  remote_execution: false;
+  connector_spawning: false;
+  files_shared: false;
+  no_payment: true;
+  no_settlement: true;
+}
+
+export interface FederatedWorkbenchOverview {
+  schema: "osa-federated-workbench/1" | string;
+  version: number;
+  generated_at: string;
+  policy: {
+    visibility: string;
+    authority: string;
+    signatures_mean: string;
+    no_automatic_execution: boolean;
+    remote_execution: false;
+    connector_spawning: false;
+    files_shared: false;
+    no_payment: true;
+    no_settlement: true;
+  };
+  status: {
+    enabled: boolean;
+    stale_after_ms: number;
+    task_count: number;
+    verified_count: number;
+    stale_count: number;
+    untrusted_count: number;
+    imported_count: number;
+    quarantine_count: number;
+    last_import_at?: string | null;
+    last_error?: string | null;
+  };
+  tasks: FederatedWorkbenchTask[];
+  quarantine: FederatedWorkbenchQuarantine[];
+}
+
 export interface ProtocolA2AObservation {
   id: string;
   profile: string;

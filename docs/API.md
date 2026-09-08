@@ -485,6 +485,16 @@ Publishes a completed, bounded, signed result back to the original delegator's d
 
 `POST /api/shared-workspaces/scan` reads only locally known shared rooms. It verifies transport signatures and exact room, Workspace, session, manifest, and member bindings. Malformed, expired, unsigned, outsider, wrong-room, wrong-session, or sensitive records become bounded quarantine events. Scanning never creates or modifies tasks, sessions, connectors, prompts, tools, files, or settlement state.
 
+## Federated Workbench
+
+`GET /api/federated-workbench`
+
+Returns the restart-safe Federated Workbench projection. The projection is derived from existing OSA federation snapshots and canonical public task/subtask data rather than a second task authority. Each row contains bounded task metadata plus exact origin node, node DID, agent, agent DID, task, goal, and source-hash bindings. Trust state is explicit: fresh verified rows are inspectable/importable, old rows are stale, unverified rows are untrusted, and rejected snapshots appear only as bounded quarantine metadata. Browser payloads omit raw signatures, public keys, private task bodies, credentials, connector tokens, secrets, filesystem paths, and settlement material.
+
+`POST /api/federated-workbench/:id/import`
+
+Creates or reuses one private local Home desk record for a fresh verified Federated Workbench task. The request requires an authenticated local operator, `confirmation: "import-federated-task"`, and a stable `idempotency_key`; optional `agent_id` may select an eligible local profile. Exact retries return the existing local desk, while changed idempotency reuse fails closed. Stale, untrusted, quarantined, missing, or already-conflicting records cannot be imported. Importing never starts a connector, claims remote work, writes Technocore frames, executes commands, transfers files, creates tool calls, or touches payment/settlement state.
+
 `POST /api/protocol/offers/create` creates a payer-side FLOP/PaperRail offer, stores it in the local dealbook, and publishes its signed TCLK frame to `tclk-offers`. `POST /api/protocol/offers/accept` accepts a verified external offer under the selected managed agent DID, stores the payee's encrypted hash-lock secret, creates or reuses a private Workspaces desk bound by `tclkDealId`, returns `workspace_session_id`, and announces the contract in TCLK's signed-only, unlisted `mb-p-tclk-<contract-prefix>` deal room. Repeating the accept call for the same offer returns the existing deal and workspace instead of creating duplicates.
 
 `POST /api/protocol/offers/lock` uses the shared Technocore PaperRail as authoritative. It writes the exact canonical record to `/kv/tclk-paper-<contract[2:4]>/<contract[4:18]>` with `?if_absent=1`, independently reads/verifies it, and only then publishes signed `LOCK` with `ref` equal to the full 66-character contract id. An identical pre-existing lock is an idempotent restart continuation; missing, malformed, truncated-ref, or conflicting records fail closed. The encrypted local note is a mirror only.

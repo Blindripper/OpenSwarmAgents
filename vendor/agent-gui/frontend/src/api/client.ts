@@ -1,4 +1,4 @@
-import type { ActivityEvent, AgentCapabilities, AgentMailboxMessage, AgentMailboxOverview, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolA2AOverview, ProtocolOverview, ProtocolPaperDeal, PublicProjectDetail, PublicProjectReview, Session, SharedWorkspaceOverview, SharedWorkspaceRoom, SubagentRecord, SubtaskDelegationOverview, SubtaskDelegationRecord, TodoData, TopAgent, WorkerEvent } from "../types";
+import type { ActivityEvent, AgentCapabilities, AgentMailboxMessage, AgentMailboxOverview, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FederatedWorkbenchOverview, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolA2AOverview, ProtocolOverview, ProtocolPaperDeal, PublicProjectDetail, PublicProjectReview, Session, SharedWorkspaceOverview, SharedWorkspaceRoom, SubagentRecord, SubtaskDelegationOverview, SubtaskDelegationRecord, TodoData, TopAgent, WorkerEvent } from "../types";
 
 const BASE = "/api";
 const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
@@ -417,6 +417,11 @@ export const api = {
     scan: () => post<SharedWorkspaceOverview>("/shared-workspaces/scan", {}),
     publishNote: (workspaceId: string, body: { agent_id: string; text: string; idempotency_key: string; private_room_warning_acknowledged: true; publish_confirmation: true }) =>
       post<{ ok: boolean; idempotent_replay: boolean; room: SharedWorkspaceRoom; event: SharedWorkspaceRoom["events"][number] }>(`/shared-workspaces/${encodeURIComponent(workspaceId)}/notes`, body),
+  },
+  federatedWorkbench: {
+    overview: (signal?: AbortSignal) => get<FederatedWorkbenchOverview>("/federated-workbench", signal),
+    importTask: (id: string, body: { idempotency_key: string; confirmation: "import-federated-task"; agent_id?: string }) =>
+      post<{ ok: boolean; idempotent_replay: boolean; task: { id: string }; session: Session; status: FederatedWorkbenchOverview }>(`/federated-workbench/${encodeURIComponent(id)}/import`, body),
   },
   subtaskDelegations: {
     overview: (signal?: AbortSignal) => get<SubtaskDelegationOverview>("/subtask-delegations", signal),

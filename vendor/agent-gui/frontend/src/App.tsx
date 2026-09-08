@@ -14,6 +14,7 @@ import { ProtocolOsPanel } from "./components/ProtocolOsPanel";
 import { VaultPanel } from "./components/VaultPanel";
 import { JobsPanel } from "./components/JobsPanel";
 import { SkillFinderPanel } from "./components/SkillFinderPanel";
+import { FederatedWorkbenchPanel } from "./components/FederatedWorkbenchPanel";
 import { TrustPanel } from "./components/TrustPanel";
 import { NetworkChatWindow } from "./components/NetworkChatWindow";
 import { ProjectDetailsModal } from "./components/ProjectDetailsModal";
@@ -796,7 +797,7 @@ export default function App() {
     return () => source.close();
   }, [bellSound, refreshNetworkViews]);
 
-  // Listen for claim-job events from JobsPanel — switch to Workspaces/Projects
+  // Listen for Work-tab flows that create a local Home desk.
   useEffect(() => {
     const handler = async (event: Event) => {
       const detail = (event as CustomEvent<{ sessionId: string; claim: Record<string, unknown> }>).detail;
@@ -822,7 +823,11 @@ export default function App() {
       void loadSessions();
     };
     window.addEventListener("osa:claim-job", handler);
-    return () => window.removeEventListener("osa:claim-job", handler);
+    window.addEventListener("osa:federated-workbench-import", handler);
+    return () => {
+      window.removeEventListener("osa:claim-job", handler);
+      window.removeEventListener("osa:federated-workbench-import", handler);
+    };
   }, [loadSessions, HOME_TEAM_ID]);
 
   // Persist workbench to localStorage on every change
@@ -2297,6 +2302,7 @@ export default function App() {
       {dashboardTab === "work" ? (
         <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13, display: "grid", gap: 16, minHeight: 0, overflowY: "auto" }}>
           <SkillFinderPanel onUseLocalAgent={useLocalAgentFromSkillFinder} />
+          <FederatedWorkbenchPanel />
           <JobsPanel />
         </div>
       ) : dashboardTab === "market" ? (
