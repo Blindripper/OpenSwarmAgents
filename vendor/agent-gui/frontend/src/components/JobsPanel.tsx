@@ -68,6 +68,8 @@ export function JobsPanel() {
   const [claimBusy, setClaimBusy] = useState<string | null>(null);
   const [expandedResult, setExpandedResult] = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(true);
+  const [showAllLocal, setShowAllLocal] = useState(false);
+  const [showAllTechnocore, setShowAllTechnocore] = useState(false);
 
   // Post-job form state
   const [showPostForm, setShowPostForm] = useState(false);
@@ -180,6 +182,8 @@ export function JobsPanel() {
 
   // Only show jobs that can still be claimed (not claimed yet)
   const claimableJobs = localJobs.filter((job) => !claims.some((c) => c.job_id === job.seq));
+  const visibleLocalJobs = showAllLocal ? claimableJobs : claimableJobs.slice(0, 8);
+  const visibleTechnocoreJobs = showAllTechnocore ? technocoreJobs : technocoreJobs.slice(0, 8);
   // Completed/in-progress claims for the collapsible section
   const myJobs = claims;
 
@@ -189,13 +193,20 @@ export function JobsPanel() {
         <button type="button" onClick={() => void refresh()} style={{ marginLeft: 8, height: 26, padding: "0 10px", borderRadius: 4, border: "1px solid #475569", background: "#172033", color: "#cbd5e1", fontSize: 12, cursor: "pointer" }}>Retry</button>
       </div>}
 
-      {/* ── Post a Job ── */}
       <section style={{ border: "1px solid #273453", borderRadius: 10, padding: 16, background: "#0b1525" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 12 }}>
-          <div style={{ fontSize: 17, fontWeight: 900 }}>📋 Post a Job</div>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 900 }}>Jobs</div>
+            <div style={{ marginTop: 4, color: "var(--text-dim)", fontSize: 12 }}>Create work, claim open tasks, and review your active job receipts.</div>
+          </div>
           <button type="button" onClick={() => setShowPostForm(!showPostForm)} style={{ height: 30, padding: "0 14px", borderRadius: 6, border: "1px solid #2a3558", background: "#121828", color: "#94a3b8", fontSize: 13, cursor: "pointer", fontWeight: 700 }}>
             {showPostForm ? "Cancel" : "+ New Job"}
           </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(110px,1fr))", gap: 8, marginBottom: 12 }}>
+          <div style={{ border: "1px solid #1e2a45", borderRadius: 8, padding: "9px 10px", background: "#09111e" }}><div style={{ color: "#93c5fd", fontWeight: 950, fontSize: 18 }}>{claimableJobs.length}</div><div style={{ color: "#94a3b8", fontSize: 11 }}>Open local</div></div>
+          <div style={{ border: "1px solid #1e2a45", borderRadius: 8, padding: "9px 10px", background: "#09111e" }}><div style={{ color: "#7ee0c2", fontWeight: 950, fontSize: 18 }}>{technocoreJobs.length}</div><div style={{ color: "#94a3b8", fontSize: 11 }}>Technocore</div></div>
+          <div style={{ border: "1px solid #1e2a45", borderRadius: 8, padding: "9px 10px", background: "#09111e" }}><div style={{ color: "#fde68a", fontWeight: 950, fontSize: 18 }}>{myJobs.length}</div><div style={{ color: "#94a3b8", fontSize: 11 }}>My claims</div></div>
         </div>
         {showPostForm && (
           <div style={{ display: "grid", gap: 10 }}>
@@ -271,18 +282,17 @@ export function JobsPanel() {
               )}
             </div>
             {postError && <div style={{ color: "#fca5a5", fontSize: 13 }}>{postError}</div>}
-            {postSuccess && <div style={{ color: "#7ee0c2", fontSize: 13 }}>Job posted! ✅</div>}
+              {postSuccess && <div style={{ color: "#7ee0c2", fontSize: 13 }}>Job posted.</div>}
           </div>
         )}
       </section>
 
-      {/* ── Technocore Jobs ── */}
       {technocoreJobs.length > 0 && (
         <section style={{ border: "1px solid #273453", borderRadius: 10, padding: 16, background: "#0b1525" }}>
-          <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 4 }}>🌐 Technocore Jobs</div>
+          <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 4 }}>Technocore Jobs</div>
           <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 12 }}>Jobs discovered in Technocore rooms (<b>kibble</b>, <b>credence</b>).</div>
           <div style={{ display: "grid", gap: 8 }}>
-            {technocoreJobs.map((job, idx) => {
+            {visibleTechnocoreJobs.map((job, idx) => {
               const jobId = `${job.room}:${job.seq}`;
               const isClaimed = claims.some((c) => c.job_id === jobId);
               const title = extractTitle(job.text);
@@ -296,7 +306,7 @@ export function JobsPanel() {
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 12 }}>
                       <span style={{ padding: "1px 6px", borderRadius: 4, background: roomBadge.bg, color: roomBadge.color, fontSize: 11, fontWeight: 700, border: `1px solid ${roomBadge.color}33` }}>{roomBadge.label}</span>
                       <span style={{ color: "var(--text-dim)" }}>von <b style={{ color: "#94a3b8" }}>{job.from}</b></span>
-                      {reward && <span style={{ color: "#facc15", fontWeight: 700 }}>💰 {reward}</span>}
+                      {reward && <span style={{ color: "#facc15", fontWeight: 700 }}>{reward}</span>}
                     </div>
                     <div style={{ color: "#94a3b8", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", maxHeight: 44, lineHeight: 1.4 }}>{job.text.slice(0, 240)}</div>
                   </div>
@@ -307,27 +317,27 @@ export function JobsPanel() {
                       onClick={() => void claimJob(jobId, job.text, job.room)}
                       style={{ height: 32, padding: "0 16px", borderRadius: 6, border: "1px solid #2a8c72", background: claimBusy === jobId ? "#18251f" : "#16a37b", color: "white", fontSize: 13, fontWeight: 900, cursor: claimBusy === jobId ? "default" : "pointer", whiteSpace: "nowrap" }}
                     >
-                      {claimBusy === jobId ? "⚙️ Claiming…" : "⚡ Claim"}
+                      {claimBusy === jobId ? "Claiming..." : "Claim"}
                     </button>
                   ) : (
-                    <span style={{ padding: "3px 10px", borderRadius: 999, background: "#10251f", color: "#7ee0c2", fontSize: 11, fontWeight: 800, border: "1px solid #2a8c72", whiteSpace: "nowrap" }}>✅ Claimed</span>
+                    <span style={{ padding: "3px 10px", borderRadius: 999, background: "#10251f", color: "#7ee0c2", fontSize: 11, fontWeight: 800, border: "1px solid #2a8c72", whiteSpace: "nowrap" }}>Claimed</span>
                   )}
                 </div>
               );
             })}
           </div>
+          {technocoreJobs.length > visibleTechnocoreJobs.length && <button type="button" onClick={() => setShowAllTechnocore(true)} style={{ marginTop: 10, height: 30, padding: "0 12px", borderRadius: 6, border: "1px solid #2a3558", background: "#121828", color: "#cbd5e1", fontSize: 12, fontWeight: 800 }}>Show all {technocoreJobs.length} Technocore jobs</button>}
         </section>
       )}
 
-      {/* ── Available Jobs (only claimable) ── */}
       <section style={{ border: "1px solid #273453", borderRadius: 10, padding: 16, background: "#0b1525" }}>
-        <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 4 }}>🛠️ Available Jobs</div>
+        <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 4 }}>Available Jobs</div>
         <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 12 }}>Only jobs you can still claim.</div>
         {claimableJobs.length === 0 ? (
-          <div style={{ color: "var(--text-dim)", fontSize: 14, padding: "18px 4px" }}>No available jobs. Post one above! 🎯</div>
+          <div style={{ color: "var(--text-dim)", fontSize: 14, padding: "18px 4px" }}>No available jobs.</div>
         ) : (
           <div style={{ display: "grid", gap: 8 }}>
-            {claimableJobs.map((job, idx) => {
+            {visibleLocalJobs.map((job, idx) => {
               const jobId = job.seq;
               const title = extractTitle(job.text);
               const firstLine = job.text.split("\n")[0];
@@ -337,7 +347,7 @@ export function JobsPanel() {
                 <div key={idx} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", padding: "12px 14px", border: "1px solid #1e2a45", borderRadius: 8, background: "linear-gradient(90deg, rgba(34,211,238,0.05), rgba(15,23,42,0.4))" }}>
                   <div style={{ display: "grid", gap: 4, minWidth: 0, flex: 1 }}>
                     <div style={{ color: "#93c5fd", fontWeight: 800, fontSize: 14 }}>{title || "Untitled task"}</div>
-                    {reward && <div style={{ color: "#facc15", fontSize: 12, fontWeight: 700 }}>💰 {reward}</div>}
+                    {reward && <div style={{ color: "#facc15", fontSize: 12, fontWeight: 700 }}>{reward}</div>}
                     <div style={{ color: "#94a3b8", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", maxHeight: 44, lineHeight: 1.4 }}>{job.text.slice(0, 240)}</div>
                   </div>
                   <button
@@ -346,16 +356,16 @@ export function JobsPanel() {
                     onClick={() => void claimJob(jobId, job.text)}
                     style={{ height: 32, padding: "0 16px", borderRadius: 6, border: "1px solid #2a8c72", background: claimBusy === jobId ? "#18251f" : "#16a37b", color: "white", fontSize: 13, fontWeight: 900, cursor: claimBusy === jobId ? "default" : "pointer", whiteSpace: "nowrap" }}
                   >
-                    {claimBusy === jobId ? "⚙️ Claiming…" : "⚡ Claim"}
+                    {claimBusy === jobId ? "Claiming..." : "Claim"}
                   </button>
                 </div>
               );
             })}
           </div>
         )}
+        {claimableJobs.length > visibleLocalJobs.length && <button type="button" onClick={() => setShowAllLocal(true)} style={{ marginTop: 10, height: 30, padding: "0 12px", borderRadius: 6, border: "1px solid #2a3558", background: "#121828", color: "#cbd5e1", fontSize: 12, fontWeight: 800 }}>Show all {claimableJobs.length} local jobs</button>}
       </section>
 
-      {/* ── My Jobs — collapsible, completed + in-progress details ── */}
       {myJobs.length > 0 && (
         <section style={{ border: "1px solid #273453", borderRadius: 10, padding: "12px 16px", background: "#0b1525" }}>
           <button
@@ -364,7 +374,7 @@ export function JobsPanel() {
             style={{ width: "100%", display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", background: "none", border: "none", cursor: "pointer", padding: "4px 0", color: "inherit" }}
           >
             <div style={{ fontSize: 17, fontWeight: 900 }}>
-              📦 My Completed Jobs <span style={{ fontSize: 12, color: "var(--text-dim)", fontWeight: 600 }}>({myJobs.length})</span>
+              My Jobs <span style={{ fontSize: 12, color: "var(--text-dim)", fontWeight: 600 }}>({myJobs.length})</span>
             </div>
             <div style={{ color: "var(--accent2)", fontSize: 18, fontWeight: 900, transform: showCompleted ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▶</div>
           </button>
@@ -406,7 +416,7 @@ export function JobsPanel() {
                       <div style={{ padding: "4px 14px 14px", display: "grid", gap: 8, borderTop: "1px solid #1e2a45" }}>
                         {c.session_id && (
                           <div style={{ fontSize: 12, color: "#38bdf8" }}>
-                            🔗 Workspace-Session: <code style={{ fontSize: 11 }}>{c.session_id.slice(0, 40)}…</code>
+                            Workspace session: <code style={{ fontSize: 11 }}>{c.session_id.slice(0, 40)}…</code>
                           </div>
                         )}
                         {result ? (

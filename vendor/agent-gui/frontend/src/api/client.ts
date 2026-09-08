@@ -1,4 +1,4 @@
-import type { ActivityEvent, AgentCapabilities, AgentMailboxMessage, AgentMailboxOverview, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FederatedWorkbenchOverview, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, MatchmakingOverview, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolA2AOverview, ProtocolOverview, ProtocolPaperDeal, PublicProjectDetail, PublicProjectReview, Session, SharedWorkspaceOverview, SharedWorkspaceRoom, SkillRegistryOverview, SubagentRecord, SubtaskDelegationOverview, SubtaskDelegationRecord, TodoData, TopAgent, WorkerEvent } from "../types";
+import type { ActivityEvent, AgentCapabilities, AgentMailboxMessage, AgentMailboxOverview, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FederatedWorkbenchOverview, FileNode, FilePreviewData, FlopMinerOverview, FlopValidatorOverview, LlmProvider, ManagerAuditRecord, MatchmakingOverview, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolA2AOverview, ProtocolOverview, ProtocolPaperDeal, PublicProjectDetail, PublicProjectReview, Session, SharedWorkspaceOverview, SharedWorkspaceRoom, SkillRegistryOverview, SubagentRecord, SubtaskDelegationOverview, SubtaskDelegationRecord, TodoData, TopAgent, WorkerEvent } from "../types";
 
 const BASE = "/api";
 const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
@@ -446,6 +446,10 @@ export const api = {
       if (params.candidate_limit) query.set("candidate_limit", String(params.candidate_limit));
       return get<MatchmakingOverview>(`/matchmaking${query.toString() ? `?${query.toString()}` : ""}`, signal);
     },
+  },
+  flop: {
+    miner: (signal?: AbortSignal) => get<FlopMinerOverview>("/flop/miner", signal),
+    validator: (signal?: AbortSignal) => get<FlopValidatorOverview>("/flop/validator", signal),
   },
   subtaskDelegations: {
     overview: (signal?: AbortSignal) => get<SubtaskDelegationOverview>("/subtask-delegations", signal),

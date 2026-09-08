@@ -741,6 +741,57 @@ export interface MatchmakingOverview {
   matches: MatchmakingEntry[];
 }
 
+export interface FlopGpuProbe {
+  available: boolean;
+  source: string;
+  error?: string | null;
+  gpus: { index: number; name: string; memory_total_mb: number | null; driver_version?: string | null }[];
+}
+
+export interface FlopOperatorCheck {
+  id: string;
+  label: string;
+  status: "ready" | "warning" | "manual" | "blocked" | "planned" | string;
+  detail: string;
+  evidence?: string | null;
+}
+
+export interface FlopOperatorLifecycleStep {
+  id: string;
+  label: string;
+  state: "manual_required" | "not_started" | "planned" | "ready" | string;
+  detail: string;
+}
+
+export interface FlopMinerOverview {
+  schema: "osa-flop-miner-console/1" | string;
+  version: number;
+  generated_at: string;
+  yellowpaper: { url: string; sections: string[]; summary: string };
+  mode: string;
+  overall_status: string;
+  readiness_score: number;
+  compute: { gpu_probe: FlopGpuProbe; cpu_threads: number; memory_total_gb: number; memory_free_gb: number; cuda_visible: boolean };
+  lifecycle: FlopOperatorLifecycleStep[];
+  readiness: FlopOperatorCheck[];
+  authority: { kind: string; gpu_leasing: false; miner_registration: false; model_registration: false; session_acceptance: false; connector_spawning: false; payment: false; settlement: false; note: string };
+}
+
+export interface FlopValidatorOverview {
+  schema: "osa-flop-validator-console/1" | string;
+  version: number;
+  generated_at: string;
+  yellowpaper: { url: string; sections: string[]; summary: string };
+  mode: string;
+  overall_status: string;
+  readiness_score: number;
+  requirements: { self_stake_floor: string; min_self_stake_ratio: string; committee_gate: string; heavy_duties: string[] };
+  compute: { gpu_probe: FlopGpuProbe; cpu_threads: number; memory_total_gb: number; memory_free_gb: number; cuda_visible: boolean };
+  lifecycle: FlopOperatorLifecycleStep[];
+  readiness: FlopOperatorCheck[];
+  authority: { kind: string; validator_registration: false; stake_bonding: false; block_authoring: false; finality_voting: false; attestation_signing: false; da_publishing: false; payment: false; settlement: false; note: string };
+}
+
 export interface ProtocolA2AObservation {
   id: string;
   profile: string;

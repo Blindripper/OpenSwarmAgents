@@ -478,6 +478,42 @@ try {
     if (request.method() !== "GET") return route.continue();
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(browserMatchmaking) });
   });
+  const browserFlopGpuProbe = { available: true, source: "fixture", error: null, gpus: [{ index: 0, name: "Browser RTX Fixture", memory_total_mb: 24576, driver_version: "999.99" }] };
+  await page.route("**/api/flop/miner", async (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      schema: "osa-flop-miner-console/1",
+      version: 1,
+      generated_at: "2026-09-08T14:30:00.000Z",
+      yellowpaper: { url: "https://flop.finance/intro/yellowpaper/", sections: ["3", "4", "Appendix C"], summary: "Miners run attested inference, meter useful work, and settle only after verified receipts." },
+      mode: "readiness_only",
+      overall_status: "blocked",
+      readiness_score: 42,
+      compute: { gpu_probe: browserFlopGpuProbe, cpu_threads: 16, memory_total_gb: 64, memory_free_gb: 32, cuda_visible: false },
+      lifecycle: [{ id: "onboard", label: "Onboard", state: "manual_required", detail: "Bond stake, calibrate hardware, and register model availability." }],
+      readiness: [{ id: "gpu", label: "GPU visibility", status: "ready", detail: "1 NVIDIA GPU visible.", evidence: null }, { id: "wallet", label: "Wallet / stake", status: "blocked", detail: "Wallet verification and on-chain stake are required.", evidence: null }],
+      authority: { kind: "readiness_console_only", gpu_leasing: false, miner_registration: false, model_registration: false, session_acceptance: false, connector_spawning: false, payment: false, settlement: false, note: "This dashboard view does not lease GPU capacity, register stake, accept sessions, or claim payouts." },
+    })
+  }));
+  await page.route("**/api/flop/validator", async (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      schema: "osa-flop-validator-console/1",
+      version: 1,
+      generated_at: "2026-09-08T14:31:00.000Z",
+      yellowpaper: { url: "https://flop.finance/intro/yellowpaper/", sections: ["15"], summary: "Validators author blocks, finalize, attest miner proofs, and host DA." },
+      mode: "readiness_only",
+      overall_status: "blocked",
+      readiness_score: 33,
+      requirements: { self_stake_floor: "effective_minimum_stake; yellowpaper baseline 305,505 FLOP", min_self_stake_ratio: "20%", committee_gate: "recent verified PoUI work", heavy_duties: ["DA store-and-serve", "committee-keeping GPU work"] },
+      compute: { gpu_probe: browserFlopGpuProbe, cpu_threads: 16, memory_total_gb: 64, memory_free_gb: 32, cuda_visible: false },
+      lifecycle: [{ id: "register", label: "Register", state: "manual_required", detail: "Self-sign registration and freeze stake into ValidatorQueue." }],
+      readiness: [{ id: "stake", label: "Stake floor", status: "blocked", detail: "On-chain stake bonding is not available from the dashboard.", evidence: null }],
+      authority: { kind: "readiness_console_only", validator_registration: false, stake_bonding: false, block_authoring: false, finality_voting: false, attestation_signing: false, da_publishing: false, payment: false, settlement: false, note: "This dashboard view does not bond stake, join committees, author blocks, sign attestations, host DA, or move FLOP." },
+    })
+  }));
   await page.route("**/api/federated-workbench**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
@@ -803,14 +839,26 @@ try {
   await page.getByRole("button", { name: "Connect Wallet" }).click();
   await expectText(page, "body", "Home");
   await expectText(page, "body", "Project Network");
-  await expectText(page, "body", "Market & Deals");
+  await expectText(page, "body", "Miner");
+  await expectText(page, "body", "Validator");
+  await expectText(page, "body", "Market");
+  await expectText(page, "body", "Deals");
+  await expectText(page, "body", "Network");
+  await expectText(page, "body", "Trust & Vault");
   await expectText(page, "body", "osa-network");
   await expectText(page, "body", "DID");
   await expectText(page, "body", "z6MkvG");
   assert(await page.getByRole("button", { name: "Copy" }).count() >= 1, "topbar should expose a copyable DID when signing is active");
-  await page.getByRole("button", { name: "Market & Deals" }).click();
-  await expectText(page, "body", "TCLK Offer Observer");
-  await expectText(page, "body", "A2A Room Observer");
+  await page.getByRole("button", { name: "Miner", exact: true }).click();
+  await expectText(page, '[data-testid="flop-miner-panel"]', "Browser RTX Fixture");
+  await expectText(page, '[data-testid="flop-miner-panel"]', "NO GPU LEASING");
+  assert(!(await page.getByTestId("flop-miner-panel").innerText()).match(/privateKey|PRIVATE KEY|seed|secret|signature|\/home|\/tmp/i), "Miner UI should not render secrets or filesystem paths");
+  await page.getByRole("button", { name: "Validator", exact: true }).click();
+  await expectText(page, '[data-testid="flop-validator-panel"]', "305,505 FLOP");
+  await expectText(page, '[data-testid="flop-validator-panel"]', "NO STAKE BONDING");
+  assert(!(await page.getByTestId("flop-validator-panel").innerText()).match(/privateKey|PRIVATE KEY|seed|secret|signature|\/home|\/tmp/i), "Validator UI should not render secrets or filesystem paths");
+  await page.getByRole("button", { name: "Network", exact: true }).click();
+  await expectText(page, "body", "Network");
   await expectText(page, '[data-testid="shared-workspaces"]', "Shared Workspace Rooms");
   await page.getByRole("checkbox", { name: "Acknowledge shared room disclosure" }).check();
   await page.getByRole("button", { name: "Review team room" }).click();
@@ -873,7 +921,7 @@ try {
   await page.getByRole("button", { name: "Confirm and accept" }).click();
   await page.waitForFunction(() => Array.isArray(window.__subtaskClaims) && window.__subtaskClaims.some((item) => item.sessionId === "session-browser-subtask-1"));
   assert(browserSubtaskAcceptBody?.public_confirmation === true && browserSubtaskAcceptBody?.accept_confirmation === true, "accept flow should require the explicit confirmations");
-  await page.getByRole("button", { name: "Market & Deals" }).click();
+  await page.getByRole("button", { name: "Network", exact: true }).click();
   await expectText(page, '[data-testid="subtask-delegations"]', "Authoritative completed result preview");
   await expectText(page, '[data-testid="subtask-delegations"]', "Browser authoritative completed result");
   await page.getByRole("button", { name: "Publish signed result" }).click();
@@ -884,12 +932,13 @@ try {
     page.getByRole("button", { name: "Confirm and publish" }).click(),
   ]);
   assert(browserSubtaskPublishBody?.public_confirmation === true && browserSubtaskPublishBody?.publish_confirmation === true, "result publish should require explicit confirmation");
-  await page.getByRole("button", { name: "Market & Deals" }).click();
+  await page.getByRole("button", { name: "Network", exact: true }).click();
   await page.locator('[data-testid="subtask-delegations"]').getByRole("button", { name: "Results (1)" }).click();
   await expectText(page, '[data-testid="subtask-delegations"]', "Browser subtask signed result");
   assert(!browserSubtaskPublishBody?.result_text && !browserSubtaskPublishBody?.files && !browserSubtaskPublishBody?.secret, "result publish UI must send only the authoritative-result selector and confirmations");
   console.log("Subtask delegation browser flow passed.");
 
+  await page.getByRole("button", { name: "Deals", exact: true }).click();
   await page.getByRole("button", { name: "Accept Offer" }).click();
   await expectText(page, "body", "Browser TCLK workspace");
   assert((await getJson("/api/sessions")).some((session) => session.id === browserTclkSession.id) === false, "browser Accept test should not require a real backend task fixture");
@@ -973,7 +1022,7 @@ try {
   await expectText(page, "body", "Canvas");
   await expectText(page, "body", "Start a desk to show project results.");
   await page.locator('button[title="Minimize chat"]').click();
-  await page.getByRole("button", { name: "Vault" }).click();
+  await page.getByRole("button", { name: "Trust & Vault" }).click();
   await expectText(page, "body", "Capability Registry");
   await expectText(page, "body", "Local Agents");
   await expectText(page, "body", "technocore-specialist");
@@ -992,7 +1041,7 @@ try {
   await page.getByRole("button", { name: "Confirm revoke" }).click();
   await expectText(page, "body", "REVOKED");
   assert(!(await page.locator("body").innerText()).match(/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}|\bsig\b/i), "Vault registry UI should not render raw signatures or signing material");
-  await page.getByRole("button", { name: "Work", exact: true }).click();
+  await page.getByRole("button", { name: "Market", exact: true }).click();
   await expectText(page, '[data-testid="skill-registry"]', "Skill Registry");
   await expectText(page, '[data-testid="skill-registry"]', "Remote Coder");
   await expectText(page, '[data-testid="skill-registry"]', "CATALOG ONLY");
@@ -1004,6 +1053,7 @@ try {
   await expectText(page, '[data-testid="matchmaking"]', "RECOMMENDATION ONLY");
   await expectText(page, '[data-testid="matchmaking"]', "NO AUTO-BID");
   assert(!(await page.getByTestId("matchmaking").innerText()).match(/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}|\/home|\/tmp|[A-Za-z]:\\/i), "Matchmaking UI should not render signatures, key material, or filesystem paths");
+  await page.getByRole("button", { name: "Work", exact: true }).click();
   await expectText(page, '[data-testid="federated-workbench"]', "Federated Workbench");
   await expectText(page, '[data-testid="federated-workbench"]', "Remote browser task");
   await expectText(page, '[data-testid="federated-workbench"]', "VERIFIED");
@@ -1022,7 +1072,7 @@ try {
   assert(browserFederatedImportBody?.confirmation === "import-federated-task" && browserFederatedImportBody?.idempotency_key, "Federated Workbench import should send only explicit confirmation and idempotency");
   assert(!browserFederatedImportBody?.command && !browserFederatedImportBody?.files && !browserFederatedImportBody?.connector && !browserFederatedImportBody?.payment, "Federated Workbench import UI must not send command/file/connector/payment fields");
   await expectText(page, "body", "Remote browser task");
-  await page.getByRole("button", { name: "Work", exact: true }).click();
+  await page.getByRole("button", { name: "Market", exact: true }).click();
   await expectText(page, "body", "Find Agent by Skill");
   await page.getByRole("combobox", { name: "Skill search" }).fill("coding");
   await page.getByRole("button", { name: "Find Agents" }).click({ force: true });
@@ -1033,6 +1083,7 @@ try {
   await page.getByRole("button", { name: "Use Coder in Workspace" }).click({ force: true });
   await page.getByTestId("skill-finder").waitFor({ state: "detached" });
   assert(await page.getByTestId("skill-finder").count() === 0, "Using a local skill match should return to the existing pending Workspace flow");
+  await page.waitForFunction(() => document.querySelector("textarea") === document.activeElement, null, { timeout: 1500 });
   assert(await page.locator("textarea").first().evaluate((element) => element === document.activeElement), "Skill Finder should focus the selected pending desk without starting work automatically");
   await page.getByRole("button", { name: "Workspaces / Projects" }).click();
   await page.locator('button[title="Collapse canvas"]').click();
@@ -1227,19 +1278,19 @@ try {
   await expectText(page, "body", "Browser Saved Project");
   const afterProjectSaveSessions = await getJson("/api/sessions");
   assert(afterProjectSaveSessions.some((session) => session.id === created.session_id), "Saving the workbench should not end existing private project sessions");
-  await page.getByRole("button", { name: "Market & Deals" }).click();
-  await expectText(page, "body", "Technocore Protocol OS");
+  await page.getByRole("button", { name: "Deals", exact: true }).click();
+  await expectText(page, "body", "Deals");
   await expectText(page, "body", "TCLK Offer Observer");
   await expectText(page, "body", "PAPER / NO VALUE");
   await expectText(page, "body", "The complete deal lifecycle is enabled on PaperRail");
-  await page.getByRole("button", { name: "Deals", exact: true }).click();
+  await page.getByRole("button", { name: "Dealbook", exact: true }).click();
   await expectText(page, "body", "No PaperRail deals yet");
   await page.getByRole("button", { name: "Timeline", exact: true }).click();
   await expectText(page, "body", "No archived protocol records yet.");
-  await page.getByRole("button", { name: "OSA Activity" }).click();
+  await page.getByRole("button", { name: "Network", exact: true }).click();
   await expectText(page, "body", "OSA shares");
   await expectText(page, "body", "Network chat message");
-  await page.getByRole("button", { name: "Trust", exact: true }).click();
+  await page.getByRole("button", { name: "Trust & Vault" }).click();
   await expectText(page, "body", "Federated Reputation");
   await expectText(page, "body", "Accepted Results");
   await expectText(page, "body", "Counterparties");

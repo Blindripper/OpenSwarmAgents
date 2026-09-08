@@ -112,8 +112,8 @@ export function PendingTaskDesk({ deskIndex, scene, isActive, dropHighlight, ini
   })();
 
   useEffect(() => {
-    if (isActive && !sending) textRef.current?.focus();
-  }, [isActive, sending]);
+    if ((isActive || assignment?.agentId) && !sending) textRef.current?.focus();
+  }, [assignment?.agentId, isActive, sending]);
 
   async function handleDrop(e: React.DragEvent) {
     e.preventDefault();

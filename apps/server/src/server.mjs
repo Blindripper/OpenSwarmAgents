@@ -90,6 +90,7 @@ import {
   publicFederatedWorkbenchOverview,
 } from "./federated-workbench.mjs";
 import { buildMatchmakingView, normalizeMatchmakingJob } from "./matchmaking.mjs";
+import { buildFlopMinerStatus, buildFlopValidatorStatus } from "./flop-operator.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "../../..");
@@ -15381,6 +15382,14 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
 
   if (method === "GET" && path === "/api/matchmaking") {
     return sendJson(res, 200, publicMatchmakingStatus(url));
+  }
+
+  if (method === "GET" && path === "/api/flop/miner") {
+    return sendJson(res, 200, buildFlopMinerStatus({ runtime: publicRuntime(), walletConnected: false }));
+  }
+
+  if (method === "GET" && path === "/api/flop/validator") {
+    return sendJson(res, 200, buildFlopValidatorStatus({ runtime: publicRuntime(), walletConnected: false }));
   }
 
   if (method === "GET" && path === "/api/reputation") {

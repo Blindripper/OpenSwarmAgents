@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, type NetworkEvent, type RuntimeStatus } from "./api/client";
 import { selectWallet, type WalletInfo, type WalletProvider } from "./api/wallet-provider";
 import { WalletSelectorModal } from "./components/WalletSelectorModal";
@@ -13,6 +13,8 @@ import { OpenClawOnboarding } from "./components/OpenClawOnboarding";
 import { ProtocolOsPanel } from "./components/ProtocolOsPanel";
 import { VaultPanel } from "./components/VaultPanel";
 import { JobsPanel } from "./components/JobsPanel";
+import { MinerPanel, ValidatorPanel } from "./components/FlopOperatorPanel";
+import { NetworkOperationsPanel } from "./components/NetworkOperationsPanel";
 import { SkillRegistryPanel } from "./components/SkillRegistryPanel";
 import { MatchmakingPanel } from "./components/MatchmakingPanel";
 import { SkillFinderPanel } from "./components/SkillFinderPanel";
@@ -97,7 +99,17 @@ const WORKBENCH_LEGACY_KEY_V1 = legacyStorageKey("workbench-v1");
 const ONBOARDING_DISMISSED_KEY = "osa-openclaw-onboarding-dismissed";
 const WALLET_STORAGE_KEY = "osa-wallet-session";
 const RESULT_CANVAS_OPEN_KEY = "osa-result-canvas-open";
-type DashboardTab = "workbench" | "work" | "market" | "trust" | "vault";
+type DashboardTab = "workbench" | "miner" | "validator" | "work" | "market" | "deals" | "network" | "trustVault";
+const DASHBOARD_TABS: { id: DashboardTab; label: string }[] = [
+  { id: "workbench", label: "Workspaces / Projects" },
+  { id: "miner", label: "Miner" },
+  { id: "validator", label: "Validator" },
+  { id: "work", label: "Work" },
+  { id: "market", label: "Market" },
+  { id: "deals", label: "Deals" },
+  { id: "network", label: "Network" },
+  { id: "trustVault", label: "Trust & Vault" },
+];
 interface WalletSession {
   address: string;
   chain_id?: string | null;
@@ -821,8 +833,8 @@ export default function App() {
         }));
       } catch {
         console.warn("claim-job: could not fetch session");
+        void loadSessions();
       }
-      void loadSessions();
     };
     window.addEventListener("osa:claim-job", handler);
     window.addEventListener("osa:federated-workbench-import", handler);
@@ -946,6 +958,33 @@ export default function App() {
       setActivePendingDeskId(null);
     }
   }, [teams, focusedDeskId, activePendingDeskId]);
+
+  function focusPendingDeskTextarea(deskId: string) {
+    const desk = Array.from(document.querySelectorAll<HTMLElement>("[data-desk-id]"))
+      .find((element) => element.dataset.deskId === deskId);
+    desk?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+  }
+
+  function queuePendingDeskTextareaFocus(deskId: string) {
+    window.requestAnimationFrame(() => focusPendingDeskTextarea(deskId));
+    window.setTimeout(() => focusPendingDeskTextarea(deskId), 0);
+    window.setTimeout(() => focusPendingDeskTextarea(deskId), 50);
+  }
+
+  useLayoutEffect(() => {
+    if (dashboardTab !== "workbench" || !activePendingDeskId) return;
+    let cancelled = false;
+    const focusPendingDesk = () => {
+      if (cancelled) return;
+      focusPendingDeskTextarea(activePendingDeskId);
+    };
+    focusPendingDesk();
+    const timeout = window.setTimeout(focusPendingDesk, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [dashboardTab, activePendingDeskId, teams]);
 
   async function handleDeskProfileChange(deskId: string, agentId: string) {
     setFocusedDeskId(deskId);
@@ -1378,6 +1417,7 @@ export default function App() {
       setDashboardTab("workbench");
       setActivePendingDeskId(assignedDeskId);
       setFocusedDeskId(assignedDeskId);
+      queuePendingDeskTextareaFocus(assignedDeskId);
       return;
     }
     const running = allFloorSessions.some((session) => session.agent === agentId && session.is_running);
@@ -1413,6 +1453,7 @@ export default function App() {
     setDashboardTab("workbench");
     setActivePendingDeskId(desk.id);
     setFocusedDeskId(desk.id);
+    queuePendingDeskTextareaFocus(desk.id);
   }
 
   function addRoom() {
@@ -2137,44 +2178,22 @@ export default function App() {
       />
       <div style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
         <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "8px 16px",
-        borderBottom: "1px solid var(--card-border)",
-        background: "#0f1626",
-      }}>
-        {([
-          ["workbench", "Workspaces / Projects"],
-          ["work", "Work"],
-          ["market", "Market & Deals"],
-          ["trust", "Trust"],
-          ["vault", "Vault"],
-        ] as const).map(([id, label]) => (
+      <div className="osa-dashboard-tabs">
+        {DASHBOARD_TABS.map(({ id, label }) => (
           <button
             key={id}
             type="button"
             onClick={() => {
               setDashboardTab(id);
-              if (id === "market") void refreshNetworkActivity();
+              if (id === "network") void refreshNetworkActivity();
             }}
-            style={{
-              height: 30,
-              padding: "0 12px",
-              borderRadius: 6,
-              border: "1px solid #2a3558",
-              background: dashboardTab === id ? "var(--accent2)" : "#121828",
-              color: dashboardTab === id ? "white" : "var(--text-dim)",
-              fontSize: 12,
-              fontWeight: 800,
-              cursor: "pointer",
-            }}
+            className="osa-dashboard-tab"
+            data-active={dashboardTab === id}
           >
             {label}
           </button>
         ))}
-        <button
+        {dashboardTab === "workbench" && <button
           type="button"
           onClick={addRoom}
           title="Create a private local workspace with its own agent desks"
@@ -2191,7 +2210,7 @@ export default function App() {
           }}
         >
           + Workspace
-        </button>
+        </button>}
         {/* Agent pills in the topbar — draggable to desks */}
         {dashboardTab === "workbench" && agents.length > 0 && (
           <div
@@ -2235,7 +2254,7 @@ export default function App() {
             ))}
           </div>
         )}
-        {savedProjectTabs.length > 0 && (
+        {dashboardTab === "workbench" && savedProjectTabs.length > 0 && (
           <div
             style={{
               display: "flex",
@@ -2301,29 +2320,75 @@ export default function App() {
           <span>{networkNotice}</span>
         </div>
       )}
-      {dashboardTab === "work" ? (
-        <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13, display: "grid", gap: 16, minHeight: 0, overflowY: "auto" }}>
-          <SkillRegistryPanel />
-          <MatchmakingPanel />
-          <SkillFinderPanel onUseLocalAgent={useLocalAgentFromSkillFinder} />
-          <FederatedWorkbenchPanel />
-          <JobsPanel />
+      {dashboardTab === "miner" ? (
+        <MinerPanel />
+      ) : dashboardTab === "validator" ? (
+        <ValidatorPanel />
+      ) : dashboardTab === "work" ? (
+        <div className="osa-dashboard-page">
+          <div className="osa-dashboard-inner">
+            <header className="osa-page-hero">
+              <div>
+                <div className="osa-page-eyebrow">Task operations</div>
+                <div className="osa-page-title">Work</div>
+                <div className="osa-page-copy">Local and Technocore jobs plus inspectable federated tasks. Claiming/importing still requires explicit human action.</div>
+              </div>
+            </header>
+            <div className="osa-dashboard-grid-2">
+              <JobsPanel />
+              <FederatedWorkbenchPanel />
+            </div>
+          </div>
         </div>
       ) : dashboardTab === "market" ? (
+        <div className="osa-dashboard-page">
+          <div className="osa-dashboard-inner">
+            <header className="osa-page-hero">
+              <div>
+                <div className="osa-page-eyebrow">Discovery and routing</div>
+                <div className="osa-page-title">Market</div>
+                <div className="osa-page-copy">Skill Registry, deterministic matchmaking and agent discovery. Federated results remain catalog or recommendation data until later bidding phases.</div>
+              </div>
+            </header>
+            <SkillRegistryPanel />
+            <MatchmakingPanel />
+            <SkillFinderPanel onUseLocalAgent={useLocalAgentFromSkillFinder} />
+          </div>
+        </div>
+      ) : dashboardTab === "deals" ? (
         <ProtocolOsPanel
           events={networkEvents}
           live={networkLive}
           activityLoading={networkEventsLoading}
           onRefreshActivity={refreshNetworkActivity}
           onOpenProject={(projectId) => setProjectDetails({ projectId })}
+          showCoordination={false}
+          title="Deals"
+          description="TCLK offers, PaperRail dealbook and verified protocol timeline. Current FLOP value movement remains paper rehearsal only."
         />
-      ) : dashboardTab === "trust" ? (
-        <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13 }}>
-          <TrustPanel />
-        </div>
-      ) : dashboardTab === "vault" ? (
-        <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13 }}>
-          <VaultPanel />
+      ) : dashboardTab === "network" ? (
+        <NetworkOperationsPanel
+          events={networkEvents}
+          live={networkLive}
+          loading={networkEventsLoading}
+          onRefresh={refreshNetworkActivity}
+          onOpenProject={(projectId) => setProjectDetails({ projectId })}
+        />
+      ) : dashboardTab === "trustVault" ? (
+        <div className="osa-dashboard-page">
+          <div className="osa-dashboard-inner">
+            <header className="osa-page-hero">
+              <div>
+                <div className="osa-page-eyebrow">Identity, reputation and authority</div>
+                <div className="osa-page-title">Trust & Vault</div>
+                <div className="osa-page-copy">Signed reputation, review bridge, capability publication, signing policies and delegation notes in one governance surface.</div>
+              </div>
+            </header>
+            <div className="osa-dashboard-grid-2">
+              <TrustPanel />
+              <VaultPanel />
+            </div>
+          </div>
         </div>
       ) : (
         <Office

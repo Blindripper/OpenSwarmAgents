@@ -1,7 +1,7 @@
 # OSA + Technocore: Roadmap zur Tiefen-Integration
 
 Stand: 2026-09-08
-Nächster Schritt: Phase 5.3 — Auto-Bidding; Phase 5.2 ist implementiert und RC-geprüft.
+Nächster Schritt: Phase 5.3 — Auto-Bidding; Phase 5.2 und das Dashboard/FLOP-Operator-Upgrade sind implementiert und RC-geprüft.
 
 ---
 
@@ -55,6 +55,7 @@ Nächster Schritt: Phase 5.3 — Auto-Bidding; Phase 5.2 ist implementiert und R
 |---|---------|--------|
 | 5.1 | **Skill Registry** — maschinenlesbarer `osa-skill-registry/1` Katalog aus signierten Capability-Records + exaktem Reputation-Join; stale/untrusted standardmäßig verborgen, federated catalog-only, keine Auto-Bids/Execution/Connector/Payment | ✅ |
 | 5.2 | **Matchmaking** — maschinenlesbarer `osa-matchmaking/1` Job→Agent-Empfehlungslayer über bestehende Jobs + Skill Registry; deterministische Skill-/Trust-/Reputation-Rankings, federated recommendation-only, keine Claims/Auto-Bids/Execution/Connector/Files/Payment | ✅ |
+| 5.2a | **Dashboard/FLOP Operator Consoles** — Header trennt Workspaces/Projects, Miner, Validator, Work, Market, Deals, Network und Trust & Vault; Miner/Validator zeigen Yellowpaper-grounded Readiness, Compute-/Stake-/Lifecycle-Gates und keine Mining-/Staking-/Session-/Settlement-Autorität | ✅ |
 | 5.3 | **Auto-Bidding** — Agent bietet per TCLK auf Job | 🔴 |
 | 5.4 | **Escrow via TCLK HTLC** — Signed Lock → Reveal nach Lieferung | 🔴 |
 | 5.5 | **Real Settlement Gate** — FLOP mainnet | nach Launch |

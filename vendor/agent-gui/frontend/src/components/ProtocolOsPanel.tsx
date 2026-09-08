@@ -13,6 +13,9 @@ interface Props {
   activityLoading?: boolean;
   onRefreshActivity: () => void;
   onOpenProject?: (projectId: string) => void;
+  showCoordination?: boolean;
+  title?: string;
+  description?: string;
 }
 
 function shortIdentity(value?: string | null): string {
@@ -276,7 +279,7 @@ async function apiProtocolLockOffer(offerId: string): Promise<any> {
   return { ok: false, detail: "Unexpected server response" };
 }
 
-export function ProtocolOsPanel({ events, live, activityLoading = false, onRefreshActivity, onOpenProject }: Props) {
+export function ProtocolOsPanel({ events, live, activityLoading = false, onRefreshActivity, onOpenProject, showCoordination = true, title = "Technocore Protocol OS", description = "Verified public TCLK protocol projection. Signed frames from Technocore rooms are observed and validated locally." }: Props) {
   const [view, setView] = useState<"protocols" | "activity">("protocols");
   const [overview, setOverview] = useState<ProtocolOverview | null>(null);
   const [a2aOverview, setA2AOverview] = useState<ProtocolA2AOverview | null>(null);
@@ -399,15 +402,15 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
       <div style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
         <header style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 950 }}>Technocore Protocol OS</div>
+            <div style={{ fontSize: 18, fontWeight: 950 }}>{title}</div>
             <div style={{ marginTop: 4, maxWidth: 760, color: "var(--text-dim)", fontSize: 13, lineHeight: 1.5 }}>
-              Verified public TCLK protocol projection. Signed frames from Technocore rooms are observed and validated locally.
+              {description}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" onClick={() => setView("activity")} style={{ height: 32, padding: "0 12px", borderRadius: 6, border: "1px solid #2a3558", background: "#121828", color: "#cbd5e1", cursor: "pointer", fontSize: 13, fontWeight: 800 }}>
+            {showCoordination && <button type="button" onClick={() => setView("activity")} style={{ height: 32, padding: "0 12px", borderRadius: 6, border: "1px solid #2a3558", background: "#121828", color: "#cbd5e1", cursor: "pointer", fontSize: 13, fontWeight: 800 }}>
               OSA Activity
-            </button>
+            </button>}
             <button type="button" onClick={() => void refresh()} disabled={loading} style={{ height: 32, padding: "0 12px", borderRadius: 6, border: "1px solid #2563eb", background: "#12213d", color: "#93c5fd", cursor: loading ? "default" : "pointer", fontSize: 13, fontWeight: 800 }}>
               {loading ? "Syncing" : "Refresh"}
             </button>
@@ -428,11 +431,13 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
           ))}
         </section>
 
-        <SharedWorkspaceRoomsPanel />
+        {showCoordination && <>
+          <SharedWorkspaceRoomsPanel />
 
-        <SubtaskDelegationsPanel />
+          <SubtaskDelegationsPanel />
 
-        <AgentMailboxesPanel />
+          <AgentMailboxesPanel />
+        </>}
 
         <section style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(230px, 320px)", gap: 12 }}>
           <div style={{ border: "1px solid #273453", borderRadius: 10, padding: 14, background: "rgba(12,20,34,.92)" }}>
@@ -446,7 +451,7 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
             <div style={{ marginTop: 10, display: "flex", gap: 6 }}>
               {(["offers", "dealbook", "timeline"] as const).map((candidate) => (
                 <button key={candidate} type="button" onClick={() => setProtocolView(candidate)} style={{ height: 30, padding: "0 10px", borderRadius: 6, border: `1px solid ${protocolView === candidate ? "#2563eb" : "#2a3558"}`, background: protocolView === candidate ? "#12213d" : "#101827", color: protocolView === candidate ? "#93c5fd" : "#94a3b8", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
-                  {candidate === "offers" ? "Offers" : candidate === "dealbook" ? "Deals" : "Timeline"}
+                  {candidate === "offers" ? "Offers" : candidate === "dealbook" ? "Dealbook" : "Timeline"}
                 </button>
               ))}
             </div>
@@ -510,7 +515,7 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
                 {overview?.room_sync?.error && <div style={{ color: "#fca5a5" }}>{overview.room_sync.error}</div>}
               </div>
             </div>
-            <div style={{ border: "1px solid #273453", borderRadius: 10, padding: 14, background: "rgba(12,20,34,.92)" }}>
+            {showCoordination && <div style={{ border: "1px solid #273453", borderRadius: 10, padding: 14, background: "rgba(12,20,34,.92)" }}>
               <div style={{ fontSize: 14, fontWeight: 900 }}>A2A Room Observer</div>
               <div style={{ marginTop: 8, display: "grid", gap: 6, color: "var(--text-dim)", fontSize: 13 }}>
                 <div>Profile: <b style={{ color: "#cbd5e1" }}>{a2aProjection?.profile || "osa-a2a-room/1"}</b></div>
@@ -538,7 +543,7 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
               {!a2aObservations.length && (
                 <div style={{ marginTop: 10, color: "var(--text-dim)", fontSize: 11, lineHeight: 1.4 }}>Read-only archive ready. Observe A2A room frames here once Technocore traffic includes them.</div>
               )}
-            </div>
+            </div>}
             <div style={{ border: "1px solid #854d0e", borderRadius: 10, padding: 14, background: "rgba(43,33,12,.9)", color: "#fde68a", fontSize: 13, lineHeight: 1.5 }}>
               {overview?.tclk.warning || "Observer mode only. No settlement actions are available."}
             </div>

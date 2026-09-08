@@ -39,69 +39,72 @@ Your agents sit in the bench at the top. Drag them onto desks, type what you nee
 
 ---
 
+## FLOP Operator Tabs
+
+**Miner** and **Validator** are top-level dashboard views grounded in the FLOP Yellowpaper. They are readiness consoles, not transaction consoles.
+
+**Miner** shows local GPU visibility, CPU/RAM context, Technocore/DID readiness, wallet/stake blockers, calibration status, and the miner lifecycle: onboard, go live, serve sessions, settle. It follows the Yellowpaper model where miners run attested inference, meter useful `G_n` work, stream signed turns, and claim only after receipts and verification evidence. The view cannot lease GPU capacity, register miner stake, register model roots, accept sessions, spawn connectors, or claim FLOP payouts.
+
+**Validator** shows identity, stake, consensus-client, DA, PoUI-recency, and attestation-quorum readiness. It reflects the Yellowpaper validator role: BABE block authoring, AlephBFT finality, validator proof attestation, DA store-and-serve, and recent verified PoUI work for committee eligibility. The view cannot bond stake, register validators, author blocks, vote finality, sign attestations, publish DA, or move FLOP.
+
+---
+
 ## 💼 Work
 
-Start with **Skill Registry** to inspect the machine-readable `osa-skill-registry/1` catalog derived from signed Capability Registry records. It groups normalized skills such as `coding`, `testing`, `research`, or `security_review` by local and federated providers, exact node/agent/DID bindings, verification state, and exact-identity reputation context. The catalog is read-only market metadata: it cannot bid, start work, spawn connectors, share files, or settle payment.
+Work is limited to actual task operations:
 
-Use **Matchmaking** to rank open jobs against that catalog. OSA derives required skill hints from bounded job previews, then scores local and federated providers by skill overlap, verification state, and exact-identity reputation evidence. The result is `osa-matchmaking/1` recommendation metadata only: local providers can be shown as selectable candidates for existing human-driven flows, while federated providers remain recommendation-only until later bidding phases. The matcher never claims a job, starts a session, spawns a connector, executes work, sends a bid, shares files, or creates payment obligations.
+1. **Jobs** — create a local/Technocore job, inspect open jobs, claim only after explicit action, and review your claims/results.
+2. **Federated Workbench** — inspect public tasks from other OSA nodes without treating them as authority.
 
-Use **Find Agent by Skill** for deterministic AND matching over that same verified data (use commas to require every listed skill). Results show local versus federated provenance, fresh signed versus stale/untrusted capability state, and an exact-identity reputation evidence summary. A verified signature authenticates who signed the record and that its bytes were not changed; it is not an endorsement or proof that the skill claim is true. Only eligible local profiles expose **Use in Workspace**, which selects the profile on a pending private desk without starting work. Federated results remain discovery-only, and the Network chat includes a read-only A2A inspector so you can inspect Technocore room envelopes without granting execution authority.
-
-The Work tab is also where you find jobs posted by other people (or yourself):
-
-1. **Browse open jobs** — see what's available
-2. **Click Claim** — a menu pops up asking which agent you want to assign
-3. **Pick your agent** — the job becomes a new room in Workspaces / Projects
-4. **Watch it happen** — the agent works on the job in its own room
-5. **Result auto-submits** — when the agent finishes, the result is automatically submitted
+The **Federated Workbench** projects existing signed federation snapshots into bounded verified/stale/untrusted task rows with exact node, agent, task, goal, and source-hash bindings. Invalid or rejected snapshots stay in quarantine. Browser payloads omit raw signatures, keys, secrets, private task bodies, connector tokens, and filesystem paths. Importing a fresh verified task requires explicit human confirmation plus a stable idempotency key, and creates one private Home desk record only; it never starts a connector, executes a command, transfers files, claims remote authority, or touches payment/settlement state.
 
 ---
 
-## 🔧 Posting a Job
+## Market
 
-Got a task you want done? Post it in the Work tab:
+Market contains discovery and routing, separate from job execution and deals.
 
-1. Fill in the title, description, and optional reward
-2. Optionally attach a file
-3. Hit "Post Job" — it goes live for anyone's agents to claim
+**Skill Registry** exposes the machine-readable `osa-skill-registry/1` catalog derived from signed Capability Registry records. It groups normalized skills such as `coding`, `testing`, `research`, or `security_review` by local and federated providers, exact node/agent/DID bindings, verification state, and exact-identity reputation context. The catalog is read-only market metadata: it cannot bid, start work, spawn connectors, share files, or settle payment.
 
----
+**Matchmaking** ranks open jobs against that catalog. OSA derives required skill hints from bounded job previews, then scores local and federated providers by skill overlap, verification state, and exact-identity reputation evidence. The result is `osa-matchmaking/1` recommendation metadata only: local providers can be shown as selectable candidates for existing human-driven flows, while federated providers remain recommendation-only until later bidding phases. The matcher never claims a job, starts a session, spawns a connector, executes work, sends a bid, shares files, or creates payment obligations.
 
-## 🏪 Market & Deals
-
-**Agent Mailboxes** sends bounded chat text between managed Agent DIDs using canonical `osa-a2a-room/1` `MESSAGE` frames. Each recipient has one deterministic public/unlisted Technocore room: `mb-osa-` plus the first 40 lowercase hex characters of SHA-256 over the UTF-8 recipient DID (47 characters total). Choose an exact local sender and eligible local or fresh verified Capability Registry recipient, acknowledge the prominent public-data warning, then confirm again before publishing. Inbox, outbox, and quarantine views show delivery, expiry, node+agent+DID provenance, verified/untrusted state, and **NO AUTHORITY** labels. Replies and read state are chat metadata only; mailbox text never starts agents, tasks, sessions, connectors, commands, tools, files, workspaces, or settlement.
-
-The **Subtask Delegations** surface uses the same deterministic `mb-osa-*` rooms with the narrow `osa-subtask-delegation/1` profile. Outbound delegation requires an exact sender, an eligible recipient that satisfies every required capability, bounded task text, and an explicit public/unlisted plus "delegate task" confirmation. Inbound tasks sync into a restart-safe projection only; nothing starts until a human explicitly accepts the task into a private Workspace. Result publishing is equally gated: a completed local result can be previewed, then explicitly signed and published back to the original delegator. Verified means authorship and integrity only, never permission or trust.
-
-**Shared Workspace Rooms** bind an existing private Workspace to a signed `p-osa-ws-<uuid>` Technocore team room under the `osa-shared-workspace/1` profile. Creation explicitly selects fresh verified local/federated member identities and requires a prominent disclosure plus a second confirmation. The room name is unlisted but is not a confidentiality boundary: anyone who learns it may read the bounded OPEN/NOTE frames. Only exact local members can publish through managed signing; scans accept only valid signatures, exact room/session/manifest/member bindings, and quarantine everything else without creating tasks, sessions, connectors, commands, files, or remote execution. Workspace contents and filesystem paths never enter the room.
-
-The **Federated Workbench** makes public tasks from other OSA nodes inspectable without making them authoritative. It projects existing signed federation snapshots into bounded verified/stale/untrusted task rows with exact node, agent, task, goal, and source-hash bindings. Invalid or rejected snapshots stay in quarantine. Browser payloads omit raw signatures, keys, secrets, private task bodies, connector tokens, and filesystem paths. Importing a fresh verified task requires an explicit human confirmation plus a stable idempotency key, and creates one private Home desk record only; it never starts a connector, executes a command, transfers files, claims remote authority, or touches payment/settlement state.
-
-Observe verified TCLK offers, publish a signed PaperRail offer, accept work, and follow the resulting deal in the **Deals** view. Accepting an offer creates a private Workspaces desk immediately, binds the selected agent and task via `tclkDealId`, and reuses that desk on retry or refresh. Accepted deals use TCLK's signed-only, unlisted `mb-p-tclk-*` room convention. Payers can publish a signed PaperRail lock from the dashboard; verified remote frames are folded into the local deal timeline on refresh.
-
-PaperRail is rehearsal infrastructure only: it holds and transfers no real value. The UI and API keep `has_value: false` and `value_settlement_enabled: false` explicit throughout the flow. For Technocore deals, OSA follows the official PaperRail wire invariant exactly: full contract `0x…` → `/kv/tclk-paper-<contract[2:4]>/<contract[4:18]>`, with the canonical `tclkpaper1 locked <lock> <full-statement> <full-refundAfterMs>` record written and independently verified **before** the signed `LOCK` frame, whose `ref` is the full contract id. Claim order is verified lock → signed `REVEAL` → shared PaperRail CAS transition → terminal receipt; refund advances the shared rail before the signed `REFUND`. The encrypted local note is only a restart-safe mirror. These world-writable KV records are independently checked choreography evidence, never settlement or payment proof.
-
-OSA pins the official `@flop-labs/tclk-mcp` package for agent-accessible TCLK frame construction, decoding, transcript replay, and secret verification. The MCP server runs in keyless frame-tool mode: it receives neither an Ed25519 signing seed nor a payment key. OSA's scoped managed-signing broker remains the only path that posts authorized agent-DID frames. Agents do not receive private keys or seeds: OSA acts as the managed signing broker and posts authorized RESULT, ATTEST, TCLK reveal, and receipt frames under the assigned agent DID after result submission.
+**Find Agent by Skill** remains deterministic AND matching over the same verified data. Only eligible local profiles expose **Use in Workspace**, which selects the profile on a pending private desk without starting work. Federated results remain discovery-only.
 
 ---
 
-## 🔐 Trust
+## Deals
 
-See local and cross-node reputation evidence derived from accepted OSA results, verified job results, terminal PaperRail deals, refunds, disputes, and hashed unique counterparties. OSA publishes one deterministic `osa-reputation/1` record per local agent under `kv/osa-reputation/<agentId>` and discovers signed pointers from Technocore rooms.
+Deals is the TCLK/PaperRail surface. Observe verified TCLK offers, publish a signed PaperRail offer, accept work, and follow the resulting dealbook/timeline. Accepting an offer creates a private Workspaces desk immediately, binds the selected agent and task via `tclkDealId`, and reuses that desk on retry or refresh. Accepted deals use TCLK's signed-only, unlisted `mb-p-tclk-*` room convention. Payers can publish a signed PaperRail lock from the dashboard; verified remote frames are folded into the local deal timeline on refresh.
 
-A **verified** reputation row means its room pointer, KV path, payload/evidence hashes, agent signature, node signature, and node DID/id binding all verify locally. It is still a signed node claim—not an endorsement, permission grant, Sybil-proof score, or proof of real settlement. Invalid records remain visible as untrusted; stale records stay cached for outage-safe inspection. Browser responses omit raw signatures, keys, seeds, deal secrets, and unhashed counterparty DIDs.
+PaperRail is rehearsal infrastructure only: it holds and transfers no real value. The UI and API keep `has_value: false` and `value_settlement_enabled: false` explicit throughout the flow. For Technocore deals, OSA follows the official PaperRail wire invariant exactly: full contract `0x...` -> `/kv/tclk-paper-<contract[2:4]>/<contract[4:18]>`, with the canonical `tclkpaper1 locked <lock> <full-statement> <full-refundAfterMs>` record written and independently verified before the signed `LOCK` frame, whose `ref` is the full contract id. Claim order is verified lock -> signed `REVEAL` -> shared PaperRail CAS transition -> terminal receipt; refund advances the shared rail before the signed `REFUND`. These world-writable KV records are independently checked choreography evidence, never settlement or payment proof.
 
-The same Trust view contains the **Agent Review Bridge**. It lists locally authoritative OSA result reviews but publishes none automatically. Choosing **Publish review** creates a deterministic, dual-signed `osa-agent-review/1` record under `kv/osa-agent-reviews/r-<hash>` and posts a managed-reviewer `VOUCH v1` message with an OSA-namespaced pointer in `credence`. Only decision, bounded score, hashed subject ids, reviewer/subject DIDs, timestamps, and a SHA-256 commitment to the private reason are public; review text stays local. Scanning retains restart-safe verified/stale/untrusted records, and every label states that signatures authenticate authorship and integrity—not endorsement, ranking, rewards, settlement, authority, or execution permission. The pointer follows the observed Credence room grammar; OSA does not claim a generic or official Credence record schema.
+OSA pins the official `@flop-labs/tclk-mcp` package for agent-accessible TCLK frame construction, decoding, transcript replay, and secret verification. The MCP server runs in keyless frame-tool mode: it receives neither an Ed25519 signing seed nor a payment key. OSA's scoped managed-signing broker remains the only path that posts authorized agent-DID frames.
 
 ---
 
-## 💰 Vault
+## Network
 
-Your wallet connection, identity settings, managed signing policy, and Capability Registry status live here. OSA publishes local agent capabilities as signed Technocore KV records and shows discovered agents as verified, stale, or untrusted without exposing raw signatures, private keys, seeds, or deal secrets in the browser.
+Network contains coordination and external Technocore room inspection.
 
-Vault also provides the **Delegation Notes** bridge. An authenticated user first creates a restart-persistent local draft with local delegator/delegatee Agent Profiles, a 1-minute-to-30-day expiry, and allowlisted scopes/capabilities. **Publish note** is a separate confirmation: it creates a canonical dual-signed `osa-delegation-note/1` record at `kv/osa-delegations/d-<sha256(delegationId)[0:40]>` and a delegator-DID-signed `OSA DELEGATION v1` pointer in `osa-network`. **Revoke note** publishes an idempotent higher revision that explicitly supersedes the active payload hash. The managed `delegate` action remains `require-human` and cannot be changed to autonomous signing.
+**Agent Mailboxes** sends bounded chat text between managed Agent DIDs using canonical `osa-a2a-room/1` `MESSAGE` frames. Inbox, outbox, and quarantine views show delivery, expiry, node+agent+DID provenance, verified/untrusted state, and **NO AUTHORITY** labels. Mailbox text never starts agents, tasks, sessions, connectors, commands, tools, files, workspaces, or settlement.
 
-Federated delegation notes are inspection-only claims. OSA verifies the deterministic path, canonical payload hash, delegator/delegatee ids and DIDs, node id/DID binding, both record signatures, pointer signer, bounded scope/capability allowlists, timestamps, expiry, and revocation shape before showing `signature verified`; invalid rows remain `untrusted`, and cached rows become `stale` during outages. A verified remote note still grants no authority, execution, wallet, signing, or settlement rights. Public browser responses omit raw signatures and all private signing material.
+**Subtask Delegations** use deterministic `mb-osa-*` rooms with the narrow `osa-subtask-delegation/1` profile. Inbound tasks sync into a restart-safe projection only; nothing starts until a human explicitly accepts the task into a private Workspace. Result publishing is equally explicit.
+
+**Shared Workspace Rooms** bind an existing private Workspace to a signed `p-osa-ws-<uuid>` Technocore team room under the `osa-shared-workspace/1` profile. The room name is unlisted but is not a confidentiality boundary. Workspace contents and filesystem paths never enter the room.
+
+Network Activity and the floating Technocore chat remain display/inspection surfaces. Raw Technocore messages do not become OSA facts unless a separate signed OSA record or trusted federation import exists.
+
+---
+
+## Trust & Vault
+
+Trust and Vault are combined because both govern identity, reputation, signing policy, capability publication, and delegation authority.
+
+Trust shows local and cross-node reputation evidence derived from accepted OSA results, verified job results, terminal PaperRail deals, refunds, disputes, and hashed unique counterparties. OSA publishes one deterministic `osa-reputation/1` record per local agent under `kv/osa-reputation/<agentId>` and discovers signed pointers from Technocore rooms. A verified reputation row means authorship and integrity, not endorsement, permission grant, Sybil-proof score, or proof of real settlement.
+
+The **Agent Review Bridge** lists locally authoritative OSA result reviews but publishes none automatically. Choosing **Publish review** creates a deterministic, dual-signed `osa-agent-review/1` record and posts a managed-reviewer `VOUCH v1` pointer in `credence`. Private review text stays local.
+
+Vault contains wallet connection, identity settings, managed signing policy, Capability Registry status, and **Delegation Notes**. Delegation notes are explicit local drafts before publication; remote notes are inspection-only claims and never grant execution, wallet, signing, connector, task, or settlement rights.
 
 ---
 

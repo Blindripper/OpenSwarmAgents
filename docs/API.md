@@ -553,6 +553,14 @@ Returns the Phase-5.2 `osa-matchmaking/1` recommendation view. It derives open l
 
 The response contains sanitized job previews, SHA-256 text hashes, required skill keys, top score/status, candidate node id + agent id + DID bindings, matched/missing skills, verification state, reputation evidence volume, and authority flags. It is recommendation-only: reading matchmaking never creates claims, starts sessions, spawns connectors, sends bids, publishes frames, shares files, or creates payment/settlement obligations. Fresh verified local candidates may be marked `local_selectable` metadata for later explicit human-driven flows. Federated, stale, or untrusted candidates remain `recommendation_only`; stale/untrusted providers are excluded by default unless explicitly requested for inspection.
 
+`GET /api/flop/miner`
+
+Returns the `osa-flop-miner-console/1` readiness view, grounded in the FLOP Yellowpaper miner lifecycle. It reports bounded local compute metadata from a read-only `nvidia-smi` probe when available, CPU/RAM counts, Technocore/DID readiness, wallet/stake blockers, calibration/model-root status, lifecycle steps, Yellowpaper references, readiness score, and authority flags. The endpoint never returns raw signatures, keys, secrets, connector tokens, filesystem paths, private task bodies, or settlement material. It cannot lease GPU capacity, register miner stake, register model roots, accept sessions, start connectors, claim payouts, or move FLOP.
+
+`GET /api/flop/validator`
+
+Returns the `osa-flop-validator-console/1` readiness view, grounded in the FLOP Yellowpaper validator sections. It reports identity readiness, stake-floor/manual bonding requirements, consensus-client and DA configuration checks, recent PoUI-work readiness, local compute context, lifecycle steps, and authority flags. The view is informational only: it cannot bond stake, register validators, author blocks, vote finality, sign attestations, host or publish DA, start mining backends, claim rewards, or move FLOP.
+
 `GET /api/agents/find?skill=coding,testing&source=all&include_stale=0&include_untrusted=0&limit=50`
 
 Performs deterministic AND matching over the same Capability Registry data surfaced by the Skill Registry. The query is lowercase-normalized (`software engineering` becomes `software_engineering`), comma-separated terms are all required, `source` may be `all`, `local`, or `federated`, and `limit` is bounded to 1–100. Standard local profiles publish bounded domain capabilities such as `coding`, `research`, `security_review`, and `visual_design` through the same signed capability record.

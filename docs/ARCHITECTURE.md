@@ -29,6 +29,9 @@ Skill Registry
 Matchmaking
   Machine-readable osa-matchmaking/1 recommendations from canonical jobs plus Skill Registry providers, with no claim, bid, connector, execution, or payment authority
 
+FLOP Operator Consoles
+  Miner and Validator readiness projections grounded in the FLOP Yellowpaper, with local compute checks and no stake, session, attestation, settlement, or GPU-leasing authority
+
 Realtime Stream
   Authenticated Server-Sent Events for same-node dashboard synchronization
 
@@ -87,6 +90,10 @@ Phase 4.5 adds a Federated Workbench projection over the same snapshot and publi
 Phase 5.1 adds a machine-readable Skill Registry without changing the signing authority model. OSA derives `osa-skill-registry/1` from local and discovered `osa-capability-registry/1` rows and joins reputation only on exact node id, agent id, and agent DID. It groups normalized skills into bounded `osa-skill/1` descriptors with provider rows, verification state, stale/untrusted accounting, and catalog-only authority flags. The registry is restart-safe because it is derived from the same persisted capability and reputation projections; it never publishes new secrets, starts agents, claims work, spawns connectors, auto-bids, shares files, or creates payment obligations.
 
 Phase 5.2 adds deterministic Matchmaking as a read-only projection over existing job views and the Skill Registry. OSA infers bounded required skill hints from local and Technocore job previews, ranks providers by exact skill overlap, verified/stale/untrusted state, local availability, and exact-identity reputation evidence, then emits `osa-matchmaking/1`. It is restart-safe because the inputs are already persisted or verified projections. Reading it never claims jobs, starts workspaces, spawns connectors, publishes frames, auto-bids, shares files, or creates payment/settlement obligations. Fresh verified local providers may be shown as selectable metadata for later human-driven flows; federated providers remain recommendation-only until a separate bidding phase exists.
+
+The dashboard now splits top-level operations into Workspaces / Projects, Miner, Validator, Work, Market, Deals, Network, and Trust & Vault. Work contains only task/job operations plus Federated Workbench. Market contains Skill Registry, Matchmaking, and Skill Finder. Deals contains TCLK/PaperRail offer and dealbook flows. Network contains mailboxes, subtask delegation, shared workspace rooms, activity, and chat inspection. Trust & Vault combines reputation/review evidence with signing policy, Capability Registry, and delegation notes.
+
+The FLOP Operator consoles are intentionally read-only readiness projections. `osa-flop-miner-console/1` reports bounded local compute metadata, GPU visibility, Technocore/DID readiness, stake/calibration blockers, and the Yellowpaper miner lifecycle. `osa-flop-validator-console/1` reports identity, stake-floor, consensus/DA, recent PoUI work, and attestation readiness. They do not expose raw signatures, secrets, connector tokens, private task bodies, or filesystem paths, and they cannot register miners or validators, lease GPU capacity, bond stake, start sessions, author blocks, sign attestations, publish DA, claim payouts, or move FLOP.
 
 The intended network upgrade after that is:
 
