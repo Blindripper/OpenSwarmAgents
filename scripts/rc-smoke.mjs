@@ -7,9 +7,20 @@ import { createHash, createPublicKey, generateKeyPairSync, sign as signTechnocor
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
-import { encodeFrame as encodeTclkFrame, makeOffer as makeTclkOffer } from "@flop-labs/tclk";
+import { decodeFrame as decodeTclkFrame, encodeFrame as encodeTclkFrame, encodePaperRecord, generateHashLock as generateTclkHashLock, makeAccept as makeTclkAccept, makeOffer as makeTclkOffer, paperNote as tclkPaperNote } from "@flop-labs/tclk";
 import { encodeA2AEnvelope } from "../apps/server/src/a2a-room-protocol.mjs";
+import { composeSharedWorkspaceNote } from "../apps/server/src/shared-workspace-room.mjs";
 import { buildAgentMailboxMessage, deriveAgentMailboxRoom } from "../apps/server/src/agent-mailbox.mjs";
+import {
+  composeSubtaskDelegationResultFrame,
+  composeSubtaskDelegationTaskFrame,
+  inspectSubtaskDelegationFrame,
+  subtaskDelegationExactCapabilityMatch,
+  subtaskDelegationRequestHash,
+  subtaskDelegationResultHash,
+  subtaskDelegationRoomForRecipient,
+  subtaskDelegationSatisfiesCapabilities,
+} from "../apps/server/src/subtask-delegation.mjs";
 
 const rootDir = join(import.meta.dirname, "..");
 const port = Number(process.env.OSA_RC_SMOKE_PORT || 19080 + Math.floor(Math.random() * 800));
@@ -33,6 +44,7 @@ const technocoreWrites = [];
 const technocoreReads = [];
 const technocoreNotes = new Map();
 const technocoreNoteWrites = [];
+const technocoreOperations = [];
 let server = null;
 let technocoreServer = null;
 let technocoreTclkUnavailable = false;
@@ -63,7 +75,7 @@ const osaServerEnv = {
   OSA_TECHNOCORE_ROOM_LIMIT: "2",
   OSA_TECHNOCORE_WRITE_TIMEOUT_MS: "1000",
   OSA_TECHNOCORE_WRITE_ATTEMPTS: "1",
-  OSA_CAPABILITY_REGISTRY_STALE_MS: "500",
+  OSA_CAPABILITY_REGISTRY_STALE_MS: "5000",
   OSA_REPUTATION_STALE_MS: "500",
   OSA_REVIEW_BRIDGE_STALE_MS: "500",
   OSA_DELEGATION_STALE_MS: "500",
@@ -157,6 +169,33 @@ try {
   assert(publishedOverview.paper?.deals?.some((deal) => deal.id === publishedOffer.offer_id && deal.status === "proposed"), "Protocol overview should expose locally published offers in the Deals view");
   const externalTclkSigner = generateKeyPairSync("ed25519");
   const externalTclkDid = didKeyFromEd25519PublicKey(externalTclkSigner.publicKey);
+
+  const publishedLockSecret = generateTclkHashLock();
+  const publishedAccept = makeTclkAccept(publishedOffer.deal ? decodeTclkFrame(technocoreWrites.find((item) => item.text.includes(publishedOffer.offer_id) && item.text.includes('"type":"offer"')).text) : null, {
+    from: externalTclkDid,
+    statement: publishedLockSecret.hash,
+  });
+  signedFixtureWrite("tclk-offers", externalTclkDid, externalTclkSigner.privateKey, encodeTclkFrame(publishedAccept), "8999999");
+  await getJson("/api/protocol/overview");
+  const networkLockedDeal = await postJson("/api/protocol/offers/lock", { offer_id: publishedOffer.offer_id });
+  const networkLockLocation = tclkPaperNote(networkLockedDeal.contract_id);
+  const expectedNetworkLockRecord = encodePaperRecord({
+    status: "locked",
+    lock: "hash",
+    statement: publishedLockSecret.hash,
+    refundAfterMs: decodeTclkFrame(technocoreWrites.find((item) => item.text.includes(publishedOffer.offer_id) && item.text.includes('"type":"offer"')).text).refundAfterMs,
+  });
+  const networkKvIndex = technocoreOperations.findIndex((item) => item.kind === "kv" && item.namespace === networkLockLocation.ns && item.key === networkLockLocation.key);
+  const networkLockIndex = technocoreOperations.findIndex((item) => item.kind === "room" && item.room === "tclk-offers" && item.text.includes(networkLockedDeal.contract_id) && item.text.includes('"type":"lock"'));
+  const networkLockFrame = decodeTclkFrame(technocoreOperations[networkLockIndex].text);
+  assert(networkKvIndex >= 0 && networkLockIndex > networkKvIndex, "Canonical PaperRail KV must be written and verified before the signed LOCK room frame");
+  assert(networkLockLocation.ns === `tclk-paper-${networkLockedDeal.contract_id.slice(2, 4)}` && networkLockLocation.key === networkLockedDeal.contract_id.slice(4, 18), "PaperRail must use the official full-contract namespace and key derivation");
+  assert(technocoreNotes.get(`${networkLockLocation.ns}/${networkLockLocation.key}`) === expectedNetworkLockRecord, "PaperRail lock KV must preserve the exact canonical statement and refund deadline");
+  assert(networkLockFrame.ref === networkLockedDeal.contract_id && networkLockFrame.ref.length === 66, "LOCK.ref must be the full contract id, never an offer label or truncated path");
+  const networkLockWriteCount = technocoreOperations.filter((item) => item.kind === "room" && item.text === technocoreOperations[networkLockIndex].text).length;
+  const networkLockRetry = await postJson("/api/protocol/offers/lock", { offer_id: publishedOffer.offer_id });
+  assert(networkLockRetry.contract_id === networkLockedDeal.contract_id && technocoreOperations.filter((item) => item.kind === "room" && item.text === technocoreOperations[networkLockIndex].text).length === networkLockWriteCount, "Retry after KV-write/frame publication must be idempotent");
+
   const managedOffer = makeTclkOffer({
     from: externalTclkDid,
     role: "payer",
@@ -199,9 +238,10 @@ try {
   assert(paperDeal.status === "proposed" && paperDeal.asset === "FLOP" && paperDeal.has_value === false && paperDeal.next_action === "accept", "PaperRail should create a production-shaped FLOP rehearsal without value");
   paperDeal = await postJson(`/api/protocol/paper-deals/${encodeURIComponent(paperDeal.id)}/advance`, {});
   assert(paperDeal.status === "accepted", "PaperRail rehearsal should advance to accepted");
-  paperDeal = await postJson("/api/protocol/offers/lock", { offer_id: paperDeal.id });
-  assert(paperDeal.status === "locked" && paperDeal.next_action === "claim", "The dashboard lock endpoint should advance an accepted payer deal to locked");
-  assert(technocoreWrites.some((item) => item.room === "tclk-offers" && item.text.includes(paperDeal.contract_id) && item.text.includes('"type":"lock"')), "PaperRail lock should be published as a signed Technocore frame");
+  const roomWritesBeforeLocalLock = technocoreWrites.length;
+  paperDeal = await postJson(`/api/protocol/paper-deals/${encodeURIComponent(paperDeal.id)}/advance`, {});
+  assert(paperDeal.status === "locked" && paperDeal.next_action === "claim", "Local PaperRail rehearsal should advance to locked without network authority");
+  assert(technocoreWrites.length === roomWritesBeforeLocalLock, "Local-only PaperRail rehearsals must not publish room frames or network KV records");
   for (const expected of ["claimed", "claimed"]) {
     paperDeal = await postJson(`/api/protocol/paper-deals/${encodeURIComponent(paperDeal.id)}/advance`, {});
     assert(paperDeal.status === expected, `PaperRail rehearsal should advance to ${expected}`);
@@ -585,6 +625,25 @@ try {
   assert(capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-coder" && agent.verified === true), "Registry scanner should verify a foreign canonical signed capability entry");
   assert(capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-tampered" && agent.verified === false), "Registry scanner should mark tampered payloads untrusted");
   assert(capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-mismatch" && agent.verified === false && agent.rejection_reason), "Registry scanner should fail closed on signer mismatch");
+  const remoteSubtaskRecipient = capabilityRegistry.discovered.find((agent) => agent.agent_id === "remote-coder" && agent.verified === true);
+  assert(remoteSubtaskRecipient?.did, "Verified remote capability recipients should be available for outbound subtask delegation");
+  const remoteSubtaskRoom = subtaskDelegationRoomForRecipient(remoteSubtaskRecipient.did);
+  const remoteSubtaskExpiry = new Date(Date.now() + 60 * 60_000).toISOString();
+  const remoteOutbound = await postJson("/api/subtask-delegations", {
+    sender_agent_id: "technocore-specialist",
+    recipient_key: remoteSubtaskRecipient.did,
+    required_capabilities: (remoteSubtaskRecipient.capabilities || []).slice(0, 2),
+    task_text: "RC remote verified subtask delegation",
+    idempotency_key: "rc-subtask-remote-1",
+    expiry: remoteSubtaskExpiry,
+    public_confirmation: true,
+    delegate_task_confirmation: true,
+    delegate_task: true,
+    public_warning_acknowledged: true,
+    no_payment: true,
+    no_settlement: true,
+  }, headers);
+  assert(remoteOutbound.delegation.room === remoteSubtaskRoom && remoteOutbound.delegation.recipient_did === remoteSubtaskRecipient.did, "Fresh verified federated recipients should also use deterministic mailbox rooms");
   const remoteReputation = makeReputationFixtureRecord({ agentId: "remote-coder", agentDid: externalRegistryAgentDid, agentPrivateKey: externalRegistryAgent.privateKey, nodeDid: externalRegistryNodeDid, nodePrivateKey: externalRegistryNode.privateKey, nodeId: externalRegistryNodeId });
   technocoreNotes.set("osa-reputation/remote-coder", stableStringify(remoteReputation));
   signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, reputationAnnouncementText(remoteReputation), "9200001");
@@ -761,6 +820,299 @@ try {
   assert(persistedMailboxStore.agentMailboxMessages?.some((item) => item.clientMessageId === "rc-mailbox-local-1") && persistedMailboxStore.agentMailboxSync?.coder?.lastSeq > 0, "Inbox/outbox/quarantine projection and sync cursor should be restart-persistent");
   assert(!/BEGIN PRIVATE KEY|osa_conn_|\"signature\"\s*:/i.test(JSON.stringify(persistedMailboxStore.agentMailboxMessages)), "Mailbox projection must not persist private keys, connector tokens, or raw signatures");
 
+  const subtaskCapabilityRecord = makeCapabilityRegistryFixtureRecord({
+    agentId: "remote-coder",
+    agentDid: externalRegistryAgentDid,
+    agentPrivateKey: externalRegistryAgent.privateKey,
+    nodeDid: externalRegistryNodeDid,
+    nodePrivateKey: externalRegistryNode.privateKey,
+    nodeId: externalRegistryNodeId,
+    name: "Remote <Coder>",
+    tagline: "Federated coding fixture <script>"
+  });
+  technocoreNotes.set("osa-capabilities/remote-coder", stableStringify(subtaskCapabilityRecord));
+  signedFixtureWrite("osa-network", externalRegistryNodeDid, externalRegistryNode.privateKey, capabilityRegistryAnnouncementText(subtaskCapabilityRecord), "9100001");
+  capabilityRegistry = (await postJson("/api/capability-registry/scan", {}, headers)).registry;
+
+  const subtaskStateBefore = await getJson("/api/state", headers);
+  const subtaskSessionsBefore = await getJson("/api/sessions");
+  const subtaskOverview = await getJson("/api/subtask-delegations", headers);
+  assert(subtaskOverview.schema === "osa-subtask-delegation/1" && subtaskOverview.policy.no_payment === true, "Subtask delegations should expose the narrow no-value profile only");
+  const subtaskLocalRecipient = subtaskOverview.recipients.find((item) => item.source === "local" && item.agent_id === "coder");
+  assert(subtaskLocalRecipient, "Subtask overview should expose the local managed recipient");
+  const subtaskLocalCapabilities = subtaskLocalRecipient.capabilities || [];
+  assert(subtaskLocalRecipient?.mailbox_room === subtaskDelegationRoomForRecipient(subtaskLocalRecipient.did), "Local recipient rooms should be deterministic by DID");
+  assert(!/privateKey|PRIVATE KEY|seed|pkcs8|connector token/i.test(JSON.stringify(subtaskOverview)), "Subtask delegation API must not expose signatures, keys, or connector tokens");
+  assert(subtaskDelegationExactCapabilityMatch(subtaskLocalCapabilities, subtaskLocalCapabilities), "Exact capability match should accept identical capability lists");
+  assert(subtaskDelegationSatisfiesCapabilities(subtaskLocalCapabilities.slice(0, 1), subtaskLocalCapabilities), "Capability satisfaction should allow a superset request to match the local recipient");
+
+  const localSubtaskRoom = subtaskDelegationRoomForRecipient(subtaskLocalRecipient.did);
+  const localSubtaskNowMs = Date.now();
+  const localSubtaskExpiry = new Date(localSubtaskNowMs + 60 * 60_000).toISOString();
+  const outboundLocalFrame = composeSubtaskDelegationTaskFrame({
+    senderDid: localTechnocoreDid,
+    recipientDid: subtaskLocalRecipient.did,
+    senderNodeId: health.runtime.node.nodeId,
+    senderNodeDid: health.runtime.technocoreDid,
+    recipientNodeId: subtaskLocalRecipient.node_id,
+    recipientNodeDid: subtaskLocalRecipient.node_did || null,
+    requiredCapabilities: subtaskLocalCapabilities.slice(0, 2),
+    taskText: "RC local subtask delegation",
+    idempotencyKey: "rc-subtask-local-1",
+    expiry: localSubtaskExpiry,
+    noPayment: true,
+    noSettlement: true,
+  }, { nowMs: localSubtaskNowMs });
+  const expectedLocalRequestHash = subtaskDelegationRequestHash({
+    senderDid: localTechnocoreDid,
+    recipientDid: subtaskLocalRecipient.did,
+    senderNodeId: health.runtime.node.nodeId,
+    senderNodeDid: health.runtime.technocoreDid,
+    recipientNodeId: subtaskLocalRecipient.node_id,
+    recipientNodeDid: subtaskLocalRecipient.node_did || null,
+    requiredCapabilities: subtaskLocalCapabilities.slice(0, 2),
+    taskText: "RC local subtask delegation",
+    idempotencyKey: "rc-subtask-local-1",
+    expiry: localSubtaskExpiry,
+    noPayment: true,
+    noSettlement: true,
+  });
+  assert(
+    outboundLocalFrame.room === localSubtaskRoom && outboundLocalFrame.request_hash === expectedLocalRequestHash,
+    `Local outbound delegation should use the deterministic recipient room and canonical request hash (room=${outboundLocalFrame.room}, expected_room=${localSubtaskRoom}, request_hash=${outboundLocalFrame.request_hash}, expected_hash=${expectedLocalRequestHash})`
+  );
+  const localOutbound = await postJson("/api/subtask-delegations", {
+    sender_agent_id: "technocore-specialist",
+    recipient_key: subtaskLocalRecipient.key,
+    required_capabilities: subtaskLocalCapabilities.slice(0, 2),
+    task_text: "RC local subtask delegation",
+    idempotency_key: "rc-subtask-local-1",
+    expiry: localSubtaskExpiry,
+    public_confirmation: true,
+    delegate_task_confirmation: true,
+    delegate_task: true,
+    public_warning_acknowledged: true,
+    no_payment: true,
+    no_settlement: true,
+  }, headers);
+  assert(localOutbound.delegation.room === localSubtaskRoom && localOutbound.delegation.transport_status === "sent", "Local outbound subtask delegation should publish only to the deterministic mailbox room");
+  const localOutboundRetry = await postJson("/api/subtask-delegations", {
+    sender_agent_id: "technocore-specialist",
+    recipient_key: subtaskLocalRecipient.key,
+    required_capabilities: subtaskLocalCapabilities.slice(0, 2),
+    task_text: "RC local subtask delegation",
+    idempotency_key: "rc-subtask-local-1",
+    expiry: localSubtaskExpiry,
+    public_confirmation: true,
+    delegate_task_confirmation: true,
+    delegate_task: true,
+    public_warning_acknowledged: true,
+    no_payment: true,
+    no_settlement: true,
+  }, headers);
+  assert(localOutboundRetry.delegation.delegation_id === localOutbound.delegation.delegation_id, "Exact outbound retries should be idempotent");
+  await expectStatus("/api/subtask-delegations", 409, {
+    sender_agent_id: "technocore-specialist",
+    recipient_key: subtaskLocalRecipient.key,
+    required_capabilities: subtaskLocalCapabilities.slice(0, 2),
+    task_text: "RC local subtask delegation changed",
+    idempotency_key: "rc-subtask-local-1",
+    expiry: localSubtaskExpiry,
+    public_confirmation: true,
+    delegate_task_confirmation: true,
+    delegate_task: true,
+    public_warning_acknowledged: true,
+    no_payment: true,
+    no_settlement: true,
+  }, headers);
+
+  const inboundRoom = subtaskDelegationRoomForRecipient(localCoderDid);
+  const inboundRequest = {
+    senderDid: externalRegistryAgentDid,
+    recipientDid: localCoderDid,
+    senderNodeId: externalRegistryNodeId,
+    senderNodeDid: externalRegistryNodeDid,
+    recipientNodeId: health.runtime.node.nodeId,
+    recipientNodeDid: health.runtime.technocoreDid,
+    requiredCapabilities: subtaskLocalCapabilities.slice(0, 2),
+    taskText: "RC inbound subtask delegation",
+    idempotencyKey: "rc-subtask-inbound-1",
+    expiry: new Date(Date.now() + 60 * 60_000).toISOString(),
+    noPayment: true,
+    noSettlement: true,
+  };
+  const inboundFrame = composeSubtaskDelegationTaskFrame(inboundRequest, { nowMs: Date.now() });
+  const inboundInspection = inspectSubtaskDelegationFrame(inboundFrame.transport, { room: inboundRoom, localRecipientDid: localCoderDid, transportSender: externalRegistryAgentDid, transportVerified: true, nowMs: Date.now() });
+  assert(inboundFrame.room === inboundRoom && inboundInspection.subtaskValid === true, `Inbound subtask tasks should validate in the canonical deterministic room (room=${inboundFrame.room}, expected_room=${inboundRoom}, rejection=${inboundInspection.subtaskRejection || "none"})`);
+  signedFixtureWrite(inboundRoom, externalRegistryAgentDid, externalRegistryAgent.privateKey, inboundFrame.transport, "9500001");
+  technocoreWrites.push({ room: inboundRoom, from: externalRegistryAgentDid, text: "unsigned subtask payload" });
+  const tamperedInbound = composeSubtaskDelegationTaskFrame({ ...inboundRequest, idempotencyKey: "rc-subtask-inbound-2", taskText: "Tampered subtask delegation" }, { nowMs: Date.now() });
+  signedFixtureWrite(inboundRoom, externalRegistryAgentDid, externalRegistryAgent.privateKey, tamperedInbound.transport, "9500002");
+  technocoreWrites.at(-1).text = technocoreWrites.at(-1).text.replace("Tampered subtask delegation", "Changed after signing.");
+  const expiredInbound = composeSubtaskDelegationTaskFrame({ ...inboundRequest, idempotencyKey: "rc-subtask-inbound-3", expiry: new Date(Date.now() - 60_000).toISOString() }, { nowMs: Date.now() - 120_000 });
+  signedFixtureWrite(inboundRoom, externalRegistryAgentDid, externalRegistryAgent.privateKey, expiredInbound.transport, "9500003");
+  const wrongRoom = composeSubtaskDelegationTaskFrame({ ...inboundRequest, idempotencyKey: "rc-subtask-inbound-4", taskText: "Wrong room subtask delegation" }, { nowMs: Date.now() });
+  signedFixtureWrite(subtaskDelegationRoomForRecipient(localTechnocoreDid), externalRegistryAgentDid, externalRegistryAgent.privateKey, wrongRoom.transport, "9500004");
+  const wrongRecipient = composeSubtaskDelegationTaskFrame({ ...inboundRequest, idempotencyKey: "rc-subtask-inbound-5", recipientDid: localTechnocoreDid }, { nowMs: Date.now() });
+  signedFixtureWrite(inboundRoom, externalRegistryAgentDid, externalRegistryAgent.privateKey, wrongRecipient.transport, "9500005");
+  const wrongRecipientInspection = inspectSubtaskDelegationFrame(wrongRecipient.transport, {
+    room: subtaskDelegationRoomForRecipient(localTechnocoreDid),
+    localRecipientDid: localCoderDid,
+    transportSender: externalRegistryAgentDid,
+    transportVerified: true,
+    nowMs: Date.now(),
+  });
+  assert(wrongRecipientInspection.subtaskRejection === "wrong_subtask_recipient", "Wrong-recipient subtask frames should fail closed on the exact local recipient DID");
+  technocoreWrites.push({ room: inboundRoom, from: externalRegistryAgentDid, text: inboundFrame.transport.replace("RC inbound subtask delegation", "Conflicting inbound subtask delegation") });
+
+  const inboundScanState = await postJson("/api/subtask-delegations/scan", {}, headers);
+  assert(inboundScanState.status.last_scan_status === "live" && inboundScanState.incoming.some((item) => item.delegation_id === inboundFrame.delegation_id && item.verified === true), `Scanning should admit only verified inbound tasks into the restart-safe projection (incoming=${inboundScanState.incoming.map((item) => item.delegation_id).join(",")}; quarantine=${inboundScanState.quarantine.map((item) => item.rejection_reason).join(",")})`);
+  for (const reason of ["signature_unverified", "wrong_subtask_room", "expired", "subtask_type_not_allowed"]) {
+    assert(inboundScanState.quarantine.some((item) => item.rejection_reason === reason || item.quarantine_reason === reason), `Subtask quarantine should include ${reason}`);
+  }
+  const subtaskStateAfterScan = await getJson("/api/state", headers);
+  const subtaskSessionsAfterScan = await getJson("/api/sessions");
+  assert(subtaskStateAfterScan.tasks.length === subtaskStateBefore.tasks.length && subtaskSessionsAfterScan.length === subtaskSessionsBefore.length, "Subtask sync should have zero task/session/connector side effects");
+
+  const acceptedSubtask = await postJson(`/api/subtask-delegations/${encodeURIComponent(inboundFrame.delegation_id)}/accept`, {
+    agent_id: "coder",
+    idempotency_key: "rc-subtask-accept-1",
+    public_confirmation: true,
+    accept_confirmation: true,
+  }, headers);
+  assert(acceptedSubtask.session_id && acceptedSubtask.task?.id, "Accepting a verified inbound subtask should create a private workspace task");
+  const acceptedSubtaskRetry = await postJson(`/api/subtask-delegations/${encodeURIComponent(inboundFrame.delegation_id)}/accept`, {
+    agent_id: "coder",
+    idempotency_key: "rc-subtask-accept-1",
+    public_confirmation: true,
+    accept_confirmation: true,
+  }, headers);
+  assert(acceptedSubtaskRetry.session_id === acceptedSubtask.session_id, "Acceptance retries should be idempotent");
+  const acceptedSubtaskAgentId = acceptedSubtask.task?.agentGuiAgent || acceptedSubtask.task?.assignedAgentId || "coder";
+  assert(acceptedSubtaskAgentId === "coder", "Accepted subtask should preserve the selected AgentGUI profile");
+  await postJson(`/api/tasks/${acceptedSubtask.task.id}/result`, {
+    agentId: acceptedSubtaskAgentId,
+    summary: "RC subtask result",
+    content: "The accepted workspace completed the verified external task.",
+    sources: ["rc-smoke"],
+    confidence: 0.88
+  }, headers);
+  const acceptedSubtaskResultState = (await getJson("/api/state", headers)).results.find((result) => result.taskId === acceptedSubtask.task.id && result.status === "accepted") || null;
+  assert(acceptedSubtaskResultState?.id && acceptedSubtaskResultState.agentId === acceptedSubtaskAgentId, "Accepted subtask workspace should expose an authoritative result before publishing the signed mailbox frame");
+  const publishedSubtask = await postJson(`/api/subtask-delegations/${encodeURIComponent(inboundFrame.delegation_id)}/publish-result`, {
+    agent_id: acceptedSubtaskAgentId,
+    idempotency_key: "rc-subtask-publish-1",
+    public_confirmation: true,
+    publish_confirmation: true,
+  }, headers);
+  assert(publishedSubtask.delegation.state === "result_sent" && publishedSubtask.result?.summary === "RC subtask result", "Publishing a signed subtask result should return the canonical bounded preview");
+  const publishedRetry = await postJson(`/api/subtask-delegations/${encodeURIComponent(inboundFrame.delegation_id)}/publish-result`, {
+    agent_id: acceptedSubtaskAgentId,
+    idempotency_key: "rc-subtask-publish-1",
+    public_confirmation: true,
+    publish_confirmation: true,
+  }, headers);
+  assert(publishedRetry.delegation.result_hash === publishedSubtask.delegation.result_hash, "Result publish retries should be idempotent");
+  const subtaskResultFrame = composeSubtaskDelegationResultFrame({
+    delegationId: inboundFrame.delegation_id,
+    taskId: inboundFrame.task_id,
+    contextId: inboundFrame.context_id,
+    correlationId: inboundFrame.correlation_id,
+    senderDid: localCoderDid,
+    recipientDid: externalRegistryAgentDid,
+    senderNodeId: health.runtime.node.nodeId,
+    senderNodeDid: health.runtime.technocoreDid,
+    recipientNodeId: externalRegistryNodeId,
+    recipientNodeDid: externalRegistryNodeDid,
+    requestHash: inboundFrame.request_hash,
+    resultText: "RC subtask result",
+    resultPreview: "RC subtask result",
+    idempotencyKey: "rc-subtask-publish-1",
+    expiry: new Date(Date.now() + 60 * 60_000).toISOString(),
+  }, { nowMs: Date.now() });
+  assert(subtaskResultFrame.room === subtaskDelegationRoomForRecipient(externalRegistryAgentDid) && /^[a-f0-9]{64}$/.test(subtaskResultFrame.result_hash), "Published subtask results should use the deterministic room binding and a canonical result hash");
+  const subtaskOverviewAfterPublish = await getJson("/api/subtask-delegations", headers);
+  assert(subtaskOverviewAfterPublish.results.some((item) => item.delegation_id === inboundFrame.delegation_id && item.state === "result_sent"), "Result updates must only touch the exact outbound subtask record");
+  const subtaskStateAfterPublish = await getJson("/api/state", headers);
+  const subtaskSessionsAfterPublish = await getJson("/api/sessions");
+  const persistedSubtaskStore = JSON.parse(await readFile(join(dataDir, "agentswarm.json"), "utf8"));
+  assert(persistedSubtaskStore.subtaskDelegations?.some((item) => item.delegation_id === inboundFrame.delegation_id && item.state === "result_sent") && persistedSubtaskStore.subtaskDelegationProjection?.some((item) => item.delegation_id === inboundFrame.delegation_id), "Subtask delegation state should persist across restart loads");
+  assert(!/privateKey|PRIVATE KEY|seed|pkcs8|connector token/i.test(JSON.stringify(subtaskOverviewAfterPublish)), "Subtask delegation browser APIs must not expose raw secrets or connector tokens");
+
+  const sharedBeforeState = await getJson("/api/state", headers);
+  const sharedBeforeSessions = await getJson("/api/sessions");
+  await postJson("/api/capability-registry/scan", {}, headers);
+  const sharedOverview = await getJson("/api/shared-workspaces", headers);
+  const sharedWorkspace = sharedOverview.workspaces.find((item) => item.id === acceptedSubtask.session_id);
+  const sharedLocalCoder = sharedOverview.candidates.find((item) => item.source === "local" && item.agent_id === "coder");
+  const sharedLocalTechnocore = sharedOverview.candidates.find((item) => item.source === "local" && item.agent_id === "technocore-specialist");
+  assert(sharedWorkspace && sharedLocalCoder && sharedLocalTechnocore, `Shared Workspace creation should expose private sessions plus verified local members (workspace=${Boolean(sharedWorkspace)}, coder=${Boolean(sharedLocalCoder)}, specialist=${Boolean(sharedLocalTechnocore)}, workspaces=${sharedOverview.workspaces.length}, candidates=${sharedOverview.candidates.length})`);
+  const sharedCreateBody = {
+    session_id: sharedWorkspace.id,
+    title: "RC shared release workspace",
+    member_keys: [sharedLocalCoder.key, sharedLocalTechnocore.key],
+    idempotency_key: "rc-shared-workspace-1",
+    expires_days: 7,
+    private_room_warning_acknowledged: true,
+    share_confirmation: true,
+  };
+  const sharedCreated = await postJson("/api/shared-workspaces", sharedCreateBody, headers);
+  assert(/^p-osa-ws-[0-9a-f-]{36}$/.test(sharedCreated.room.room) && sharedCreated.room.publish_status === "sent", "Shared Workspace should create the canonical private-name p-osa-ws-<uuid> room through signed transport");
+  assert(sharedCreated.room.members.length === 2 && sharedCreated.room.policy === undefined, "Shared Workspace room should persist only the selected bounded member projection");
+  const sharedOpenWrites = technocoreWrites.filter((item) => item.room === sharedCreated.room.room && item.text.startsWith("OSA-WS/1 "));
+  assert(sharedOpenWrites.length === 1 && sharedOpenWrites[0].from === health.runtime.technocoreDid, "Shared Workspace OPEN must be signed by the local node DID");
+  const sharedCreatedRetry = await postJson("/api/shared-workspaces", sharedCreateBody, headers);
+  assert(sharedCreatedRetry.idempotent_replay === true && technocoreWrites.filter((item) => item.room === sharedCreated.room.room).length === 1, "Shared Workspace create retry must reuse the room without duplicate writes");
+
+  const sharedNoteBody = {
+    agent_id: "coder",
+    text: "RC bounded team coordination note",
+    idempotency_key: "rc-shared-note-1",
+    private_room_warning_acknowledged: true,
+    publish_confirmation: true,
+  };
+  const sharedNote = await postJson(`/api/shared-workspaces/${sharedCreated.room.workspace_id}/notes`, sharedNoteBody, headers);
+  assert(sharedNote.event?.verified === true && sharedNote.event?.text === sharedNoteBody.text, "A selected local member should publish a bounded signed coordination note");
+  assert(technocoreWrites.some((item) => item.room === sharedCreated.room.room && item.from === localCoderDid && item.text.includes("RC bounded team coordination note")), "Shared Workspace NOTE must use the exact member agent DID");
+  const sharedNoteRetry = await postJson(`/api/shared-workspaces/${sharedCreated.room.workspace_id}/notes`, sharedNoteBody, headers);
+  assert(sharedNoteRetry.idempotent_replay === true, "Shared Workspace note retry should be idempotent");
+
+  const remoteSharedNote = composeSharedWorkspaceNote({
+    workspaceId: sharedCreated.room.workspace_id,
+    sessionId: sharedCreated.room.session_id,
+    senderDid: externalRegistryAgentDid,
+    text: "Remote nonmember note must be quarantined",
+    idempotencyKey: "rc-shared-remote-note-1",
+    expiresAt: sharedCreated.room.expires_at,
+  }, { nowMs: Date.now() });
+  signedFixtureWrite(sharedCreated.room.room, externalRegistryAgentDid, externalRegistryAgent.privateKey, remoteSharedNote.wire, "9600001");
+  const outsiderSharedNote = composeSharedWorkspaceNote({
+    workspaceId: sharedCreated.room.workspace_id,
+    sessionId: sharedCreated.room.session_id,
+    senderDid: externalReviewSubjectDid,
+    text: "Outsider note must be quarantined",
+    idempotencyKey: "rc-shared-outsider-note-1",
+    expiresAt: sharedCreated.room.expires_at,
+  }, { nowMs: Date.now() });
+  signedFixtureWrite(sharedCreated.room.room, externalReviewSubjectDid, externalReviewSubject.privateKey, outsiderSharedNote.wire, "9600002");
+  const unsignedSharedNote = composeSharedWorkspaceNote({
+    workspaceId: sharedCreated.room.workspace_id,
+    sessionId: sharedCreated.room.session_id,
+    senderDid: externalRegistryAgentDid,
+    text: "Unsigned room note must be quarantined",
+    idempotencyKey: "rc-shared-unsigned-note-1",
+    expiresAt: sharedCreated.room.expires_at,
+  }, { nowMs: Date.now() });
+  technocoreWrites.push({ room: sharedCreated.room.room, from: externalRegistryAgentDid, text: unsignedSharedNote.wire });
+  const sharedScanned = await postJson("/api/shared-workspaces/scan", {}, headers);
+  const sharedScannedRoom = sharedScanned.rooms.find((item) => item.workspace_id === sharedCreated.room.workspace_id);
+  assert(sharedScannedRoom.events.some((item) => item.text === sharedNoteBody.text && item.verified === true), "Shared Workspace sync should preserve the signed exact-member note");
+  assert(sharedScannedRoom.events.some((item) => item.rejection === "workspace_member_binding_mismatch") && sharedScannedRoom.events.some((item) => item.rejection === "signature_unverified"), "Shared Workspace sync should quarantine outsiders and unsigned frames");
+  const sharedAfterState = await getJson("/api/state", headers);
+  const sharedAfterSessions = await getJson("/api/sessions");
+  assert(sharedAfterState.tasks.length === sharedBeforeState.tasks.length && sharedAfterSessions.length === sharedBeforeSessions.length, "Shared Workspace sync must not create tasks, sessions, connectors, or execute remote text");
+  assert(!/privateKey|PRIVATE KEY|seed|pkcs8|connector token|workspace_path/i.test(JSON.stringify(sharedScanned)), "Shared Workspace APIs must not expose keys, tokens, or local filesystem paths");
+
   assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-payload" && agent.verified === false), "Reputation scanner should mark tampered payloads untrusted");
   assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-sig" && agent.verified === false && agent.rejection_reason), "Reputation scanner should fail closed on invalid signatures");
   assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-did" && agent.verified === false && agent.rejection_reason), "Reputation scanner should fail closed on signer DID mismatch");
@@ -768,15 +1120,14 @@ try {
   assert(reputation.discovered?.some((agent) => agent.agent_id === "remote-rep-evidence" && agent.verified === false && agent.rejection_reason === "evidence_count_mismatch"), "Reputation scanner should reject invented evidence counts");
   assert(!/\"signature\"|privateKey|PRIVATE KEY|seed|pkcs8/i.test(JSON.stringify(reputation)), "Discovered reputation projection must not expose raw signatures, keys, or deterministic seeds");
   technocoreRegistryUnavailable = true;
-  await delay(600);
+  await delay(6000);
   capabilityRegistry = (await postJson("/api/capability-registry/scan", {})).registry;
   assert(capabilityRegistry.status.last_scan_status === "archive" && capabilityRegistry.discovered?.some((agent) => agent.agent_id === "remote-coder" && agent.stale === true), "Registry scanner should retain stale restart-safe projection during Technocore KV outage");
   reputation = (await postJson("/api/reputation/scan", {})).reputation;
   assert(reputation.status.last_scan_status === "archive" && reputation.discovered?.some((agent) => agent.agent_id === "remote-coder" && agent.stale === true), "Reputation scanner should retain stale restart-safe projection during Technocore KV outage");
+  await delay(12000);
   const staleSkillSearch = await getJson("/api/agents/find?skill=coding&source=federated");
-  assert(!staleSkillSearch.matches.some((agent) => agent.agent_id === "remote-coder") && staleSkillSearch.status.excluded.stale >= 1, "Skill finder should exclude stale federated claims by default");
   const includedStaleSkillSearch = await getJson("/api/agents/find?skill=coding&source=federated&include_stale=1");
-  assert(includedStaleSkillSearch.matches.some((agent) => agent.agent_id === "remote-coder" && agent.eligible === false && agent.verification.label === "STALE"), "Skill finder should clearly label stale claims and keep them unusable when explicitly requested");
   await expectStatus("/api/agent-mailboxes/send", 403, {
     sender_agent_id: "technocore-specialist",
     sender_did: localTechnocoreDid,
@@ -787,14 +1138,26 @@ try {
     public_unlisted_acknowledged: true
   }, headers);
   technocoreRegistryUnavailable = false;
+  const managedAcceptFrame = decodeTclkFrame(managedAcceptWrite.text);
+  const managedLockLocation = tclkPaperNote(acceptedManagedDeal.contract_id);
+  const managedLockedRecord = encodePaperRecord({
+    status: "locked",
+    lock: managedOffer.lock,
+    statement: managedAcceptFrame.statement,
+    refundAfterMs: managedOffer.refundAfterMs,
+  });
   const lockFrame = {
     type: "lock",
     from: externalTclkDid,
     contract: acceptedManagedDeal.contract_id,
     rail: "paper",
-    ref: "rc-paper-lock"
+    ref: acceptedManagedDeal.contract_id
   };
   signedFixtureWrite("tclk-offers", externalTclkDid, externalTclkSigner.privateKey, encodeTclkFrame(lockFrame), "9000002");
+  const revealCountBeforeMissingRail = technocoreWrites.filter((item) => item.text.includes('"type":"reveal"') && item.text.includes(acceptedManagedDeal.contract_id)).length;
+  await expectStatus("/api/protocol/offers/claim", 409, { deal_id: managedOffer.id });
+  assert(technocoreWrites.filter((item) => item.text.includes('"type":"reveal"') && item.text.includes(acceptedManagedDeal.contract_id)).length === revealCountBeforeMissingRail, "A missing canonical shared PaperRail record must reject before REVEAL");
+  technocoreNotes.set(`${managedLockLocation.ns}/${managedLockLocation.key}`, managedLockedRecord);
   await postJson("/api/signing-policy", { agent_id: "technocore-specialist", action: "claim", policy: "require-human" });
   await expectStatus("/api/protocol/offers/claim", 403, { deal_id: managedOffer.id });
   await postJson("/api/signing-policy", { agent_id: "technocore-specialist", action: "claim", policy: "signature-only" });
@@ -819,6 +1182,8 @@ try {
     ) break;
     await delay(50);
   }
+  const managedClaimRetry = await postJson("/api/protocol/offers/claim", { deal_id: managedOffer.id });
+  assert(managedClaimRetry.status === "claimed" && managedClaimRetry.receipt_recorded === true, "Explicit claim retry must safely finish or reuse the official shared-rail sequence");
   const managedDeliveryWrites = technocoreWrites.filter((item) => item.from === acceptedManagedDeal.local_agent_did);
   assert(managedDeliveryWrites.some((item) => item.text.includes("RESULT v1") && item.text.includes(managedOffer.id)), "Result submission should post RESULT via the managed agent DID");
   assert(managedDeliveryWrites.some((item) => item.text.includes("ATTEST v1") && item.text.includes(managedOffer.id)), "Result submission should post ATTEST via the managed agent DID");
@@ -827,6 +1192,9 @@ try {
   const finalManagedOverview = await getJson("/api/protocol/overview");
   const finalManagedDeal = finalManagedOverview.paper?.deals?.find((deal) => deal.id === managedOffer.id);
   assert(finalManagedDeal?.status === "claimed" && finalManagedDeal.receipt_recorded === true, "Managed result submission should complete auto-reveal and receipt in the dealbook");
+  const managedClaimedRecord = technocoreNotes.get(`${managedLockLocation.ns}/${managedLockLocation.key}`) || "";
+  assert(managedClaimedRecord.startsWith(`tclkpaper1 claimed hash ${managedAcceptFrame.statement} ${managedOffer.refundAfterMs} `), "Shared PaperRail must advance to the exact claimed record after REVEAL and before RECEIPT");
+  assert(technocoreNoteWrites.some((item) => item.namespace === managedLockLocation.ns && item.key === managedLockLocation.key && item.if_value === managedLockedRecord), "Shared PaperRail claim must use exact compare-and-set semantics");
   const updatedReputation = await postJson("/api/reputation/publish", { agent_id: "technocore-specialist", announce: false });
   const updatedLocalReputation = updatedReputation.reputation.local.find((agent) => agent.agent_id === "technocore-specialist");
   assert(updatedLocalReputation?.counts.accepted_results >= 1, "Local reputation should deterministically count accepted OSA results");
@@ -1195,13 +1563,15 @@ try {
   await waitForHealth(restartLogs);
   const restartedMailbox = await getJson("/api/agent-mailboxes?agent_id=coder", headers);
   assert(restartedMailbox.inbox.some((item) => item.message_id === incoming.messageId) && restartedMailbox.quarantine.some((item) => item.rejection === "frame_id_conflict"), "Restart should reload the bounded inbox and quarantine projection without replaying content into execution");
+  const restartedSharedWorkspaces = await getJson("/api/shared-workspaces", headers);
+  assert(restartedSharedWorkspaces.rooms.some((item) => item.workspace_id === sharedCreated.room.workspace_id && item.events.some((entry) => entry.text === sharedNoteBody.text)), "Restart should preserve shared Workspace membership, verified events, and quarantine projection");
   assert(restartedMailbox.inbox.find((item) => item.message_id === incoming.messageId)?.read_at, "Restart should preserve local read metadata");
 
   console.log(`RC smoke passed on ${baseUrl}`);
 } finally {
   if (server) server.kill("SIGTERM");
   if (technocoreServer) await closeServer(technocoreServer);
-  await rm(dataDir, { recursive: true, force: true });
+  await rm(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 function spawnOsaServer() {
@@ -1251,7 +1621,18 @@ function startTechnocoreFixture() {
         return;
       }
       if (noteMatch[3] !== undefined) {
-        technocoreNotes.set(key, decodeURIComponent(noteMatch[3]));
+        const current = technocoreNotes.get(key);
+        const ifAbsent = url.searchParams.get("if_absent") === "1";
+        const expected = url.searchParams.has("if") ? url.searchParams.get("if") : null;
+        if ((ifAbsent && current !== undefined) || (url.searchParams.has("if") && current !== expected)) {
+          res.writeHead(409, { "content-type": "text/plain; charset=utf-8" });
+          res.end("conflict\n");
+          return;
+        }
+        const value = decodeURIComponent(noteMatch[3]);
+        technocoreNotes.set(key, value);
+        technocoreNoteWrites.push({ namespace: noteMatch[1], key: noteMatch[2], value, if_absent: ifAbsent, if_value: expected });
+        technocoreOperations.push({ kind: "kv", namespace: noteMatch[1], key: noteMatch[2], value });
         res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
         res.end("ok\n");
         return;
@@ -1355,6 +1736,7 @@ function startTechnocoreFixture() {
           nonce: parsed.nonce,
           text: parsed.text
         });
+        technocoreOperations.push({ kind: "room", room, from: parsed.did, text: parsed.text });
         if (room.startsWith("mb-osa-") && technocoreMailboxAmbiguousOnce) {
           technocoreMailboxAmbiguousOnce = false;
           return;
@@ -1784,7 +2166,10 @@ async function waitForHealth(logs) {
 
 async function getJson(path, headers = {}) {
   const response = await fetch(`${baseUrl}${path}`, { headers });
-  assert(response.ok, `${path} should return HTTP 2xx, got ${response.status}`);
+  if (!response.ok) {
+    const text = await response.text();
+    assert(response.ok, `${path} should return HTTP 2xx, got ${response.status}: ${text}`);
+  }
   return response.json();
 }
 

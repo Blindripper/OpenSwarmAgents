@@ -453,7 +453,43 @@ Body: `{ "agent_id": "coder", "box": "inbox" }` or `box: "outbox"`. Inbox sync r
 
 Body: `{ "agent_id": "coder", "message_id": "mailbox-in-..." }`. Sets local `read_at` metadata on a verified inbox row. It emits no ACK frame and performs no connector, agent, session, task, prompt, workspace, delegation, result, tool, command, or execution action.
 
-`POST /api/protocol/offers/create` creates a payer-side FLOP/PaperRail offer, stores it in the local dealbook, and publishes its signed TCLK frame to `tclk-offers`. `POST /api/protocol/offers/accept` accepts a verified external offer under the selected managed agent DID, stores the payee's encrypted hash-lock secret, creates or reuses a private Workspaces desk bound by `tclkDealId`, returns `workspace_session_id`, and announces the contract in TCLK's signed-only, unlisted `mb-p-tclk-<contract-prefix>` deal room. Repeating the accept call for the same offer returns the existing deal and workspace instead of creating duplicates. `POST /api/protocol/offers/lock` lets the payer record a PaperRail lock and publish the signed lock frame. `POST /api/protocol/offers/claim` lets the payee reveal its locally held secret after a verified lock and posts a terminal receipt when policy allows it. All responses remain explicit that PaperRail has no value.
+## Subtask Delegations
+
+`GET /api/subtask-delegations`
+
+Returns the restart-persistent subtask delegation projection. The response includes the pinned `osa-subtask-delegation/1` profile, deterministic `TASK`/`STATUS`/`RESULT`/`ACK` frame metadata, bounded limits, inbox/outbox/result/quarantine rows, and sync provenance. Verified rows prove authorship and integrity only; they do not grant authority or permission.
+
+`POST /api/subtask-delegations`
+
+Creates an outbound delegation draft for the authenticated local operator or exact scoped connector. The request must select an exact local managed sender, an eligible local or fresh verified recipient, a bounded text-only task, explicit `public_unlisted_acknowledged: true`, explicit `delegate_task_confirmed: true`, and required capabilities. Sensitive commands, tools, files, wallet/payment/settlement fields, and arbitrary rooms are rejected.
+
+`POST /api/subtask-delegations/scan`
+
+Refreshes the incoming-task projection from deterministic Technocore recipient rooms only. Sync is restart-safe and admission is fail-closed: malformed, unsigned, expired, wrong-room, wrong-recipient, tampered, or sensitive frames become quarantine entries and never create workspaces or sessions.
+
+`POST /api/subtask-delegations/:id/accept`
+
+Accepts a verified pending inbound task into exactly one private Workspace using the existing safe AgentGUI path. The caller must authenticate locally, confirm the acceptance, and select an eligible local AgentGUI profile that satisfies the required capabilities. Retries are idempotent.
+
+`POST /api/subtask-delegations/:id/publish-result`
+
+Publishes a completed, bounded, signed result back to the original delegator's deterministic mailbox. The API requires explicit confirmation, a bounded preview, and an authoritative local result. It never accepts raw artifacts, secrets, or settlement data.
+
+## Shared Workspace Rooms
+
+`GET /api/shared-workspaces` returns the local operator's eligible private Workspaces, fresh verified local/federated member candidates, restart-persistent `p-osa-ws-<uuid>` rooms, bounded verified events, quarantine metadata, and scan status. The room-name convention is private/unlisted but not confidential. API projections omit Workspace task bodies, files, paths, credentials, signatures, keys, and connector tokens.
+
+`POST /api/shared-workspaces` requires an existing private `session_id`, title, 1–16 exact candidate `member_keys`, a stable `idempotency_key`, `private_room_warning_acknowledged: true`, and `share_confirmation: true`. The Workspace's own local agent must remain a member. It writes a canonical node-DID-signed `osa-shared-workspace/1` `OPEN` frame only; Workspace content and files remain local. Exact retries reuse the room; changed reuse returns `409`.
+
+`POST /api/shared-workspaces/:workspaceId/notes` requires an exact local room-member `agent_id`, bounded text, stable idempotency key, disclosure acknowledgement, and explicit publish confirmation. OSA signs the canonical `NOTE` through the existing managed `sign_text` policy. The endpoint accepts no commands, files, tasks, execution, authority, wallet, payment, or settlement fields.
+
+`POST /api/shared-workspaces/scan` reads only locally known shared rooms. It verifies transport signatures and exact room, Workspace, session, manifest, and member bindings. Malformed, expired, unsigned, outsider, wrong-room, wrong-session, or sensitive records become bounded quarantine events. Scanning never creates or modifies tasks, sessions, connectors, prompts, tools, files, or settlement state.
+
+`POST /api/protocol/offers/create` creates a payer-side FLOP/PaperRail offer, stores it in the local dealbook, and publishes its signed TCLK frame to `tclk-offers`. `POST /api/protocol/offers/accept` accepts a verified external offer under the selected managed agent DID, stores the payee's encrypted hash-lock secret, creates or reuses a private Workspaces desk bound by `tclkDealId`, returns `workspace_session_id`, and announces the contract in TCLK's signed-only, unlisted `mb-p-tclk-<contract-prefix>` deal room. Repeating the accept call for the same offer returns the existing deal and workspace instead of creating duplicates.
+
+`POST /api/protocol/offers/lock` uses the shared Technocore PaperRail as authoritative. It writes the exact canonical record to `/kv/tclk-paper-<contract[2:4]>/<contract[4:18]>` with `?if_absent=1`, independently reads/verifies it, and only then publishes signed `LOCK` with `ref` equal to the full 66-character contract id. An identical pre-existing lock is an idempotent restart continuation; missing, malformed, truncated-ref, or conflicting records fail closed. The encrypted local note is a mirror only.
+
+`POST /api/protocol/offers/claim` independently verifies the shared lock before publishing any secret, then follows `REVEAL` → PaperRail `claim` with exact `?if=<encoded previous>` CAS → terminal receipt and local claimed state. Identical already-claimed state is retry-safe. `POST /api/protocol/offers/refund` requires `{ "deal_id": "…", "refund_confirmation": true, "confirmation": "refund-paperrail" }`, verifies timing/ref/record, advances the shared PaperRail record first, and then publishes signed `REFUND`. All responses remain explicit that world-writable PaperRail has no value and is never settlement proof.
 
 `POST /api/protocol/paper-deals` creates a local PaperRail rehearsal deal (production-shaped TCLK offer with `asset: "FLOP"`, `rails: ["paper"]`, and a hash-lock), returning `has_value: false`, `mode: "paper-rehearsal"`, and `next_action`. `POST /api/protocol/paper-deals/:id/advance` advances a rehearsal through accept -> lock -> claim/receipt; `.../refund` exercises the refund path against a simulated deadline; `.../cancel` removes a proposed/accepted rehearsal before locking. Rehearsal deal secrets are encrypted at rest with a key derived from the local node identity and never leave OSA.
 

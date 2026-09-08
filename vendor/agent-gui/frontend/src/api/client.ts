@@ -1,4 +1,4 @@
-import type { ActivityEvent, AgentCapabilities, AgentMailboxMessage, AgentMailboxOverview, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolA2AOverview, ProtocolOverview, ProtocolPaperDeal, PublicProjectDetail, PublicProjectReview, Session, SubagentRecord, TodoData, TopAgent, WorkerEvent } from "../types";
+import type { ActivityEvent, AgentCapabilities, AgentMailboxMessage, AgentMailboxOverview, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolA2AOverview, ProtocolOverview, ProtocolPaperDeal, PublicProjectDetail, PublicProjectReview, Session, SharedWorkspaceOverview, SharedWorkspaceRoom, SubagentRecord, SubtaskDelegationOverview, SubtaskDelegationRecord, TodoData, TopAgent, WorkerEvent } from "../types";
 
 const BASE = "/api";
 const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
@@ -409,6 +409,47 @@ export const api = {
       post<ProtocolPaperDeal>("/protocol/offers/accept", body),
     claimOffer: (body: { deal_id: string }) =>
       post<ProtocolPaperDeal>("/protocol/offers/claim", body),
+  },
+  sharedWorkspaces: {
+    overview: (signal?: AbortSignal) => get<SharedWorkspaceOverview>("/shared-workspaces", signal),
+    create: (body: { session_id: string; title: string; member_keys: string[]; idempotency_key: string; expires_days: number; private_room_warning_acknowledged: true; share_confirmation: true }) =>
+      post<{ ok: boolean; idempotent_replay: boolean; room: SharedWorkspaceRoom; status: SharedWorkspaceOverview }>("/shared-workspaces", body),
+    scan: () => post<SharedWorkspaceOverview>("/shared-workspaces/scan", {}),
+    publishNote: (workspaceId: string, body: { agent_id: string; text: string; idempotency_key: string; private_room_warning_acknowledged: true; publish_confirmation: true }) =>
+      post<{ ok: boolean; idempotent_replay: boolean; room: SharedWorkspaceRoom; event: SharedWorkspaceRoom["events"][number] }>(`/shared-workspaces/${encodeURIComponent(workspaceId)}/notes`, body),
+  },
+  subtaskDelegations: {
+    overview: (signal?: AbortSignal) => get<SubtaskDelegationOverview>("/subtask-delegations", signal),
+    get: (id: string, signal?: AbortSignal) => get<{ ok: boolean; delegation: SubtaskDelegationRecord; status: SubtaskDelegationOverview }>(`/subtask-delegations/${encodeURIComponent(id)}`, signal),
+    create: (body: {
+      sender_agent_id: string;
+      recipient_key: string;
+      required_capabilities: string[];
+      task_text: string;
+      idempotency_key: string;
+      expiry: string;
+      public_confirmation: true;
+      delegate_task_confirmation: true;
+      delegate_task: true;
+      public_warning_acknowledged: true;
+      no_payment: true;
+      no_settlement: true;
+    }) => post<{ ok: boolean; delegation: SubtaskDelegationRecord; status: SubtaskDelegationOverview }>("/subtask-delegations", body),
+    scan: () => post<SubtaskDelegationOverview>("/subtask-delegations/scan", {}),
+    accept: (id: string, body: {
+      agent_id: string;
+      idempotency_key: string;
+      public_confirmation: true;
+      accept_confirmation?: true;
+      accept_task_confirmation?: true;
+    }) => post<{ ok: boolean; delegation: SubtaskDelegationRecord; session_id: string | null; session?: Session | null; task?: Session | null; status: SubtaskDelegationOverview }>(`/subtask-delegations/${encodeURIComponent(id)}/accept`, body),
+    publishResult: (id: string, body: {
+      agent_id: string;
+      idempotency_key: string;
+      public_confirmation: true;
+      publish_confirmation?: true;
+      publish_result_confirmation?: true;
+    }) => post<{ ok: boolean; delegation: SubtaskDelegationRecord; task?: Session | null; result?: { id: string; taskId: string; agentId: string; summary?: string; content?: string; status?: string }; status: SubtaskDelegationOverview }>(`/subtask-delegations/${encodeURIComponent(id)}/publish-result`, body),
   },
   wallet: {
     challenge: (body: { address: string; chain_id?: string | null }) =>

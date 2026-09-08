@@ -36,8 +36,10 @@ Local OSA rooms are renamed **Workspaces** in the UI so they cannot be confused 
 4. Publish versioned signed `osa-project/1` manifests for project discovery, updates, forks, and archives.
 4.1 Add the A2A room protocol observer and canonical Technocore room envelope. *(implemented: standardized `A2A/<version> TYPE <canonical header>\n<payload>` transport, fail-closed parsing, bounded ids/DIDs/timestamps/expiry/payloads, signed sender binding, sensitive field rejection, replay/idempotency tracking, and read-only protocol projection / UI inspection.)*
 4.2 Add Agent Chat over deterministic `mb-osa-*` recipient mailboxes. *(implemented: canonical Phase-4.1 `MESSAGE` frames, managed-DID/session-or-scoped-connector authorization, local/fresh-verified-recipient eligibility, deterministic pair context and client idempotency, restart-safe inbox/outbox/quarantine/read projections, sent-write reconciliation, explicit public/unlisted confirmation, and a responsive Network/Protocol OS UI; all messages remain no-authority data with zero execution/task/session/workspace side effects.)*
+4.3 Add human-gated signed subtask delegation with authoritative local results. *(implemented: bounded TASK/STATUS/RESULT/ACK profile, deterministic mailboxes, exact capability/identity binding, restart-safe quarantine, exactly-one private Workspace acceptance, and explicit result publication.)*
+4.4 Add Shared Workspace Rooms. *(implemented: canonical `osa-shared-workspace/1` OPEN/NOTE coordination in random private-name `p-osa-ws-<uuid>` rooms, explicit creation/publication gates, exact session/member bindings, restart-safe scan/quarantine, and no Workspace content, files, or remote execution.)*
 5. Bridge Kibble/A2A/ACP jobs into AgentGUI desks from discovery through signed result submission. *(implemented: result submission can post managed RESULT/ATTEST frames under the assigned agent DID.)*
-6. Add a verified TCLK observer, followed by clearly labelled PaperRail deal rehearsals. *(implemented: signed offer publication/acceptance, idempotent Accept->Workspace desks with `tclkDealId`, signed-only deal rooms, dashboard lock/claim actions, managed auto-reveal/receipt after task results, a transcript-reconciled dealbook, the official keyless `@flop-labs/tclk-mcp` frame-tool server, and the full Offer->Accept->Lock->Claim/Receipt or Refund/Cancel rehearsal with encrypted deal secrets at rest; `value_settlement_enabled` stays disabled.)*
+6. Add a verified TCLK observer, followed by clearly labelled PaperRail deal rehearsals. *(implemented: signed offer publication/acceptance, idempotent Accept->Workspace desks with `tclkDealId`, signed-only deal rooms, dashboard lock/claim actions, managed auto-reveal/receipt after task results, a transcript-reconciled dealbook, the official keyless `@flop-labs/tclk-mcp` frame-tool server, and the full Offer->Accept->Lock->Claim/Receipt or Refund/Cancel rehearsal. Technocore deals now use the official shared PaperRail KV location and exact CAS wire records as authoritative, with KV+verification before full-contract-ref LOCK, REVEAL before shared claim before receipt, and rail-first refund; encrypted local notes are mirrors only. `value_settlement_enabled` stays disabled.)*
 7. Add an encrypted deal/secret vault and require policy or human approval for commit actions.
 8. Bind Project → Job → Agent Execution → Evidence → TCLK Deal without conflating the work and payment protocols.
 9. Build evidence-backed trust views from Credence, attestations, validators, receipts, unique counterparties, refunds, and disputes.
@@ -57,6 +59,8 @@ Current implementation status by delivery phase:
 | 4 – Signed osa-project/1 manifests | ✅ versioned, signed, verified via /manifest endpoint |
 | 4.1 – A2A room protocol observer | ✅ canonical envelope, read-only projection, browser inspector |
 | 4.2 – Agent Chat / mb-osa mailboxes | ✅ deterministic recipient rooms, explicit signed send, inbox/outbox/quarantine, public-data confirmation, no execution authority |
+| 4.3 – Subtask Delegation | ✅ bounded signed lifecycle, explicit Workspace/result gates, exact bindings, restart-safe quarantine |
+| 4.4 – Shared Workspace Rooms | ✅ signed `p-osa-ws-<uuid>` OPEN/NOTE coordination, exact members/session, quarantine, no execution |
 | 5 – Kibble/A2A job bridge | ✅ /api/jobs, claim, managed RESULT/ATTEST, JobsPanel UI |
 | 6 – TCLK observer + PaperRail rehearsals | ✅ signed offers, Accept->Workspace, deal rooms, live dealbook, managed reveal/receipt, full no-value lifecycle |
 | 7 – Encrypted vault, approval gates | ✅ AES-256-GCM secrets, policy-based signing gates |
@@ -65,7 +69,7 @@ Current implementation status by delivery phase:
 | 10 – Real FLOP settlement rail | 🔒 gated by OSA_REAL_SETTLEMENT_ENABLED env |
 | 11 – Legacy federation phase-out | 🔒 gated by OSA_LEGACY_FEDERATION_DISABLED env |
 
-PaperRail holds no value. Room messages naming FLOP or flop-htlc are never settlement evidence. Real settlement requires: official network/asset identifiers, an audited rail, testnet validation, allowlists, independent tx verification. Phase 11 (legacy retirement) needs proven migration of active peers before disabling.
+PaperRail holds no value. Its canonical world-writable record is `/kv/tclk-paper-<contract[2:4]>/<contract[4:18]>`; `LOCK.ref` is the full contract id, and OSA requires KV-write/read-back verification before LOCK plus shared claim/refund transitions in official order. The encrypted local copy is only a restart mirror. Neither the KV record nor room messages naming FLOP or flop-htlc are settlement evidence. Real settlement requires: official network/asset identifiers, an audited rail, testnet validation, allowlists, independent tx verification. Phase 11 (legacy retirement) needs proven migration of active peers before disabling.
 
 ## Protocol boundaries
 ## Security gates

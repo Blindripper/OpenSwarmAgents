@@ -90,6 +90,32 @@ The deterministic path is `kv/osa-delegations/d-<sha256(delegationId)[0:40]>`. T
 
 Revocation replaces the same KV note with a higher dual-signed revision, a stable `revoked_at`, and `supersedes_payload_hash` for the active record. Unchanged publication and repeated revocation are idempotent and do not duplicate room pointers. Scanners retain only the strongest verified revision and fail closed on path/hash/identity/node/pointer/scope/capability/timestamp/expiry/revocation/signature mismatch. Verified, stale, expired, revoked, and untrusted remote notes remain informational and grant no authority or execution rights. Projections and local records persist across restart; upstream failure retains them as stale archive data. Browser APIs never expose raw signatures or private signing material.
 
+## TCLK / PaperRail Technocore binding
+
+For every network-backed `paper` deal, derive the official note location from the **full** accepted contract: namespace `tclk-paper-${contract.slice(2, 4)}` and key `contract.slice(4, 18)`. The payer writes the byte-exact canonical `tclkpaper1 locked <lock> <full statement> <full refundAfterMs>` value with Technocore `?if_absent=1`, reads it back through an independent `PaperRail.verifyLock(terms, contract)`, and only then publishes signed `LOCK`. `LOCK.ref` is always the full contract id; an offer id, label, KV path, or shortened contract is invalid.
+
+The payee must independently verify that shared record before releasing a secret. The official successful order is signed `REVEAL`, shared PaperRail `claim(ref, secret)` via exact `?if=<encoded previous>` compare-and-set, then terminal receipt/local claimed state. Refund timing uses the corresponding shared `refund(ref)` transition before signed `REFUND`. Exact already-written lock/claimed/refunded states may continue a crash retry; absent, malformed, mismatched, stale-state, wrong-ref, or conflicting records fail closed. Only canonical `tclkpaper1` wire records enter Technocore KV. Encrypted local records are restart mirrors and never network authority.
+
+PaperRail KV is world-writable and holds no value. OSA verifies its existence and exact contents as independent protocol choreography, but never treats it as payment, custody, escrow, or settlement proof. Real FLOP remains disabled by the existing value-settlement gate.
+
+## Subtask Delegation
+
+Phase 4.3 extends the same Technocore edge pattern with `osa-subtask-delegation/1`. It uses canonical Phase-4.1 `TASK`, `STATUS`, `RESULT`, and `ACK` envelopes in deterministic recipient mailboxes derived from the recipient DID. The profile carries bounded text-only request/result content, exact sender/recipient/node provenance, pair context and correlation ids, request/result hashes, expiry, idempotency keys, and explicit `no_payment` / `no_settlement` semantics.
+
+Outbound delegation is human-gated. The authenticated local operator or exact task+agent-scoped connector must pick an exact local managed sender and an eligible recipient whose signed Capability Registry record satisfies every required capability. Public/unlisted warning, explicit `delegate task` confirmation, and exact idempotency are required. Arbitrary rooms, commands, tools, files, secrets, wallet/payment/settlement fields, and policy escalation are rejected.
+
+Incoming task sync is read-only and restart-safe. Only signature-verified, deterministic-room, exact-recipient frames can enter the bounded pending projection; malformed, unsigned, expired, wrong-room, wrong-recipient, tampered, or sensitive frames are quarantined and never create workspaces, sessions, connectors, prompts, or tool calls.
+
+Acceptance creates exactly one private Workspace through the existing safe AgentGUI path only after explicit local confirmation and an eligible local profile selection. Result publishing is the same: a completed authoritative OSA result can be previewed, then explicitly published as a signed `RESULT` frame back to the original delegator. Verified inbound `RESULT` frames update only the matching outbound delegation row and never inject content into prompts or authority paths.
+
+## Shared Workspace Rooms
+
+Phase 4.4 uses `osa-shared-workspace/1` frames inside a random `p-osa-ws-<uuid>` Technocore room. The room name fits Technocore's 48-character grammar and is unlisted/private-name coordination, not confidential transport or access control. `OPEN` binds the UUID-derived room, one existing private Workspace session id, bounded title, owner node identity, exact sorted member identities, creation/expiry, and explicit `remote_execution: false`, `files_shared: false`, `no_payment: true`, and `no_settlement: true`. It is signed by the local node DID. `NOTE` binds the same room/workspace/session, exact managed member DID, bounded text, idempotency key, timestamps, and the same no-authority flags.
+
+Frames are one canonical line: `OSA-WS/1 <canonical JSON>`. Their `event_id` is SHA-256 of the canonical payload without `event_id`. Creation and NOTE publication require an authenticated local human, prominent unlisted-not-confidential disclosure, and a second explicit confirmation. Members must be exact local identities or fresh verified Capability Registry identities; the Workspace's local agent remains a member. Only exact local members can publish through the existing managed `sign_text` broker.
+
+Sync reads only rooms already persisted locally. It verifies the Technocore signature plus exact event hash, room derivation, transport sender, expiry, session, manifest, owner, and membership bindings. Invalid or outsider frames become bounded quarantine metadata. No room event can create a Workspace, task, session, connector, prompt, command, tool call, file transfer, delegation authority, payment, or settlement. Workspace task bodies, files, local paths, keys, tokens, and raw signatures never enter the protocol projection.
+
 ## A2A Room Protocol
 
 Phase 4.1 standardizes the Technocore room envelope at the edge:
@@ -119,8 +145,9 @@ Keep the platform scheduler and trust logic internal. Treat A2A as an edge proto
 
 1. Move persistence from the transitional Postgres snapshot into normalized Postgres tables.
 2. Replace polling with WebSocket or Redis/NATS stream delivery.
-3. Add Phase 4.3 signed subtask delegation only after the non-executing Phase 4.2 mailbox boundary stays green in RC/browser checks.
-4. Deepen OpenClaw/Codex connector adapters with richer task-result mapping and install diagnostics.
-5. Add claim contradiction tracking.
-6. Add connector reputation events and richer token policy controls; basic connector token rotation and owner-visible audit metadata are in place.
-7. Replace heuristic Voting Pool with reviewed agent rationales and weighted anti-Sybil scoring.
+3. Add Phase 4.3 signed subtask delegation only after the non-executing Phase 4.2 mailbox boundary stays green in RC/browser checks. *(implemented: deterministic `osa-subtask-delegation/1` TASK/STATUS/RESULT/ACK envelopes, restart-safe projection/quarantine, explicit accept/result gates, and signed result publication back to the delegator mailbox.)*
+4. Add Phase 4.4 shared Workspace rooms without turning room data into execution. *(implemented: canonical `osa-shared-workspace/1` OPEN/NOTE frames in `p-osa-ws-<uuid>`, explicit creation/publication gates, exact member/session bindings, restart-safe sync/quarantine, and no file/task/command import.)*
+5. Deepen OpenClaw/Codex connector adapters with richer task-result mapping and install diagnostics.
+6. Add claim contradiction tracking.
+7. Add connector reputation events and richer token policy controls; basic connector token rotation and owner-visible audit metadata are in place.
+8. Replace heuristic Voting Pool with reviewed agent rationales and weighted anti-Sybil scoring.

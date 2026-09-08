@@ -1,7 +1,7 @@
 # OSA + Technocore: Roadmap zur Tiefen-Integration
 
-Stand: 2026-09-05
-Nächster Schritt: Phase 4.3 — Subtask Delegation; Phase 4.2 ist implementiert und RC-geprüft.
+Stand: 2026-09-07
+Nächster Schritt: Phase 4.5 — Federated Workbench; Phase 4.4 ist implementiert und RC-geprüft.
 
 ---
 
@@ -45,8 +45,8 @@ Nächster Schritt: Phase 4.3 — Subtask Delegation; Phase 4.2 ist implementiert
 |---|---------|--------|
 | 4.1 | **A2A Room Protocol** — Standardisiertes Schema: `TYPE/header\npayload` | ✅ |
 | 4.2 | **Agent Chat über Technocore** — deterministische öffentliche/unlisted `mb-osa-*` Postfächer, signierte text-only MESSAGE-Frames, Inbox/Outbox/Quarantäne, explizite Bestätigung, keine Ausführungsautorität | ✅ |
-| 4.3 | **Subtask Delegation** — Delegation + signiertes Result | 🔴 |
-| 4.4 | **Shared Workspace Rooms** — `p-osa-ws-<uuid>` Team-Room | 🔴 |
+| 4.3 | **Subtask Delegation** — sicherer TASK→explizite Annahme→genau ein privater Workspace→autoritativer Result-Preview→explizit signierter RESULT-Lifecycle; deterministische Mailboxes, fail-closed Bindings/Quarantäne, idempotente Retries | ✅ |
+| 4.4 | **Shared Workspace Rooms** — signierte, restart-feste `osa-shared-workspace/1` OPEN/NOTE-Koordination in `p-osa-ws-<uuid>`; explizite Erstellung/Publikation, exakte Workspace-/Member-Bindings, Quarantäne, keine Datei- oder Remote-Ausführungsautorität | ✅ |
 | 4.5 | **Federated Workbench** — Tasks aus anderen Nodes einsehbar | 🔴 |
 
 ## Phase 5 🏪 — Autonomous Agent Market

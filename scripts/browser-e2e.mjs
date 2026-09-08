@@ -6,6 +6,7 @@ import { chromium } from "playwright";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
+import { subtaskDelegationRoomForRecipient } from "../apps/server/src/subtask-delegation.mjs";
 
 const rootDir = join(import.meta.dirname, "..");
 const port = Number(process.env.OSA_BROWSER_E2E_PORT || 19880 + Math.floor(Math.random() * 700));
@@ -110,7 +111,7 @@ try {
   await page.exposeFunction("osaE2eSignPersonalMessage", (message) => signPersonalMessage(String(message)));
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("console", (message) => {
-    if (message.type() === "error") pageErrors.push(message.text());
+    if (message.type() === "error") pageErrors.push(`${message.text()}${message.location().url ? ` (${message.location().url})` : ""}`);
   });
   let chatGetRequestCount = 0;
   let delayedValidatorsReadCount = 0;
@@ -241,7 +242,159 @@ try {
     sync: { room: "mb-osa-browser-local", generation: 0, last_seq: 7, source: "live", stale: false }, counts: { inbox: 1, outbox: 0, quarantine: 1 },
     inbox: [browserMailboxInbox], outbox: [], quarantine: [browserMailboxQuarantine]
   };
+  const browserSubtaskLocalCoderDid = testTechnocoreDid;
+  const browserSubtaskRoom = subtaskDelegationRoomForRecipient(browserSubtaskLocalCoderDid);
+  const browserSubtaskIncoming = {
+    id: "subtask-browser-incoming-1",
+    kind: "incoming",
+    state: "pending",
+    delegation_id: "subtask-browser-delegation-1",
+    task_id: "task-subtask-browser-1",
+    room: browserSubtaskRoom,
+    sender_agent_id: "remote-coder",
+    sender_did: browserMailboxRemoteDid,
+    sender_node_id: "node-browser-remote",
+    sender_node_did: browserMailboxRemoteDid,
+    recipient_agent_id: "technocore-specialist",
+    recipient_did: testTechnocoreDid,
+    recipient_node_id: "node-browser-local",
+    recipient_node_did: testTechnocoreDid,
+    required_capabilities: ["research", "synthesis"],
+    task_text: "Browser subtask inbound task",
+    task_preview: "Browser subtask inbound task",
+    result_text: "",
+    result_preview: "",
+    request_hash: "a".repeat(64),
+    created_at: "2026-09-05T10:30:00.000Z",
+    updated_at: "2026-09-05T10:30:00.000Z",
+    expiry: "2026-09-06T10:30:00.000Z",
+    verified: true,
+    local_confirmation: false,
+    no_payment: true,
+    no_settlement: true,
+    authority: "none",
+    provenance: { kind: "technocore", room: browserSubtaskRoom, seq: 9 }
+  };
+  const browserSubtaskQuarantine = {
+    ...browserSubtaskIncoming,
+    id: "subtask-browser-quarantine-1",
+    kind: "quarantine",
+    state: "quarantined",
+    verified: false,
+    task_text: "",
+    task_preview: "",
+    result_text: "",
+    result_preview: "",
+    rejection_reason: "signature_unverified",
+    quarantine_reason: "signature_unverified"
+  };
+  const browserSubtaskOverview = {
+    schema: "osa-subtask-delegation/1",
+    version: 1,
+    generated_at: "2026-09-05T10:30:00.000Z",
+    policy: {
+      visibility: "public-unlisted",
+      warning: "Public/unlisted on Technocore.",
+      authority: "none",
+      no_payment: true,
+      no_settlement: true,
+      public_text_only: true,
+      workspace_creation: true,
+      connector_spawning: false,
+      remote_execution: false,
+    },
+    semantics: {
+      adapter: "osa-subtask-delegation/1",
+      official_a2a_compatibility: "narrow profile only; not full official A2A HTTP/JSON-RPC compatibility",
+      mailbox_transport: "deterministic mb-osa-* recipient rooms",
+      signatures_mean: "authorship and integrity only",
+      authority: "none",
+      remote_execution: false,
+      value_settlement: false,
+    },
+    status: {
+      enabled: true,
+      rooms: [browserSubtaskRoom],
+      last_attempt_at: null,
+      last_synced_at: null,
+      last_scan_status: "live",
+      last_error: null,
+      discovered_count: 1,
+      verified_count: 1,
+      rejected_count: 1,
+      local_count: 0,
+      incoming_count: 1,
+      outgoing_count: 0,
+      result_count: 0,
+      quarantine_count: 1,
+    },
+    senders: [{ agent_id: "technocore-specialist", name: "Technocore Specialist", did: testTechnocoreDid, node_id: "node-browser-local", node_did: null, mailbox_room: "mb-osa-browser-local", capabilities: ["research", "synthesis"], source: "local", verified: true, stale: false }],
+    recipients: [
+      { key: `local:node-browser-local:coder:${browserSubtaskLocalCoderDid}`, source: "local", agent_id: "coder", name: "Coder", did: browserSubtaskLocalCoderDid, node_id: "node-browser-local", node_did: null, verified: true, stale: false, eligibility: "local_verified_capability_match", capabilities: ["research", "synthesis"], mailbox_room: subtaskDelegationRoomForRecipient(browserSubtaskLocalCoderDid), provenance: { kind: "local", node_id: "node-browser-local" } },
+      { key: `federated:node-browser-remote:remote-coder:${browserMailboxRemoteDid}`, source: "federated", agent_id: "remote-coder", name: "Remote Coder", did: browserMailboxRemoteDid, node_id: "node-browser-remote", node_did: browserMailboxRemoteDid, verified: true, stale: false, eligibility: "fresh_verified_capability_registry", capabilities: ["research", "synthesis"], mailbox_room: subtaskDelegationRoomForRecipient(browserMailboxRemoteDid), provenance: { kind: "technocore", room: browserSubtaskRoom, seq: 9 } }
+    ],
+    capability_options: ["research", "synthesis", "testing"],
+    incoming: [browserSubtaskIncoming],
+    outgoing: [],
+    results: [],
+    quarantine: [browserSubtaskQuarantine]
+  };
+  let browserSubtaskCreateBody = null;
+  let browserSubtaskAcceptBody = null;
+  let browserSubtaskPublishBody = null;
   let browserMailboxSendBody = null;
+  let browserSharedCreateBody = null;
+  let browserSharedNoteBody = null;
+  const browserSharedRoom = {
+    id: "123e4567-e89b-42d3-a456-426614174000",
+    workspace_id: "123e4567-e89b-42d3-a456-426614174000",
+    room: "p-osa-ws-123e4567-e89b-42d3-a456-426614174000",
+    session_id: "home-browser-shared-1",
+    title: "Browser Shared Workspace",
+    owner_node_id: "node-browser-local",
+    owner_node_did: testTechnocoreDid,
+    members: [{ source: "local", agent_id: "technocore-specialist", name: "Technocore Specialist", did: testTechnocoreDid, node_id: "node-browser-local" }],
+    manifest_event_id: "1".repeat(64),
+    created_at: "2026-09-05T10:00:00.000Z",
+    updated_at: "2026-09-05T10:00:00.000Z",
+    expires_at: "2026-09-12T10:00:00.000Z",
+    publish_status: "sent",
+    events: [{ event_id: "1".repeat(64), type: "OPEN", sender_did: testTechnocoreDid, created_at: "2026-09-05T10:00:00.000Z", verified: true, state: "accepted" }],
+    event_count: 1,
+    quarantine_count: 0,
+  };
+  const browserSharedOverview = {
+    schema: "osa-shared-workspace/1",
+    generated_at: "2026-09-05T10:00:00.000Z",
+    policy: { visibility: "private-name-unlisted", warning: "Unlisted, not confidential", authority: "none", signatures_mean: "authorship and integrity only", remote_execution: false, files_shared: false, no_payment: true, no_settlement: true },
+    limits: { maxWireBytes: 4096, maxTextBytes: 1200, maxTitleBytes: 120, maxMembers: 16, maxEvents: 500 },
+    status: { enabled: true, room_count: 0, event_count: 0, quarantine_count: 0, last_scan_status: "idle" },
+    workspaces: [{ id: "home-browser-shared-1", title: "Browser Shared Workspace", agent_id: "technocore-specialist", team_id: "home-room", team_name: "Home", status: "done" }],
+    candidates: [{ key: `local:node-browser-local:technocore-specialist:${testTechnocoreDid}`, source: "local", agent_id: "technocore-specialist", name: "Technocore Specialist", did: testTechnocoreDid, node_id: "node-browser-local", verified: true, stale: false }],
+    rooms: [],
+  };
+  await page.route("**/api/shared-workspaces**", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (request.method() === "GET") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(browserSharedOverview) });
+    if (pathname === "/api/shared-workspaces/scan") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(browserSharedOverview) });
+    if (pathname === "/api/shared-workspaces") {
+      browserSharedCreateBody = request.postDataJSON();
+      browserSharedOverview.rooms = [browserSharedRoom];
+      browserSharedOverview.status.room_count = 1;
+      browserSharedOverview.status.event_count = 1;
+      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ok: true, idempotent_replay: false, room: browserSharedRoom, status: browserSharedOverview }) });
+    }
+    if (pathname.endsWith("/notes")) {
+      browserSharedNoteBody = request.postDataJSON();
+      const note = { event_id: "2".repeat(64), type: "NOTE", sender_did: testTechnocoreDid, text: "Browser bounded shared note", created_at: "2026-09-05T10:05:00.000Z", verified: true, state: "accepted" };
+      browserSharedRoom.events = [...browserSharedRoom.events, note];
+      browserSharedRoom.event_count = 2;
+      browserSharedOverview.status.event_count = 2;
+      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ok: true, idempotent_replay: false, room: browserSharedRoom, event: note }) });
+    }
+    return route.continue();
+  });
   await page.route("**/api/agent-mailboxes**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
@@ -256,6 +409,62 @@ try {
     }
     if (pathname.endsWith("/sync")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, source: "live", view: browserMailboxOverview }) });
     if (pathname.endsWith("/read")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, message: { ...browserMailboxInbox, read_at: "2026-09-05T10:01:00.000Z" } }) });
+    return route.continue();
+  });
+  await page.route("**/api/subtask-delegations**", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (request.method() === "GET" && pathname === "/api/subtask-delegations") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(browserSubtaskOverview) });
+    }
+    if (request.method() === "POST" && pathname === "/api/subtask-delegations") {
+      browserSubtaskCreateBody = request.postDataJSON();
+      const recipientDid = String(browserSubtaskCreateBody.recipient_key || browserSubtaskLocalCoderDid).includes(browserMailboxRemoteDid) ? browserMailboxRemoteDid : browserSubtaskLocalCoderDid;
+      const delegation = {
+        id: "subtask-browser-outgoing-1",
+        kind: "outgoing",
+        state: "sent",
+        delegation_id: "subtask-browser-outgoing-1",
+        task_id: "task-subtask-browser-outgoing-1",
+        room: subtaskDelegationRoomForRecipient(recipientDid),
+        sender_agent_id: browserSubtaskCreateBody.sender_agent_id,
+        sender_did: testTechnocoreDid,
+        sender_node_id: "node-browser-local",
+        recipient_agent_id: recipientDid === browserMailboxRemoteDid ? "remote-coder" : "coder",
+        recipient_did: recipientDid,
+        recipient_node_id: recipientDid === browserMailboxRemoteDid ? "node-browser-remote" : "node-browser-local",
+        required_capabilities: browserSubtaskCreateBody.required_capabilities || [],
+        task_text: browserSubtaskCreateBody.task_text,
+        task_preview: browserSubtaskCreateBody.task_text,
+        created_at: "2026-09-05T10:31:00.000Z",
+        updated_at: "2026-09-05T10:31:00.000Z",
+        expiry: browserSubtaskCreateBody.expiry,
+        verified: true,
+        local_confirmation: true,
+        no_payment: true,
+        no_settlement: true,
+        authority: "none",
+      };
+      browserSubtaskOverview.outgoing = [delegation];
+      browserSubtaskOverview.status.outgoing_count = 1;
+      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ok: true, delegation, status: browserSubtaskOverview }) });
+    }
+    if (request.method() === "POST" && pathname === "/api/subtask-delegations/scan") {
+      browserSubtaskOverview.status.last_scan_status = "live";
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(browserSubtaskOverview) });
+    }
+    if (request.method() === "POST" && pathname.endsWith("/accept")) {
+      browserSubtaskAcceptBody = request.postDataJSON();
+      browserSubtaskOverview.incoming = [{ ...browserSubtaskIncoming, state: "result_ready", workspace_session_id: "session-browser-subtask-1", workspace_task_id: "task-browser-subtask-1", accepted_at: "2026-09-05T10:35:00.000Z", working_at: "2026-09-05T10:35:00.000Z", result_ready_at: "2026-09-05T10:38:00.000Z", result_text: "Browser authoritative completed result", result_preview: "Browser authoritative completed result", updated_at: "2026-09-05T10:38:00.000Z" }];
+      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ok: true, delegation: browserSubtaskOverview.incoming[0], session_id: "session-browser-subtask-1", session: { id: "session-browser-subtask-1" }, task: { id: "task-browser-subtask-1" }, status: browserSubtaskOverview }) });
+    }
+    if (request.method() === "POST" && pathname.endsWith("/publish-result")) {
+      browserSubtaskPublishBody = request.postDataJSON();
+      browserSubtaskOverview.incoming = [{ ...browserSubtaskIncoming, state: "result_sent", workspace_session_id: "session-browser-subtask-1", workspace_task_id: "task-browser-subtask-1", result_text: "Browser subtask signed result", result_preview: "Browser subtask signed result", published_at: "2026-09-05T10:40:00.000Z", result_sent_at: "2026-09-05T10:40:00.000Z", updated_at: "2026-09-05T10:40:00.000Z" }];
+      browserSubtaskOverview.results = [{ ...browserSubtaskIncoming, id: "subtask-browser-result-1", kind: "result", state: "result_sent", delegation_id: "subtask-browser-delegation-1", task_id: "task-browser-subtask-1", workspace_session_id: "session-browser-subtask-1", workspace_task_id: "task-browser-subtask-1", result_text: "Browser subtask signed result", result_preview: "Browser subtask signed result", verified: true, local_confirmation: true, no_payment: true, no_settlement: true, authority: "none" }];
+      browserSubtaskOverview.status.result_count = 1;
+      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ok: true, delegation: browserSubtaskOverview.incoming[0], task: { id: "task-browser-subtask-1" }, result: { id: "result-browser-subtask-1", taskId: "task-browser-subtask-1", agentId: "technocore-specialist", summary: "Browser subtask signed result" }, status: browserSubtaskOverview }) });
+    }
     return route.continue();
   });
   await page.route("**/api/network/chat**", async (route) => {
@@ -423,6 +632,11 @@ try {
     });
   });
   await page.route(`**/api/sessions/${browserTclkSession.id}`, async (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(browserTclkSession) }));
+  await page.route("**/api/sessions/session-browser-subtask-1", async (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ ...browserTclkSession, id: "session-browser-subtask-1", title: "Browser subtask workspace", agent: "coder", status: "done" }),
+  }));
   await page.route("**/api/health", async (route) => {
     const response = await route.fetch();
     const payload = await response.json();
@@ -473,6 +687,23 @@ try {
   await page.getByRole("button", { name: "Market & Deals" }).click();
   await expectText(page, "body", "TCLK Offer Observer");
   await expectText(page, "body", "A2A Room Observer");
+  await expectText(page, '[data-testid="shared-workspaces"]', "Shared Workspace Rooms");
+  await page.getByRole("checkbox", { name: "Acknowledge shared room disclosure" }).check();
+  await page.getByRole("button", { name: "Review team room" }).click();
+  await expectText(page, '[data-testid="shared-workspaces"]', "Open signed shared room?");
+  assert(browserSharedCreateBody === null, "shared Workspace UI must not create a room before the second explicit confirmation");
+  await page.getByRole("button", { name: "Confirm and open" }).click();
+  await expectText(page, '[data-testid="shared-workspaces"]', "p-osa-ws-123e4567-e89b-42d3-a456-426614174000");
+  assert(browserSharedCreateBody?.private_room_warning_acknowledged === true && browserSharedCreateBody?.share_confirmation === true, "shared Workspace UI should acknowledge unlisted visibility and confirm room creation");
+  assert(!browserSharedCreateBody?.files && !browserSharedCreateBody?.commands && !browserSharedCreateBody?.task_text, "shared Workspace creation must not send files, commands, or Workspace task content");
+  await page.getByRole("combobox", { name: "Room note signer" }).selectOption("technocore-specialist");
+  await page.getByRole("textbox", { name: "Shared room note" }).fill("Browser bounded shared note");
+  await page.getByRole("checkbox", { name: "Acknowledge shared note disclosure" }).check();
+  await page.getByRole("button", { name: "Review signed note" }).click();
+  assert(browserSharedNoteBody === null, "shared Workspace note must wait for the second explicit confirmation");
+  await page.getByRole("button", { name: "Confirm and publish" }).first().click();
+  await expectText(page, '[data-testid="shared-workspaces"]', "Browser bounded shared note");
+  assert(browserSharedNoteBody?.publish_confirmation === true && browserSharedNoteBody?.private_room_warning_acknowledged === true, "shared Workspace notes require explicit bounded publication confirmation");
   await expectText(page, "body", "Agent Mailboxes");
   await expectText(page, '[data-testid="agent-mailboxes"]', "PUBLIC / UNLISTED ON TECHNOCORE");
   await expectText(page, '[data-testid="agent-mailboxes"]', "Verified browser mailbox inbox message");
@@ -485,13 +716,56 @@ try {
   await expectText(page, '[data-testid="agent-mailboxes"]', "Browser mailbox public confirmation message");
   assert(browserMailboxSendBody?.public_unlisted_acknowledged === true && browserMailboxSendBody?.sender_did === testTechnocoreDid, "mailbox UI should send the exact managed DID tuple and explicit public acknowledgement");
   assert(!browserMailboxSendBody?.room && !browserMailboxSendBody?.task_id && !browserMailboxSendBody?.command, "mailbox UI must not choose arbitrary rooms or dispatch tasks/commands");
-  await page.getByRole("button", { name: "Quarantine (1)" }).click();
+  await page.locator('[data-testid="agent-mailboxes"]').getByRole("button", { name: "Quarantine (1)" }).click();
   await expectText(page, '[data-testid="agent-mailboxes"]', "Quarantined: signature_unverified");
   await expectText(page, '[data-testid="agent-mailboxes"]', "UNTRUSTED");
   await page.getByRole("button", { name: "Inbox (1)" }).click();
   await page.getByRole("button", { name: "Reply safely" }).click();
   await expectText(page, '[data-testid="agent-mailboxes"]', "Replying to verified message");
   assert(!(await page.getByTestId("agent-mailboxes").innerText()).match(/BEGIN PRIVATE KEY|pkcs8|signature:\s*[A-Za-z0-9_-]{32,}|osa_conn_/i), "mailbox UI must not render secrets, raw signatures, or connector tokens");
+  await page.evaluate(() => {
+    window.__subtaskClaims = [];
+    window.addEventListener("osa:claim-job", (event) => {
+      window.__subtaskClaims.push(event.detail);
+    });
+  });
+  await page.getByRole("textbox", { name: "Subtask text" }).fill("Browser subtask delegation text");
+  await page.getByRole("checkbox", { name: "Acknowledge public subtask warning" }).check();
+  await page.getByRole("checkbox", { name: "Acknowledge delegate task confirmation" }).check();
+  await page.getByRole("button", { name: "Review delegation" }).click();
+  await expectText(page, "body", "Confirm public / unlisted delegation");
+  assert(browserSubtaskCreateBody === null, "subtask UI must not send before the second explicit confirmation");
+  await page.getByRole("button", { name: "Confirm and delegate" }).click();
+  await expectText(page, '[data-testid="subtask-delegations"]', "Delegation subtask-browser-outgoing-1 queued for deterministic mailbox delivery.");
+  assert(browserSubtaskCreateBody?.public_confirmation === true && browserSubtaskCreateBody?.delegate_task_confirmation === true && browserSubtaskCreateBody?.no_payment === true && browserSubtaskCreateBody?.no_settlement === true, "subtask UI should send only bounded public/no-value fields");
+  assert(!browserSubtaskCreateBody?.room && !browserSubtaskCreateBody?.task_id && !browserSubtaskCreateBody?.command && !browserSubtaskCreateBody?.files, "subtask UI must not choose arbitrary rooms or dispatch tasks/files/commands");
+  await page.locator('[data-testid="subtask-delegations"]').getByRole("button", { name: "Quarantine (1)" }).click();
+  await expectText(page, '[data-testid="subtask-delegations"]', "Quarantine: signature_unverified");
+  await expectText(page, '[data-testid="subtask-delegations"]', "UNVERIFIED");
+  await page.locator('[data-testid="subtask-delegations"]').getByRole("button", { name: "Incoming (1)" }).click();
+
+  await page.getByRole("button", { name: "Accept into Workspace" }).click();
+  await expectText(page, "body", "Confirm accept into Workspace");
+  await page.getByRole("button", { name: "Confirm and accept" }).click();
+  await page.waitForFunction(() => Array.isArray(window.__subtaskClaims) && window.__subtaskClaims.some((item) => item.sessionId === "session-browser-subtask-1"));
+  assert(browserSubtaskAcceptBody?.public_confirmation === true && browserSubtaskAcceptBody?.accept_confirmation === true, "accept flow should require the explicit confirmations");
+  await page.getByRole("button", { name: "Market & Deals" }).click();
+  await expectText(page, '[data-testid="subtask-delegations"]', "Authoritative completed result preview");
+  await expectText(page, '[data-testid="subtask-delegations"]', "Browser authoritative completed result");
+  await page.getByRole("button", { name: "Publish signed result" }).click();
+  await expectText(page, "body", "Confirm publish signed result");
+  assert(browserSubtaskPublishBody === null, "result UI must not publish before the second explicit confirmation");
+  await Promise.all([
+    page.waitForResponse((response) => response.url().endsWith("/api/subtask-delegations/subtask-browser-delegation-1/publish-result") && response.status() === 201),
+    page.getByRole("button", { name: "Confirm and publish" }).click(),
+  ]);
+  assert(browserSubtaskPublishBody?.public_confirmation === true && browserSubtaskPublishBody?.publish_confirmation === true, "result publish should require explicit confirmation");
+  await page.getByRole("button", { name: "Market & Deals" }).click();
+  await page.locator('[data-testid="subtask-delegations"]').getByRole("button", { name: "Results (1)" }).click();
+  await expectText(page, '[data-testid="subtask-delegations"]', "Browser subtask signed result");
+  assert(!browserSubtaskPublishBody?.result_text && !browserSubtaskPublishBody?.files && !browserSubtaskPublishBody?.secret, "result publish UI must send only the authoritative-result selector and confirmations");
+  console.log("Subtask delegation browser flow passed.");
+
   await page.getByRole("button", { name: "Accept Offer" }).click();
   await expectText(page, "body", "Browser TCLK workspace");
   assert((await getJson("/api/sessions")).some((session) => session.id === browserTclkSession.id) === false, "browser Accept test should not require a real backend task fixture");

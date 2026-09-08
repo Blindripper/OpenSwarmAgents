@@ -4,6 +4,8 @@ import { api } from "../api/client";
 import type { ProtocolA2AOverview, ProtocolLayerStatus, ProtocolOverview, ProtocolPaperDeal, ProtocolTimelineEntry, TclkOfferProjection } from "../types";
 import { NetworkActivityPanel } from "./NetworkActivityPanel";
 import { AgentMailboxesPanel } from "./AgentMailboxesPanel";
+import { SubtaskDelegationsPanel } from "./SubtaskDelegationsPanel";
+import { SharedWorkspaceRoomsPanel } from "./SharedWorkspaceRoomsPanel";
 
 interface Props {
   events: NetworkEvent[];
@@ -425,6 +427,10 @@ export function ProtocolOsPanel({ events, live, activityLoading = false, onRefre
             </div>
           ))}
         </section>
+
+        <SharedWorkspaceRoomsPanel />
+
+        <SubtaskDelegationsPanel />
 
         <AgentMailboxesPanel />
 

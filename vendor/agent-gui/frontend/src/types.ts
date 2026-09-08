@@ -335,6 +335,8 @@ export interface ProtocolOverview {
     deals: ProtocolPaperDeal[];
   };
   layers: ProtocolLayerStatus[];
+  subtask_delegation?: SubtaskDelegationOverview;
+  shared_workspaces?: { schema: string; room_prefix: string; room_count: number; authority: string; remote_execution: false; files_shared: false };
   tclk: {
     version: string;
     offer_room: string;
@@ -347,6 +349,217 @@ export interface ProtocolOverview {
     offers: TclkOfferProjection[];
   };
   a2a?: ProtocolA2AOverview;
+}
+
+export interface SubtaskDelegationPeer {
+  key?: string;
+  source: "local" | "federated" | string;
+  agent_id: string;
+  name: string;
+  tagline?: string;
+  did: string;
+  node_id: string;
+  node_did?: string | null;
+  verified: boolean;
+  stale: boolean;
+  eligibility?: string;
+  capabilities?: string[];
+  mailbox_room?: string;
+  provenance?: {
+    kind?: string;
+    room?: string | null;
+    seq?: number | null;
+    announced_at?: string | null;
+    kv_path?: string | null;
+    payload_hash?: string | null;
+    node_id?: string | null;
+    node_did?: string | null;
+  } | null;
+}
+
+export interface SubtaskDelegationRecord {
+  id: string;
+  kind: "outgoing" | "incoming" | "result" | "quarantine" | string;
+  state: string;
+  delegation_id: string;
+  task_id: string;
+  task_frame_id?: string | null;
+  status_frame_id?: string | null;
+  result_frame_id?: string | null;
+  ack_frame_id?: string | null;
+  room?: string | null;
+  sender_agent_id?: string;
+  sender_did: string;
+  sender_node_id: string;
+  sender_node_did?: string | null;
+  recipient_agent_id?: string;
+  recipient_did: string;
+  recipient_node_id: string;
+  recipient_node_did?: string | null;
+  required_capabilities: string[];
+  task_text: string;
+  task_preview?: string | null;
+  result_text: string;
+  result_preview?: string | null;
+  request_hash?: string | null;
+  result_hash?: string | null;
+  idempotency_key?: string | null;
+  expiry?: string | null;
+  created_at: string;
+  updated_at: string;
+  accepted_at?: string | null;
+  working_at?: string | null;
+  result_ready_at?: string | null;
+  result_sent_at?: string | null;
+  result_received_at?: string | null;
+  published_at?: string | null;
+  workspace_session_id?: string | null;
+  workspace_task_id?: string | null;
+  source_envelope_hash?: string | null;
+  source_room?: string | null;
+  source_seq?: number | null;
+  transport_status?: string | null;
+  transport_error?: string | null;
+  delivery_status?: string | null;
+  publish_status?: string | null;
+  publish_error?: string | null;
+  verified: boolean;
+  rejection_reason?: string | null;
+  quarantine_reason?: string | null;
+  provenance?: Record<string, unknown> | null;
+  local_confirmation: boolean;
+  no_payment: boolean;
+  no_settlement: boolean;
+  authority: string;
+  mailbox_room?: string | null;
+  handling?: string | null;
+  remote_execution?: boolean;
+  value_settlement?: boolean;
+}
+
+export interface SubtaskDelegationOverview {
+  schema: string;
+  version: number;
+  generated_at: string;
+  policy: {
+    visibility: string;
+    warning: string;
+    authority: string;
+    no_payment: boolean;
+    no_settlement: boolean;
+    public_text_only: boolean;
+    workspace_creation: boolean;
+    connector_spawning: boolean;
+    remote_execution: boolean;
+  };
+  semantics: {
+    adapter: string;
+    official_a2a_compatibility: string;
+    mailbox_transport: string;
+    signatures_mean: string;
+    authority: string;
+    remote_execution: boolean;
+    value_settlement: boolean;
+  };
+  status: {
+    enabled: boolean;
+    rooms: string[];
+    last_attempt_at?: string | null;
+    last_synced_at?: string | null;
+    last_scan_status?: string | null;
+    last_error?: string | null;
+    discovered_count: number;
+    verified_count: number;
+    rejected_count: number;
+    local_count: number;
+    incoming_count: number;
+    outgoing_count: number;
+    result_count: number;
+    quarantine_count: number;
+  };
+  senders: { agent_id: string; name: string; tagline?: string; did: string; node_id: string; node_did?: string | null; mailbox_room: string; capabilities: string[]; source: "local"; verified: boolean; stale: boolean }[];
+  recipients: SubtaskDelegationPeer[];
+  capability_options: string[];
+  incoming: SubtaskDelegationRecord[];
+  outgoing: SubtaskDelegationRecord[];
+  results: SubtaskDelegationRecord[];
+  quarantine: SubtaskDelegationRecord[];
+}
+
+export interface SharedWorkspaceMember {
+  source: "local" | "federated";
+  agent_id: string;
+  name: string;
+  did: string;
+  node_id: string;
+  node_did?: string | null;
+  verified?: boolean;
+  stale?: boolean;
+  capabilities?: string[];
+  key?: string;
+  provenance?: Record<string, unknown> | null;
+}
+
+export interface SharedWorkspaceEvent {
+  event_id: string;
+  type: "OPEN" | "NOTE" | string;
+  sender_did: string;
+  text?: string | null;
+  created_at: string;
+  observed_at?: string | null;
+  source_seq?: number | null;
+  verified: boolean;
+  state: "accepted" | "quarantined" | string;
+  rejection?: string | null;
+}
+
+export interface SharedWorkspaceRoom {
+  id: string;
+  workspace_id: string;
+  room: string;
+  session_id: string;
+  title: string;
+  owner_node_id: string;
+  owner_node_did: string;
+  members: SharedWorkspaceMember[];
+  manifest_event_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
+  publish_status: string;
+  publish_error?: string | null;
+  events: SharedWorkspaceEvent[];
+  event_count: number;
+  quarantine_count: number;
+}
+
+export interface SharedWorkspaceOverview {
+  schema: string;
+  generated_at: string;
+  policy: {
+    visibility: string;
+    warning: string;
+    authority: string;
+    signatures_mean: string;
+    remote_execution: false;
+    files_shared: false;
+    no_payment: true;
+    no_settlement: true;
+  };
+  limits: { maxWireBytes: number; maxTextBytes: number; maxTitleBytes: number; maxMembers: number; maxEvents: number };
+  status: {
+    enabled: boolean;
+    room_count: number;
+    event_count: number;
+    quarantine_count: number;
+    last_attempt_at?: string | null;
+    last_synced_at?: string | null;
+    last_scan_status?: string | null;
+    last_error?: string | null;
+  };
+  workspaces: { id: string; title: string; agent_id?: string | null; team_id: string; team_name: string; status: string }[];
+  candidates: SharedWorkspaceMember[];
+  rooms: SharedWorkspaceRoom[];
 }
 
 export interface ProtocolA2AObservation {
