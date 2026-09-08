@@ -57,6 +57,12 @@ Task matching requires all task `requiredCapabilities` to be included in the age
 
 Phase 5.1 defines `osa-skill-registry/1` as a machine-readable catalog projection over `osa-capability-registry/1`, not a new execution authority. Each `osa-skill/1` descriptor groups a normalized skill key, bounded local/federated provider rows, verified/stale/untrusted counts, exact node+agent+DID identity bindings, and exact-identity reputation context. Stale and untrusted rows are excluded by default and remain labelled, non-authoritative catalog entries when explicitly requested. Provider authority is limited to `local_workspace_profile` for fresh verified local profiles or `catalog_only` for everything else; the registry cannot claim work, start sessions, spawn connectors, publish messages, bid, lock funds, share files, or settle payment.
 
+## Matchmaking
+
+Phase 5.2 defines `osa-matchmaking/1` as deterministic recommendation metadata over canonical job views and `osa-skill-registry/1`. Job rows expose bounded title/preview text, SHA-256 text hash, source (`local` or `technocore`), room/sequence identity, claimed state, and normalized required skill hints inferred from explicit `Skills:`/`Capabilities:` fields or conservative keywords. Candidate rows bind provider id, node id, agent id, agent DID, matched/missing skills, verification state, exact-identity reputation evidence volume, score, reasons, and authority flags.
+
+The matcher is not a scheduler, auctioneer, or trust oracle. It sorts by skill overlap, fresh verified eligibility, local availability, and reputation evidence context, but signatures still mean authorship and integrity only. Reading `osa-matchmaking/1` cannot claim jobs, start sessions, spawn connectors, publish Technocore frames, bid, lock value, share files, or settle payment. Fresh verified local candidates may be labelled `local_selectable` for later explicit human flows; federated, stale, and untrusted candidates remain `recommendation_only`. Phase 5.3 must add any bidding behavior as a separate explicit policy surface.
+
 ## Account and BYOK Model
 
 The default account model is local node login. Production local mode requires a local node password by default. Optional GitHub/Google OAuth endpoints exist for hosted or hybrid nodes. Login success sets an `osa_session` HttpOnly cookie; session records store only SHA-256 token hashes. CLI clients may also authenticate with `x-agentswarm-session`, but the browser app does not persist raw session tokens in localStorage.

@@ -1,7 +1,7 @@
 # OSA + Technocore: Roadmap zur Tiefen-Integration
 
 Stand: 2026-09-08
-Nächster Schritt: Phase 5.2 — Matchmaking; Phase 5.1 ist implementiert und RC-geprüft.
+Nächster Schritt: Phase 5.3 — Auto-Bidding; Phase 5.2 ist implementiert und RC-geprüft.
 
 ---
 
@@ -54,7 +54,7 @@ Nächster Schritt: Phase 5.2 — Matchmaking; Phase 5.1 ist implementiert und RC
 | # | Schritt | Status |
 |---|---------|--------|
 | 5.1 | **Skill Registry** — maschinenlesbarer `osa-skill-registry/1` Katalog aus signierten Capability-Records + exaktem Reputation-Join; stale/untrusted standardmäßig verborgen, federated catalog-only, keine Auto-Bids/Execution/Connector/Payment | ✅ |
-| 5.2 | **Matchmaking** — Job → passender Agent | 🔴 |
+| 5.2 | **Matchmaking** — maschinenlesbarer `osa-matchmaking/1` Job→Agent-Empfehlungslayer über bestehende Jobs + Skill Registry; deterministische Skill-/Trust-/Reputation-Rankings, federated recommendation-only, keine Claims/Auto-Bids/Execution/Connector/Files/Payment | ✅ |
 | 5.3 | **Auto-Bidding** — Agent bietet per TCLK auf Job | 🔴 |
 | 5.4 | **Escrow via TCLK HTLC** — Signed Lock → Reveal nach Lieferung | 🔴 |
 | 5.5 | **Real Settlement Gate** — FLOP mainnet | nach Launch |

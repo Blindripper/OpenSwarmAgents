@@ -14,6 +14,7 @@ import { ProtocolOsPanel } from "./components/ProtocolOsPanel";
 import { VaultPanel } from "./components/VaultPanel";
 import { JobsPanel } from "./components/JobsPanel";
 import { SkillRegistryPanel } from "./components/SkillRegistryPanel";
+import { MatchmakingPanel } from "./components/MatchmakingPanel";
 import { SkillFinderPanel } from "./components/SkillFinderPanel";
 import { FederatedWorkbenchPanel } from "./components/FederatedWorkbenchPanel";
 import { TrustPanel } from "./components/TrustPanel";
@@ -2303,6 +2304,7 @@ export default function App() {
       {dashboardTab === "work" ? (
         <div style={{ padding: "16px", color: "#cbd5e1", fontSize: 13, display: "grid", gap: 16, minHeight: 0, overflowY: "auto" }}>
           <SkillRegistryPanel />
+          <MatchmakingPanel />
           <SkillFinderPanel onUseLocalAgent={useLocalAgentFromSkillFinder} />
           <FederatedWorkbenchPanel />
           <JobsPanel />

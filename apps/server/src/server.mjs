@@ -89,6 +89,7 @@ import {
   normalizeFederatedWorkbenchProjection,
   publicFederatedWorkbenchOverview,
 } from "./federated-workbench.mjs";
+import { buildMatchmakingView, normalizeMatchmakingJob } from "./matchmaking.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "../../..");
@@ -12752,8 +12753,10 @@ async function createSharedWorkspaceRoom(body = {}, access) {
   store.sharedWorkspaceRooms = normalizeSharedWorkspaceRooms(store.sharedWorkspaceRooms || []);
   const existing = store.sharedWorkspaceRooms.find((room) => room.create_idempotency_key === idempotencyKey);
   if (existing) {
+    const existingMemberDids = existing.members.map((member) => member.did).sort().join("\0");
+    const requestedMemberDids = members.map((member) => member.did).sort().join("\0");
     const same = existing.session_id === sessionId && existing.title === title
-      && existing.members.map((member) => member.did).join("\0") === members.map((member) => member.did).sort().join("\0");
+      && existingMemberDids === requestedMemberDids;
     if (same) return { ok: true, idempotent_replay: true, room: publicSharedWorkspaceRoom(existing), status: sharedWorkspacePublicView() };
     const error = new Error("Conflicting reuse of shared Workspace idempotency key");
     error.statusCode = 409;
@@ -13187,6 +13190,50 @@ function publicSkillRegistryStatus(url) {
     skills: limitedSkills,
     providers: providers.slice(0, Math.min(skillLimit * providerLimit, 250))
   };
+}
+
+function matchmakingJobsFromStore(options = {}) {
+  const includeClaimed = options.includeClaimed === true;
+  const localClaims = normalizeJobClaims(store.jobClaims || []);
+  const claimedIds = new Set(localClaims.map((claim) => claim.job_id).filter(Boolean));
+  const availableSkills = options.availableSkills || [];
+  const localJobs = (Array.isArray(store.localJobs) ? store.localJobs : [])
+    .filter((job) => job?.from === "local")
+    .map((job) => normalizeMatchmakingJob({ ...job, source: "local", job_id: job.seq, claimed: claimedIds.has(String(job.seq || "")) }, { availableSkills }));
+  const technocoreJobs = (Array.isArray(store.technocoreJobs) ? store.technocoreJobs : [])
+    .map((job) => {
+      const jobId = `${String(job.room || "").slice(0, 80)}:${String(job.seq ?? "").slice(0, 80)}`;
+      return normalizeMatchmakingJob({ ...job, source: "technocore", job_id: jobId, claimed: claimedIds.has(jobId) }, { availableSkills });
+    });
+  return [...localJobs, ...technocoreJobs]
+    .filter((job) => includeClaimed || !job.claimed)
+    .sort((a, b) => String(b.observed_at || "").localeCompare(String(a.observed_at || "")) || a.id.localeCompare(b.id));
+}
+
+function publicMatchmakingStatus(url) {
+  const includeUntrusted = url?.searchParams?.get("include_untrusted") === "1";
+  const includeStale = url?.searchParams?.get("include_stale") === "1";
+  const includeClaimed = url?.searchParams?.get("include_claimed") === "1";
+  const jobFilter = String(url?.searchParams?.get("job_id") || "").slice(0, 140);
+  const registryUrl = new URL("http://local/api/skill-registry");
+  registryUrl.searchParams.set("source", "all");
+  registryUrl.searchParams.set("limit", "250");
+  registryUrl.searchParams.set("provider_limit", "50");
+  if (includeUntrusted) registryUrl.searchParams.set("include_untrusted", "1");
+  if (includeStale) registryUrl.searchParams.set("include_stale", "1");
+  const skillRegistry = publicSkillRegistryStatus(registryUrl);
+  const jobs = matchmakingJobsFromStore({ includeClaimed, availableSkills: skillRegistry.available_skills })
+    .filter((job) => !jobFilter || job.id === jobFilter || job.seq === jobFilter);
+  const limit = url?.searchParams?.has("limit") ? Math.round(boundedNumber(url.searchParams.get("limit"), 30, 1, 100)) : 30;
+  const candidateLimit = url?.searchParams?.has("candidate_limit") ? Math.round(boundedNumber(url.searchParams.get("candidate_limit"), 5, 1, 20)) : 5;
+  const view = buildMatchmakingView({ jobs, skillRegistry, generatedAt: now(), limit, candidateLimit });
+  view.query = {
+    job_id: jobFilter || null,
+    include_claimed: includeClaimed,
+    include_stale: includeStale,
+    include_untrusted: includeUntrusted
+  };
+  return view;
 }
 
 function publicSkillFinderResults(url) {
@@ -15330,6 +15377,10 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
 
   if (method === "GET" && path === "/api/skill-registry") {
     return sendJson(res, 200, publicSkillRegistryStatus(url));
+  }
+
+  if (method === "GET" && path === "/api/matchmaking") {
+    return sendJson(res, 200, publicMatchmakingStatus(url));
   }
 
   if (method === "GET" && path === "/api/reputation") {

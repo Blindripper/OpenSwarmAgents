@@ -692,6 +692,55 @@ export interface SkillRegistryOverview {
   providers: SkillRegistryProvider[];
 }
 
+export interface MatchmakingCandidate {
+  provider_id: string;
+  agent_id: string;
+  name: string;
+  source: "local" | "federated" | string;
+  node_id: string;
+  did: string;
+  score: number;
+  eligible: boolean;
+  matched_skills: string[];
+  missing_skills: string[];
+  verification: { state: "verified" | "stale" | "untrusted" | string; verified: boolean; stale: boolean; label: string };
+  reputation: { status: string; evidence_count: number };
+  authority: { kind: "local_selectable" | "recommendation_only" | string; selectable_for_local_workspace: boolean; remote_execution: false; connector_spawning: false; auto_bidding: false; payment: false };
+  reasons: string[];
+}
+
+export interface MatchmakingJob {
+  id: string;
+  source: "local" | "technocore" | string;
+  room: string;
+  seq: string;
+  title: string;
+  preview: string;
+  text_hash: string;
+  required_skills: string[];
+  observed_at?: string | null;
+  claimed: boolean;
+}
+
+export interface MatchmakingEntry {
+  id: string;
+  job: MatchmakingJob;
+  candidate_count: number;
+  top_score: number;
+  status: "matched" | "partial" | "no_match" | string;
+  candidates: MatchmakingCandidate[];
+}
+
+export interface MatchmakingOverview {
+  schema: "osa-matchmaking/1" | string;
+  version: number;
+  generated_at: string;
+  query?: { job_id?: string | null; include_claimed: boolean; include_stale: boolean; include_untrusted: boolean };
+  policy: { source_of_truth: string; matching: string; signature_meaning: string; authority: string; remote_execution: false; connector_spawning: false; auto_bidding: false; payment: false; settlement: false };
+  status: { job_count: number; matched_count: number; partial_count: number; no_match_count: number; provider_count: number; available_skill_count: number; registry_schema?: string | null };
+  matches: MatchmakingEntry[];
+}
+
 export interface ProtocolA2AObservation {
   id: string;
   profile: string;

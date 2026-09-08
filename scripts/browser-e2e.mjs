@@ -454,6 +454,30 @@ try {
     if (request.method() !== "GET") return route.continue();
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(browserSkillRegistry) });
   });
+  const browserMatchmaking = {
+    schema: "osa-matchmaking/1",
+    version: 1,
+    generated_at: "2026-09-05T10:04:30.000Z",
+    query: { job_id: null, include_claimed: false, include_stale: false, include_untrusted: false },
+    policy: { source_of_truth: "osa-skill-registry/1 + canonical job views", matching: "deterministic_skill_overlap_trust_reputation_rank", signature_meaning: "authorship", authority: "recommendation_only", remote_execution: false, connector_spawning: false, auto_bidding: false, payment: false, settlement: false },
+    status: { job_count: 1, matched_count: 1, partial_count: 0, no_match_count: 0, provider_count: 2, available_skill_count: 2, registry_schema: "osa-skill-registry/1" },
+    matches: [{
+      id: "match-browser-1",
+      job: { id: "kibble:6001", source: "technocore", room: "kibble", seq: "6001", title: "Browser coding job", preview: "JOB v1: Browser coding job with testing", text_hash: "c".repeat(64), required_skills: ["coding", "testing"], observed_at: "2026-09-05T10:04:20.000Z", claimed: false },
+      candidate_count: 2,
+      top_score: 98,
+      status: "matched",
+      candidates: [
+        { provider_id: browserSkillProvider.id, agent_id: "coder", name: "Coder", source: "local", node_id: "node-browser-local", did: browserSubtaskLocalCoderDid, score: 98, eligible: true, matched_skills: ["coding", "testing"], missing_skills: [], verification: { state: "verified", verified: true, stale: false, label: "LOCAL VERIFIED" }, reputation: { status: "local_signed_record", evidence_count: 4 }, authority: { kind: "local_selectable", selectable_for_local_workspace: true, remote_execution: false, connector_spawning: false, auto_bidding: false, payment: false }, reasons: ["matches coding, testing", "local profile"] },
+        { provider_id: "federated:node-browser-remote:remote-coder", agent_id: "remote-coder", name: "Remote Coder", source: "federated", node_id: "node-browser-remote", did: browserMailboxRemoteDid, score: 92, eligible: true, matched_skills: ["coding", "testing"], missing_skills: [], verification: { state: "verified", verified: true, stale: false, label: "SIGNATURE VERIFIED" }, reputation: { status: "signed_record", evidence_count: 7 }, authority: { kind: "recommendation_only", selectable_for_local_workspace: false, remote_execution: false, connector_spawning: false, auto_bidding: false, payment: false }, reasons: ["federated catalog provider"] }
+      ]
+    }]
+  };
+  await page.route("**/api/matchmaking**", async (route) => {
+    const request = route.request();
+    if (request.method() !== "GET") return route.continue();
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(browserMatchmaking) });
+  });
   await page.route("**/api/federated-workbench**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
@@ -974,6 +998,12 @@ try {
   await expectText(page, '[data-testid="skill-registry"]', "CATALOG ONLY");
   await expectText(page, '[data-testid="skill-registry"]', "NO AUTO-BID");
   assert(!(await page.getByTestId("skill-registry").innerText()).match(/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}/i), "Skill Registry UI should not render raw signatures or signing material");
+  await expectText(page, '[data-testid="matchmaking"]', "Matchmaking");
+  await expectText(page, '[data-testid="matchmaking"]', "Browser coding job");
+  await expectText(page, '[data-testid="matchmaking"]', "Coder");
+  await expectText(page, '[data-testid="matchmaking"]', "RECOMMENDATION ONLY");
+  await expectText(page, '[data-testid="matchmaking"]', "NO AUTO-BID");
+  assert(!(await page.getByTestId("matchmaking").innerText()).match(/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}|\/home|\/tmp|[A-Za-z]:\\/i), "Matchmaking UI should not render signatures, key material, or filesystem paths");
   await expectText(page, '[data-testid="federated-workbench"]', "Federated Workbench");
   await expectText(page, '[data-testid="federated-workbench"]', "Remote browser task");
   await expectText(page, '[data-testid="federated-workbench"]', "VERIFIED");

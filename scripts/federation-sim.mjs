@@ -24,6 +24,7 @@ try {
   const userA = await login(nodeA, "A");
   const userB = await login(nodeB, "B");
   await assertSkillRegistry(nodeA, userA.headers);
+  await assertMatchmaking(nodeA, userA.headers);
   await configureTrustedNodes(nodeA, nodeB, nodeC);
   await assertSignatureEnforcement(nodeA, nodeB);
   await assertPeerAnnouncements(nodeA, nodeB, userB.headers);
@@ -383,6 +384,29 @@ async function assertSkillRegistry(node, headers) {
   assert(provider.authority.remote_execution === false && provider.authority.connector_spawning === false && provider.authority.auto_bidding === false && provider.authority.payment === false, "Skill Registry must not grant execution, connector, bidding, or payment authority");
   assert(registry.policy.source_of_truth === "osa-capability-registry/1", "Skill Registry should reuse Capability Registry as authority source");
   assert(!/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}|osa_conn_/i.test(JSON.stringify(registry)), "Skill Registry API should not expose raw signatures, keys, or connector tokens");
+}
+
+async function assertMatchmaking(node, headers) {
+  const before = await getJson(node, "/api/jobs", headers);
+  const created = await postJson(node, "/api/jobs/create", {
+    title: "Fix matching API tests",
+    description: "Skills: coding, testing\nImplement deterministic matching and verify it without starting a connector.",
+    reward: "10 FLOP",
+    room: "local"
+  }, headers);
+  assert(created.ok && created.job?.seq, "test node should create a local job for matching");
+  const matchmaking = await getJson(node, `/api/matchmaking?job_id=${encodeURIComponent(created.job.seq)}`, headers);
+  assert(matchmaking.schema === "osa-matchmaking/1", "Matchmaking should expose a machine-readable schema");
+  assert(matchmaking.policy.authority === "recommendation_only", "Matchmaking must remain recommendation-only");
+  assert(matchmaking.policy.remote_execution === false && matchmaking.policy.connector_spawning === false && matchmaking.policy.auto_bidding === false && matchmaking.policy.payment === false, "Matchmaking must not grant execution, connector, bidding, or payment authority");
+  const entry = matchmaking.matches.find((item) => item.job.id === created.job.seq);
+  assert(entry, "Matchmaking should return the newly created local job");
+  assert(entry?.job.required_skills.includes("coding") && entry.job.required_skills.includes("testing"), "Matchmaking should infer job skills from bounded job text");
+  const coder = entry.candidates.find((item) => item.agent_id === "coder");
+  assert(coder?.authority.selectable_for_local_workspace === true && coder.authority.auto_bidding === false, "Local exact matches should be selectable metadata only, with no auto-bid authority");
+  assert(!/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}|osa_conn_|\/home|\/tmp/i.test(JSON.stringify(matchmaking)), "Matchmaking API should not expose raw signatures, keys, connector tokens, or filesystem paths");
+  const after = await getJson(node, "/api/jobs", headers);
+  assert((after.local_claims || []).length === (before.local_claims || []).length, "Reading matchmaking must not claim jobs or start work");
 }
 
 async function sync(from, to) {

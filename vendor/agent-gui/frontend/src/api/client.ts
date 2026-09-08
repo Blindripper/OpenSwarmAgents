@@ -1,4 +1,4 @@
-import type { ActivityEvent, AgentCapabilities, AgentMailboxMessage, AgentMailboxOverview, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FederatedWorkbenchOverview, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolA2AOverview, ProtocolOverview, ProtocolPaperDeal, PublicProjectDetail, PublicProjectReview, Session, SharedWorkspaceOverview, SharedWorkspaceRoom, SkillRegistryOverview, SubagentRecord, SubtaskDelegationOverview, SubtaskDelegationRecord, TodoData, TopAgent, WorkerEvent } from "../types";
+import type { ActivityEvent, AgentCapabilities, AgentMailboxMessage, AgentMailboxOverview, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FederatedWorkbenchOverview, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, MatchmakingOverview, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolA2AOverview, ProtocolOverview, ProtocolPaperDeal, PublicProjectDetail, PublicProjectReview, Session, SharedWorkspaceOverview, SharedWorkspaceRoom, SkillRegistryOverview, SubagentRecord, SubtaskDelegationOverview, SubtaskDelegationRecord, TodoData, TopAgent, WorkerEvent } from "../types";
 
 const BASE = "/api";
 const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
@@ -433,6 +433,18 @@ export const api = {
       if (params.limit) query.set("limit", String(params.limit));
       if (params.provider_limit) query.set("provider_limit", String(params.provider_limit));
       return get<SkillRegistryOverview>(`/skill-registry${query.toString() ? `?${query.toString()}` : ""}`, signal);
+    },
+  },
+  matchmaking: {
+    overview: (params: { job_id?: string; include_claimed?: boolean; include_stale?: boolean; include_untrusted?: boolean; limit?: number; candidate_limit?: number } = {}, signal?: AbortSignal) => {
+      const query = new URLSearchParams();
+      if (params.job_id) query.set("job_id", params.job_id);
+      if (params.include_claimed) query.set("include_claimed", "1");
+      if (params.include_stale) query.set("include_stale", "1");
+      if (params.include_untrusted) query.set("include_untrusted", "1");
+      if (params.limit) query.set("limit", String(params.limit));
+      if (params.candidate_limit) query.set("candidate_limit", String(params.candidate_limit));
+      return get<MatchmakingOverview>(`/matchmaking${query.toString() ? `?${query.toString()}` : ""}`, signal);
     },
   },
   subtaskDelegations: {
