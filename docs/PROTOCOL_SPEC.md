@@ -53,6 +53,10 @@ Each voting agent has exactly one vote. Reconnecting the same voting agent retur
 
 Task matching requires all task `requiredCapabilities` to be included in the agent's advertised `capabilities`. AgentGUI's Skill Finder applies the same deterministic AND rule to the existing local and federated Capability Registry. It joins reputation only on exact node id, agent id, and agent DID; hides stale/untrusted claims by default; and permits only fresh verified local profiles to enter the pending Workspace selection flow. A verified remote signature authenticates authorship and integrity, not skill quality, endorsement, authority, or availability.
 
+## Skill Registry
+
+Phase 5.1 defines `osa-skill-registry/1` as a machine-readable catalog projection over `osa-capability-registry/1`, not a new execution authority. Each `osa-skill/1` descriptor groups a normalized skill key, bounded local/federated provider rows, verified/stale/untrusted counts, exact node+agent+DID identity bindings, and exact-identity reputation context. Stale and untrusted rows are excluded by default and remain labelled, non-authoritative catalog entries when explicitly requested. Provider authority is limited to `local_workspace_profile` for fresh verified local profiles or `catalog_only` for everything else; the registry cannot claim work, start sessions, spawn connectors, publish messages, bid, lock funds, share files, or settle payment.
+
 ## Account and BYOK Model
 
 The default account model is local node login. Production local mode requires a local node password by default. Optional GitHub/Google OAuth endpoints exist for hosted or hybrid nodes. Login success sets an `osa_session` HttpOnly cookie; session records store only SHA-256 token hashes. CLI clients may also authenticate with `x-agentswarm-session`, but the browser app does not persist raw session tokens in localStorage.

@@ -422,6 +422,38 @@ try {
     ],
     quarantine: [{ id: "fwbq-browser-1", kind: "quarantine", state: "quarantined", origin_node_id: "node-browser-remote", origin_node_did: null, reason: "stale_snapshot_rejected", first_seen_at: "2026-09-05T10:04:00.000Z", last_seen_at: "2026-09-05T10:04:00.000Z", authority: "none", remote_execution: false, connector_spawning: false, files_shared: false, no_payment: true, no_settlement: true }],
   };
+  const browserSkillProvider = {
+    id: `local:node-browser-local:coder:${testTechnocoreDid}`,
+    source: "local",
+    agent_id: "coder",
+    name: "Coder",
+    tagline: "Browser registry local coder",
+    did: testTechnocoreDid,
+    node_id: "node-browser-local",
+    skills: ["coding", "testing"],
+    eligible: true,
+    verification: { verified: true, stale: false, state: "verified", label: "LOCAL VERIFIED", rejection_reason: null, note: "Signature verified; not an endorsement." },
+    provenance: { kind: "local", kv_path: "/kv/osa-capabilities/coder", payload_hash: "a".repeat(64) },
+    reputation: { status: "local_signed_record", label: "LOCAL SIGNED RECORD", verified: true, stale: false, counts: { accepted_results: 2, verified_job_results: 1, claimed_deals: 1, refunded_deals: 0, disputed_deals: 0, unique_counterparties: 1 }, note: "Not an endorsement." },
+    authority: { kind: "local_workspace_profile", selectable_for_local_workspace: true, remote_execution: false, connector_spawning: false, auto_bidding: false, payment: false, note: "Human selectable." },
+  };
+  const browserSkillRegistry = {
+    schema: "osa-skill-registry/1",
+    version: 1,
+    generated_at: "2026-09-05T10:04:00.000Z",
+    query: { raw: "", skills: [], source: "all", include_stale: false, include_untrusted: false },
+    policy: { source_of_truth: "osa-capability-registry/1", reputation_context: "exact_node_agent_did_join", signature_meaning: "authorship_and_integrity_not_endorsement_or_skill_truth", default_visibility: "fresh_verified_claims_only", authority: "catalog_only", matching_phase: "Phase 5.2", remote_execution: false, connector_spawning: false, auto_bidding: false, payment: false },
+    status: { capability_scan: "live", capability_error: null, reputation_scan: "live", reputation_error: null, available_skill_count: 2, skill_count: 1, provider_count: 2, excluded: { untrusted: 1, stale: 0 } },
+    available_skills: ["coding", "testing"],
+    providers: [browserSkillProvider, { ...browserSkillProvider, id: `federated:node-browser-remote:remote-coder:${browserMailboxRemoteDid}`, source: "federated", agent_id: "remote-coder", name: "Remote Coder", tagline: "Browser registry remote coder", did: browserMailboxRemoteDid, node_id: "node-browser-remote", verification: { ...browserSkillProvider.verification, label: "SIGNATURE VERIFIED" }, provenance: { kind: "technocore", room: "credence", seq: 7, kv_path: "/kv/osa-capabilities/remote-coder", payload_hash: "b".repeat(64) }, reputation: { ...browserSkillProvider.reputation, status: "signed_record", label: "SIGNED REPUTATION CLAIM" }, authority: { ...browserSkillProvider.authority, kind: "catalog_only", selectable_for_local_workspace: false, note: "Catalog only." } }],
+    skills: [{ id: "skill-browser-coding", schema: "osa-skill/1", version: 1, skill: "coding", label: "coding", provider_count: 2, eligible_provider_count: 2, local_provider_count: 1, federated_provider_count: 1, verified_provider_count: 2, stale_provider_count: 0, untrusted_provider_count: 0, reputation_evidence_count: 8, reputation_counts: { accepted_results: 4, verified_job_results: 2, claimed_deals: 2, refunded_deals: 0, disputed_deals: 0, unique_counterparties: 2 }, providers: [] }],
+  };
+  browserSkillRegistry.skills[0].providers = browserSkillRegistry.providers;
+  await page.route("**/api/skill-registry**", async (route) => {
+    const request = route.request();
+    if (request.method() !== "GET") return route.continue();
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(browserSkillRegistry) });
+  });
   await page.route("**/api/federated-workbench**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
@@ -937,6 +969,11 @@ try {
   await expectText(page, "body", "REVOKED");
   assert(!(await page.locator("body").innerText()).match(/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}|\bsig\b/i), "Vault registry UI should not render raw signatures or signing material");
   await page.getByRole("button", { name: "Work", exact: true }).click();
+  await expectText(page, '[data-testid="skill-registry"]', "Skill Registry");
+  await expectText(page, '[data-testid="skill-registry"]', "Remote Coder");
+  await expectText(page, '[data-testid="skill-registry"]', "CATALOG ONLY");
+  await expectText(page, '[data-testid="skill-registry"]', "NO AUTO-BID");
+  assert(!(await page.getByTestId("skill-registry").innerText()).match(/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}/i), "Skill Registry UI should not render raw signatures or signing material");
   await expectText(page, '[data-testid="federated-workbench"]', "Federated Workbench");
   await expectText(page, '[data-testid="federated-workbench"]', "Remote browser task");
   await expectText(page, '[data-testid="federated-workbench"]', "VERIFIED");

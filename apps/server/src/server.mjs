@@ -13010,6 +13010,185 @@ function skillFinderReputationForCapability(capability, reputationRows) {
   };
 }
 
+function skillRegistryProviderFromCapability(record, reputationRows) {
+  const local = record.source === "local";
+  const stale = record.stale === true;
+  const verified = record.verified === true;
+  const eligible = verified && !stale;
+  const reputation = skillFinderReputationForCapability(record, reputationRows);
+  return {
+    id: `${local ? "local" : "federated"}:${record.node_id}:${record.agent_id}:${record.did}`,
+    source: local ? "local" : "federated",
+    agent_id: sanitizeDisplayText(record.agent_id, 80),
+    name: sanitizeDisplayText(record.name || record.agent_id, 80) || "Agent",
+    tagline: sanitizeDisplayText(record.tagline || "", 160),
+    did: String(record.did || "").slice(0, 150),
+    node_id: String(record.node_id || "").slice(0, 100),
+    skills: sanitizeCapabilityList(record.capabilities || []),
+    eligible,
+    verification: {
+      verified,
+      stale,
+      state: !verified ? "untrusted" : stale ? "stale" : "verified",
+      label: !verified ? "UNTRUSTED" : stale ? "STALE" : local ? "LOCAL VERIFIED" : "SIGNATURE VERIFIED",
+      rejection_reason: verified ? null : sanitizeDisplayText(record.rejection_reason || "unverified", 160),
+      note: verified
+        ? "The capability record signature and identity binding verified; the skill claim is not an endorsement."
+        : "This skill claim failed verification and is not eligible for matching."
+    },
+    provenance: local ? {
+      kind: "local",
+      kv_path: record.kv_path,
+      payload_hash: record.payload_hash || null
+    } : {
+      kind: "technocore",
+      room: record.provenance?.room || null,
+      seq: record.provenance?.seq || null,
+      announced_at: record.provenance?.announced_at || null,
+      kv_path: record.kv_path,
+      payload_hash: record.payload_hash || null,
+      last_seen_at: record.last_seen_at || null
+    },
+    reputation,
+    authority: {
+      kind: local && eligible ? "local_workspace_profile" : "catalog_only",
+      selectable_for_local_workspace: local && eligible,
+      remote_execution: false,
+      connector_spawning: false,
+      auto_bidding: false,
+      payment: false,
+      note: local && eligible
+        ? "A human may select this local profile for an existing private workspace flow."
+        : "Machine-readable catalog metadata only; no task, connector, bid, payment, or remote authority is granted."
+    }
+  };
+}
+
+function skillRegistryProviderSort(a, b) {
+  const aEligible = a.eligible ? 1 : 0;
+  const bEligible = b.eligible ? 1 : 0;
+  const aLocal = a.source === "local" ? 1 : 0;
+  const bLocal = b.source === "local" ? 1 : 0;
+  const aReputation = ["local_signed_record", "signed_record"].includes(a.reputation.status) ? 1 : 0;
+  const bReputation = ["local_signed_record", "signed_record"].includes(b.reputation.status) ? 1 : 0;
+  return bEligible - aEligible
+    || bLocal - aLocal
+    || bReputation - aReputation
+    || reputationEvidenceVolume(b.reputation) - reputationEvidenceVolume(a.reputation)
+    || a.agent_id.localeCompare(b.agent_id)
+    || a.did.localeCompare(b.did);
+}
+
+function publicSkillRegistryStatus(url) {
+  markCapabilityProjectionStaleness();
+  markReputationProjectionStaleness();
+  const rawQuery = url?.searchParams?.get("skill") || url?.searchParams?.get("q") || "";
+  const requestedSkills = normalizeSkillFinderQuery(rawQuery);
+  const requestedSource = url?.searchParams?.get("source");
+  const source = ["all", "local", "federated"].includes(requestedSource) ? requestedSource : "all";
+  const includeUntrusted = url?.searchParams?.get("include_untrusted") === "1";
+  const includeStale = url?.searchParams?.get("include_stale") === "1";
+  const skillLimit = url?.searchParams?.has("limit")
+    ? Math.round(boundedNumber(url.searchParams.get("limit"), 80, 1, 250))
+    : 80;
+  const providerLimit = url?.searchParams?.has("provider_limit")
+    ? Math.round(boundedNumber(url.searchParams.get("provider_limit"), 20, 1, 50))
+    : 20;
+  const capabilityState = publicCapabilityRegistryStatus();
+  const reputationState = publicReputationStatus();
+  const capabilityRows = [
+    ...capabilityState.local.map((record) => ({ ...record, source: "local", stale: false })),
+    ...capabilityState.discovered.map((record) => ({ ...record, source: "technocore" }))
+  ];
+  const reputationRows = [
+    ...reputationState.local.map((record) => ({ ...record, source: "local", stale: false })),
+    ...reputationState.discovered.map((record) => ({ ...record, source: "technocore" }))
+  ];
+  const availableSkills = [...new Set(capabilityRows
+    .filter((record) => record.source === "local" || (record.verified && !record.stale))
+    .flatMap((record) => sanitizeCapabilityList(record.capabilities || [])))]
+    .sort()
+    .slice(0, 250);
+  const excluded = { untrusted: 0, stale: 0 };
+  const providers = [];
+  for (const record of capabilityRows) {
+    const providerSource = record.source === "local" ? "local" : "federated";
+    if (source !== "all" && source !== providerSource) continue;
+    const skills = sanitizeCapabilityList(record.capabilities || []);
+    if (requestedSkills.length && !requestedSkills.some((skill) => skills.includes(skill))) continue;
+    const stale = record.stale === true;
+    const untrusted = record.verified !== true;
+    if (untrusted && !includeUntrusted) { excluded.untrusted += 1; continue; }
+    if (stale && !includeStale) { excluded.stale += 1; continue; }
+    providers.push(skillRegistryProviderFromCapability(record, reputationRows));
+  }
+  providers.sort(skillRegistryProviderSort);
+  const bySkill = new Map();
+  for (const provider of providers) {
+    for (const skill of provider.skills) {
+      if (requestedSkills.length && !requestedSkills.includes(skill)) continue;
+      if (!bySkill.has(skill)) bySkill.set(skill, []);
+      bySkill.get(skill).push(provider);
+    }
+  }
+  const skills = [...bySkill.entries()].map(([skill, skillProviders]) => {
+    const sortedProviders = [...skillProviders].sort(skillRegistryProviderSort);
+    const counts = normalizeReputationCounts({});
+    for (const provider of sortedProviders) {
+      for (const key of Object.keys(counts)) counts[key] += Number(provider.reputation?.counts?.[key] || 0);
+    }
+    return {
+      id: `skill-${createHash("sha256").update(skill).digest("hex").slice(0, 24)}`,
+      schema: "osa-skill/1",
+      version: 1,
+      skill,
+      label: skill.replace(/_/g, " "),
+      provider_count: sortedProviders.length,
+      eligible_provider_count: sortedProviders.filter((provider) => provider.eligible).length,
+      local_provider_count: sortedProviders.filter((provider) => provider.source === "local").length,
+      federated_provider_count: sortedProviders.filter((provider) => provider.source === "federated").length,
+      verified_provider_count: sortedProviders.filter((provider) => provider.verification.verified).length,
+      stale_provider_count: sortedProviders.filter((provider) => provider.verification.stale).length,
+      untrusted_provider_count: sortedProviders.filter((provider) => !provider.verification.verified).length,
+      reputation_evidence_count: sortedProviders.reduce((sum, provider) => sum + reputationEvidenceVolume(provider.reputation), 0),
+      reputation_counts: counts,
+      providers: sortedProviders.slice(0, providerLimit)
+    };
+  }).sort((a, b) => b.eligible_provider_count - a.eligible_provider_count || b.provider_count - a.provider_count || a.skill.localeCompare(b.skill));
+  const limitedSkills = skills.slice(0, skillLimit);
+  return {
+    schema: "osa-skill-registry/1",
+    version: 1,
+    generated_at: now(),
+    query: { raw: sanitizeDisplayText(rawQuery, 120), skills: requestedSkills, source, include_stale: includeStale, include_untrusted: includeUntrusted },
+    policy: {
+      source_of_truth: "osa-capability-registry/1",
+      reputation_context: "exact_node_agent_did_join",
+      signature_meaning: "authorship_and_integrity_not_endorsement_or_skill_truth",
+      default_visibility: "fresh_verified_claims_only",
+      authority: "catalog_only",
+      matching_phase: "Phase 5.2 may consume this registry but must still require explicit policy gates before work or bidding.",
+      remote_execution: false,
+      connector_spawning: false,
+      auto_bidding: false,
+      payment: false
+    },
+    status: {
+      capability_scan: capabilityState.status.last_scan_status,
+      capability_error: capabilityState.status.last_error,
+      reputation_scan: reputationState.status.last_scan_status,
+      reputation_error: reputationState.status.last_error,
+      available_skill_count: availableSkills.length,
+      skill_count: limitedSkills.length,
+      provider_count: providers.length,
+      excluded
+    },
+    available_skills: availableSkills,
+    skills: limitedSkills,
+    providers: providers.slice(0, Math.min(skillLimit * providerLimit, 250))
+  };
+}
+
 function publicSkillFinderResults(url) {
   markCapabilityProjectionStaleness();
   markReputationProjectionStaleness();
@@ -15147,6 +15326,10 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     } catch (error) {
       return sendJson(res, error.statusCode || 400, { detail: error.message || "Unable to scan capability registry" });
     }
+  }
+
+  if (method === "GET" && path === "/api/skill-registry") {
+    return sendJson(res, 200, publicSkillRegistryStatus(url));
   }
 
   if (method === "GET" && path === "/api/reputation") {

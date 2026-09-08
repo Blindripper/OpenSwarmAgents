@@ -1,4 +1,4 @@
-import type { ActivityEvent, AgentCapabilities, AgentMailboxMessage, AgentMailboxOverview, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FederatedWorkbenchOverview, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolA2AOverview, ProtocolOverview, ProtocolPaperDeal, PublicProjectDetail, PublicProjectReview, Session, SharedWorkspaceOverview, SharedWorkspaceRoom, SubagentRecord, SubtaskDelegationOverview, SubtaskDelegationRecord, TodoData, TopAgent, WorkerEvent } from "../types";
+import type { ActivityEvent, AgentCapabilities, AgentMailboxMessage, AgentMailboxOverview, AgentPersona, AgentProfile, AgentPrototype, AuditResult, DeskExport, DeskHistory, FederatedWorkbenchOverview, FileNode, FilePreviewData, LlmProvider, ManagerAuditRecord, NetworkChannel, NetworkChatMessage, ProjectExplorerReport, ProtocolA2AOverview, ProtocolOverview, ProtocolPaperDeal, PublicProjectDetail, PublicProjectReview, Session, SharedWorkspaceOverview, SharedWorkspaceRoom, SkillRegistryOverview, SubagentRecord, SubtaskDelegationOverview, SubtaskDelegationRecord, TodoData, TopAgent, WorkerEvent } from "../types";
 
 const BASE = "/api";
 const WS_BASE = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
@@ -422,6 +422,18 @@ export const api = {
     overview: (signal?: AbortSignal) => get<FederatedWorkbenchOverview>("/federated-workbench", signal),
     importTask: (id: string, body: { idempotency_key: string; confirmation: "import-federated-task"; agent_id?: string }) =>
       post<{ ok: boolean; idempotent_replay: boolean; task: { id: string }; session: Session; status: FederatedWorkbenchOverview }>(`/federated-workbench/${encodeURIComponent(id)}/import`, body),
+  },
+  skillRegistry: {
+    overview: (params: { skill?: string; source?: "all" | "local" | "federated"; include_stale?: boolean; include_untrusted?: boolean; limit?: number; provider_limit?: number } = {}, signal?: AbortSignal) => {
+      const query = new URLSearchParams();
+      if (params.skill) query.set("skill", params.skill);
+      if (params.source) query.set("source", params.source);
+      if (params.include_stale) query.set("include_stale", "1");
+      if (params.include_untrusted) query.set("include_untrusted", "1");
+      if (params.limit) query.set("limit", String(params.limit));
+      if (params.provider_limit) query.set("provider_limit", String(params.provider_limit));
+      return get<SkillRegistryOverview>(`/skill-registry${query.toString() ? `?${query.toString()}` : ""}`, signal);
+    },
   },
   subtaskDelegations: {
     overview: (signal?: AbortSignal) => get<SubtaskDelegationOverview>("/subtask-delegations", signal),

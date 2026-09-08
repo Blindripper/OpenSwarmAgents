@@ -646,6 +646,52 @@ export interface FederatedWorkbenchOverview {
   quarantine: FederatedWorkbenchQuarantine[];
 }
 
+export interface SkillRegistryProvider {
+  id: string;
+  source: "local" | "federated" | string;
+  agent_id: string;
+  name: string;
+  tagline?: string;
+  did: string;
+  node_id: string;
+  skills: string[];
+  eligible: boolean;
+  verification: { verified: boolean; stale: boolean; state: "verified" | "stale" | "untrusted" | string; label: string; rejection_reason?: string | null; note: string };
+  provenance: { kind: "local" | "technocore" | string; room?: string | null; seq?: number | null; kv_path?: string | null; payload_hash?: string | null; last_seen_at?: string | null };
+  reputation: { status: string; label: string; verified: boolean; stale: boolean; counts: { accepted_results: number; verified_job_results: number; claimed_deals: number; refunded_deals: number; disputed_deals: number; unique_counterparties: number }; note: string };
+  authority: { kind: "local_workspace_profile" | "catalog_only" | string; selectable_for_local_workspace: boolean; remote_execution: false; connector_spawning: false; auto_bidding: false; payment: false; note: string };
+}
+
+export interface SkillRegistrySkill {
+  id: string;
+  schema: "osa-skill/1" | string;
+  version: number;
+  skill: string;
+  label: string;
+  provider_count: number;
+  eligible_provider_count: number;
+  local_provider_count: number;
+  federated_provider_count: number;
+  verified_provider_count: number;
+  stale_provider_count: number;
+  untrusted_provider_count: number;
+  reputation_evidence_count: number;
+  reputation_counts: SkillRegistryProvider["reputation"]["counts"];
+  providers: SkillRegistryProvider[];
+}
+
+export interface SkillRegistryOverview {
+  schema: "osa-skill-registry/1" | string;
+  version: number;
+  generated_at: string;
+  query: { raw: string; skills: string[]; source: string; include_stale: boolean; include_untrusted: boolean };
+  policy: { source_of_truth: string; reputation_context: string; signature_meaning: string; default_visibility: string; authority: string; matching_phase: string; remote_execution: false; connector_spawning: false; auto_bidding: false; payment: false };
+  status: { capability_scan?: string | null; capability_error?: string | null; reputation_scan?: string | null; reputation_error?: string | null; available_skill_count: number; skill_count: number; provider_count: number; excluded: { untrusted: number; stale: number } };
+  available_skills: string[];
+  skills: SkillRegistrySkill[];
+  providers: SkillRegistryProvider[];
+}
+
 export interface ProtocolA2AObservation {
   id: string;
   profile: string;

@@ -23,6 +23,7 @@ try {
 
   const userA = await login(nodeA, "A");
   const userB = await login(nodeB, "B");
+  await assertSkillRegistry(nodeA, userA.headers);
   await configureTrustedNodes(nodeA, nodeB, nodeC);
   await assertSignatureEnforcement(nodeA, nodeB);
   await assertPeerAnnouncements(nodeA, nodeB, userB.headers);
@@ -369,6 +370,19 @@ async function assertTrustedPeerDiscovery(nodeA, nodeB, nodeC, headersA) {
     headersA
   );
   await assertTopProjects(nodeA, ["Node C Discovered Project"]);
+}
+
+async function assertSkillRegistry(node, headers) {
+  const registry = await getJson(node, "/api/skill-registry?skill=coding&source=all", headers);
+  assert(registry.schema === "osa-skill-registry/1", "Skill Registry should expose a machine-readable schema");
+  const coding = registry.skills.find((item) => item.skill === "coding");
+  assert(coding?.providers.some((provider) => provider.agent_id === "coder" && provider.source === "local"), "Skill Registry should list the local coder skill provider");
+  const provider = coding.providers.find((item) => item.agent_id === "coder");
+  assert(provider, "Skill Registry should return the coder provider row");
+  assert(provider.verification.verified === true && provider.verification.stale === false, "Skill Registry providers should carry verified/stale trust state");
+  assert(provider.authority.remote_execution === false && provider.authority.connector_spawning === false && provider.authority.auto_bidding === false && provider.authority.payment === false, "Skill Registry must not grant execution, connector, bidding, or payment authority");
+  assert(registry.policy.source_of_truth === "osa-capability-registry/1", "Skill Registry should reuse Capability Registry as authority source");
+  assert(!/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}|osa_conn_/i.test(JSON.stringify(registry)), "Skill Registry API should not expose raw signatures, keys, or connector tokens");
 }
 
 async function sync(from, to) {
