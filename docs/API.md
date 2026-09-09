@@ -555,11 +555,11 @@ The response contains sanitized job previews, SHA-256 text hashes, required skil
 
 `GET /api/flop/miner`
 
-Returns the `osa-flop-miner-console/1` readiness view, grounded in the FLOP Yellowpaper miner lifecycle. It reports bounded local compute metadata from a read-only `nvidia-smi` probe when available, CPU/RAM counts, Technocore/DID readiness, wallet/stake blockers, calibration/model-root status, lifecycle steps, Yellowpaper references, readiness score, and authority flags. The endpoint never returns raw signatures, keys, secrets, connector tokens, filesystem paths, private task bodies, or settlement material. It cannot lease GPU capacity, register miner stake, register model roots, accept sessions, start connectors, claim payouts, or move FLOP.
+Returns the `osa-flop-miner-console/1` readiness view, grounded in the FLOP Yellowpaper miner lifecycle. It reports bounded local compute metadata from a read-only `nvidia-smi` probe when available, CPU/RAM counts, Technocore/DID readiness, wallet/stake blockers, calibration/model-root status, lifecycle steps, Yellowpaper references, economics, source links, integration-path checkpoints, readiness score, and authority flags. The endpoint never returns raw signatures, keys, secrets, connector tokens, filesystem paths, private task bodies, or settlement material. It cannot lease GPU capacity, register miner stake, register model roots, accept sessions, start connectors, claim payouts, or move FLOP.
 
 `GET /api/flop/validator`
 
-Returns the `osa-flop-validator-console/1` readiness view, grounded in the FLOP Yellowpaper validator sections. It reports identity readiness, stake-floor/manual bonding requirements, consensus-client and DA configuration checks, recent PoUI-work readiness, local compute context, lifecycle steps, and authority flags. The view is informational only: it cannot bond stake, register validators, author blocks, vote finality, sign attestations, host or publish DA, start mining backends, claim rewards, or move FLOP.
+Returns the `osa-flop-validator-console/1` readiness view, grounded in the FLOP Yellowpaper validator sections. It reports identity readiness, stake-floor/manual bonding requirements, consensus-client and DA configuration checks, recent PoUI-work readiness, local compute context, lifecycle steps, economics, source links, integration-path checkpoints, and authority flags. The view is informational only: it cannot bond stake, register validators, author blocks, vote finality, sign attestations, host or publish DA, start mining backends, claim rewards, or move FLOP.
 
 `GET /api/agents/find?skill=coding,testing&source=all&include_stale=0&include_untrusted=0&limit=50`
 

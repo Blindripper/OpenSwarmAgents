@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { FlopMinerOverview, FlopOperatorCheck, FlopOperatorLifecycleStep, FlopValidatorOverview } from "../types";
+import type { FlopMinerOverview, FlopOperatorCheck, FlopOperatorIntegrationStep, FlopOperatorLifecycleStep, FlopOperatorSourceRef, FlopValidatorOverview } from "../types";
 
 type Kind = "miner" | "validator";
 type Overview = FlopMinerOverview | FlopValidatorOverview;
@@ -10,7 +10,7 @@ const buttonStyle = { height: 32, padding: "0 12px", borderRadius: 6, border: "1
 function tone(status: string): "good" | "warn" | "bad" | "blue" | undefined {
   if (status === "ready") return "good";
   if (status === "manual" || status === "manual_required" || status === "warning") return "warn";
-  if (status === "blocked") return "bad";
+  if (status === "blocked" || status === "not_available") return "bad";
   return "blue";
 }
 
@@ -36,6 +36,58 @@ function LifecycleRow({ step, index }: { step: FlopOperatorLifecycleStep; index:
       <div style={{ marginTop: 5, color: "#94a3b8", fontSize: 12, lineHeight: 1.45 }}>{step.detail}</div>
     </div>
   </div>;
+}
+
+function IntegrationRow({ step, index }: { step: FlopOperatorIntegrationStep; index: number }) {
+  return <div className="osa-operator-step">
+    <div className="osa-operator-step-index">{String(index + 1).padStart(2, "0")}</div>
+    <div style={{ minWidth: 0 }}>
+      <div className="osa-operator-step-head">
+        <strong>{step.label}</strong>
+        <span className="osa-pill" data-tone={tone(step.state)}>{step.state.replace(/_/g, " ").toUpperCase()}</span>
+      </div>
+      <div className="osa-operator-step-copy">{step.detail}</div>
+      <a className="osa-operator-source-link" href={step.source} target="_blank" rel="noreferrer">Source reference</a>
+    </div>
+  </div>;
+}
+
+function SourceBlock({ sources = [] }: { sources?: FlopOperatorSourceRef[] }) {
+  return <section className="osa-dashboard-card osa-operator-card" style={{ display: "grid", gap: 10 }}>
+    <div className="osa-operator-section-title">Source Evidence</div>
+    <div className="osa-source-grid">
+      {sources.map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className="osa-source-card">
+        <strong>{source.label}</strong>
+        <span>{source.note}</span>
+      </a>)}
+    </div>
+  </section>;
+}
+
+function EconomicsBlock({ view }: { view: Overview }) {
+  const entries = Object.entries(view.economics || {}).filter(([, value]) => Boolean(value));
+  if (!entries.length) return null;
+  return <section className="osa-dashboard-card osa-operator-card" style={{ display: "grid", gap: 10 }}>
+    <div className="osa-operator-section-title">Network Economics</div>
+    <div className="osa-economics-grid">
+      {entries.map(([key, value]) => <div key={key} className="osa-economics-item">
+        <div>{key.replace(/_/g, " ").toUpperCase()}</div>
+        <strong>{value}</strong>
+      </div>)}
+    </div>
+  </section>;
+}
+
+function IntegrationBlock({ view }: { view: Overview }) {
+  const steps = view.integration_path || [];
+  if (!steps.length) return null;
+  return <section className="osa-dashboard-card osa-operator-card" style={{ display: "grid", gap: 12 }}>
+    <div>
+      <div className="osa-operator-section-title">Integration Path</div>
+      <div className="osa-operator-muted">Mapped from FLOP miner/validator docs, Technocore DID Starter and technocore-chat signed rooms/KV.</div>
+    </div>
+    <div className="osa-operator-timeline">{steps.map((step, index) => <IntegrationRow key={step.id} step={step} index={index} />)}</div>
+  </section>;
 }
 
 function GpuBlock({ view }: { view: Overview }) {
@@ -105,13 +157,13 @@ function OperatorPage({ kind }: { kind: Kind }) {
 
   return <div className="osa-dashboard-page" data-testid={`flop-${kind}-panel`}>
     <div className="osa-dashboard-inner">
-      <header className="osa-page-hero">
+      <header className="osa-page-hero osa-operator-hero" data-kind={kind}>
         <div>
           <div className="osa-page-eyebrow">{eyebrow}</div>
           <div className="osa-page-title">{title}</div>
           <div className="osa-page-copy">{view?.yellowpaper.summary || "Loading FLOP operator model..."}</div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div className="osa-operator-hero-status">
           {view && <span className="osa-pill" data-tone={tone(view.overall_status)}>{view.overall_status.replace(/_/g, " ").toUpperCase()}</span>}
           {view && <span className="osa-pill" data-tone="blue">{view.readiness_score}% READY</span>}
           <button type="button" onClick={() => void load()} disabled={loading} style={buttonStyle}>{loading ? "Refreshing" : "Refresh"}</button>
@@ -119,12 +171,13 @@ function OperatorPage({ kind }: { kind: Kind }) {
       </header>
       {error && <div role="alert" className="osa-dashboard-card" style={{ padding: 12, color: "#fca5a5", borderColor: "#7f1d1d", background: "#2a1015" }}>{error}</div>}
       {view && <>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
-          <div className="osa-dashboard-card" style={{ padding: 14 }}><div style={{ color: "#7ee0c2", fontSize: 24, fontWeight: 950 }}>{view.readiness.filter((item) => item.status === "ready").length}</div><div style={{ color: "#94a3b8", fontSize: 11 }}>Ready checks</div></div>
-          <div className="osa-dashboard-card" style={{ padding: 14 }}><div style={{ color: "#fde68a", fontSize: 24, fontWeight: 950 }}>{view.readiness.filter((item) => ["manual", "warning"].includes(item.status)).length}</div><div style={{ color: "#94a3b8", fontSize: 11 }}>Manual checks</div></div>
-          <div className="osa-dashboard-card" style={{ padding: 14 }}><div style={{ color: "#fca5a5", fontSize: 24, fontWeight: 950 }}>{view.readiness.filter((item) => item.status === "blocked").length}</div><div style={{ color: "#94a3b8", fontSize: 11 }}>Blocked checks</div></div>
-          <div className="osa-dashboard-card" style={{ padding: 14 }}><div style={{ color: "#bfdbfe", fontSize: 24, fontWeight: 950 }}>{view.yellowpaper.sections.join(" /")}</div><div style={{ color: "#94a3b8", fontSize: 11 }}>Yellowpaper refs</div></div>
+        <div className="osa-stat-strip">
+          <div className="osa-dashboard-card osa-stat-card"><div>{view.readiness.filter((item) => item.status === "ready").length}</div><span>Ready checks</span></div>
+          <div className="osa-dashboard-card osa-stat-card"><div>{view.readiness.filter((item) => ["manual", "warning"].includes(item.status)).length}</div><span>Manual checks</span></div>
+          <div className="osa-dashboard-card osa-stat-card"><div>{view.readiness.filter((item) => item.status === "blocked").length}</div><span>Blocked checks</span></div>
+          <div className="osa-dashboard-card osa-stat-card"><div>{view.yellowpaper.sections.length}</div><span>Spec sections</span></div>
         </div>
+        <IntegrationBlock view={view} />
         <div className="osa-dashboard-grid-2">
           <div style={{ display: "grid", gap: 14 }}>
             <section className="osa-dashboard-card" style={{ padding: 14, display: "grid", gap: 10 }}>
@@ -139,12 +192,14 @@ function OperatorPage({ kind }: { kind: Kind }) {
           <aside style={{ display: "grid", gap: 14 }}>
             <GpuBlock view={view} />
             <RequirementsBlock view={view} />
+            <EconomicsBlock view={view} />
             <section className="osa-dashboard-card" style={{ padding: 14, display: "grid", gap: 8 }}>
               <div style={{ fontSize: 15, fontWeight: 950, color: "#e2e8f0" }}>Authority Flags</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
                 {Object.entries(view.authority).filter(([key, value]) => typeof value === "boolean" && value === false && key !== "kind").map(([key]) => <span key={key} className="osa-pill" data-tone="bad">NO {key.replace(/_/g, " ").toUpperCase()}</span>)}
               </div>
             </section>
+            <SourceBlock sources={view.sources} />
           </aside>
         </div>
       </>}

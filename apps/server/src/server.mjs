@@ -98,6 +98,7 @@ const publicDir = join(rootDir, "apps/web/public");
 const agentGuiDistDir = join(rootDir, "vendor/agent-gui/frontend/dist");
 const dashboardBasePath = "/osa-network";
 const legacyDashboardBasePath = "/agent-gui";
+const dashboardDeepLinkSlugs = new Set(["projects", "workspaces", "miner", "validator", "work", "market", "deals", "network", "trust-vault", "trust", "vault"]);
 const defaultAgentGuiAgentId = "technocore-specialist";
 const dataDir = process.env.OSA_DATA_DIR || join(rootDir, "data");
 const uploadDir = process.env.OSA_UPLOAD_DIR || join(dataDir, "uploads");
@@ -18095,6 +18096,10 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === "/" && !url.search) {
     return redirect(res, `${dashboardBasePath}/`);
+  }
+  const rootDashboardSlug = url.pathname.replace(/^\/+/, "").toLowerCase();
+  if (dashboardDeepLinkSlugs.has(rootDashboardSlug)) {
+    return redirect(res, `${dashboardBasePath}/#/${rootDashboardSlug}${url.search}`);
   }
   if (url.pathname === legacyDashboardBasePath || url.pathname.startsWith(`${legacyDashboardBasePath}/`)) {
     const nextPath = `${dashboardBasePath}${url.pathname.slice(legacyDashboardBasePath.length) || "/"}`;

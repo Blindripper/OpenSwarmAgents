@@ -96,11 +96,19 @@ function overallStatus(checks) {
 
 const yellowpaper = Object.freeze({
   url: "https://flop.finance/intro/yellowpaper/",
+  miner_url: "https://flop.finance/intro/miner/",
+  validator_url: "https://flop.finance/intro/validator/",
+  did_starter_url: "https://github.com/zunmax/technocore-did-starter#-share-the-contribution-",
+  technocore_chat_url: "https://github.com/flop-labs/technocore-chat",
   miner_sections: ["3", "4", "6.1", "7", "8", "12", "Appendix C"],
   validator_sections: ["2", "3.6", "5.3", "13.2", "15"],
   miner_summary: "Miners run attested inference, meter useful G_n work, serve sessions, and claim settlement only after bound receipts and verification evidence.",
   validator_summary: "Validators author and finalize blocks, attest miner proofs by quorum, host data availability, and need stake plus recent verified PoUI work for committee eligibility.",
 });
+
+function integrationStep(id, label, state, detail, source) {
+  return { id, label, state, detail: safeText(detail, 260), source };
+}
 
 export function buildFlopMinerStatus(options = {}) {
   const runtime = options.runtime || {};
@@ -118,15 +126,34 @@ export function buildFlopMinerStatus(options = {}) {
     version: 1,
     generated_at: nowIso(),
     yellowpaper: { url: yellowpaper.url, sections: yellowpaper.miner_sections, summary: yellowpaper.miner_summary },
+    sources: [
+      { label: "FLOP miner guide", url: yellowpaper.miner_url, note: "SOFT/HARD miner tiers, stake, G_n rewards and settlement path." },
+      { label: "FLOP yellowpaper", url: yellowpaper.url, note: "PoUI, TOPLOC, calibration, verification, settlement and miner lifecycle." },
+      { label: "Technocore DID Starter", url: yellowpaper.did_starter_url, note: "Encrypted Ed25519 DID plus signed contribution trail." },
+      { label: "technocore-chat", url: yellowpaper.technocore_chat_url, note: "Rooms, KV notes and did:key signed lanes for public operator records." },
+    ],
     mode: boolEnv("OSA_FLOP_MINER_ENABLED") ? "operator_configured" : "readiness_only",
     overall_status: overallStatus(checks),
     readiness_score: readinessScore(checks),
     compute,
+    economics: {
+      base_self_stake: "10,000 FLOP plus runtime-calculated capacity exposure bond",
+      reward_share: "75% of era-0 block rewards weighted by verified G_n, plus settled session payments",
+      soft_tier: "ordinary GPU path; accepted capacity from measured benchmark throughput with audit exposure",
+      hard_tier: "optional NVIDIA Confidential Computing path with measured model roots and stricter slash exposure",
+    },
     lifecycle: [
       { id: "onboard", label: "Onboard", state: "manual_required", detail: "Bond stake, calibrate hardware, register miner and model availability." },
       { id: "go_live", label: "Go live", state: "not_started", detail: "Advertise models; agents select miners off-chain." },
       { id: "serve", label: "Serve sessions", state: "not_started", detail: "Stream signed turns with receipts, TOPLOC evidence, and bounded G_n metering." },
       { id: "settle", label: "Claim settlement", state: "planned", detail: "Requires final root, last mutual receipt, validator attestation quorum, and replay guard." },
+    ],
+    integration_path: [
+      integrationStep("did", "Operator DID", runtime.technocoreSignedMessages && runtime.technocoreDid ? "ready" : "manual_required", "Create or reuse a durable did:key identity; never expose the encrypted key or passphrase in the dashboard.", yellowpaper.did_starter_url),
+      integrationStep("contribution", "Contribution trail", "manual_required", "Publish useful public work, record its URL in a signed Technocore message, and retain room plus sequence evidence.", yellowpaper.did_starter_url),
+      integrationStep("announce", "Signed operator record", runtime.technocoreEnabled ? "planned" : "blocked", "Use technocore-chat rooms/KV signed lanes for a bounded miner availability descriptor once protocol fields are finalized.", yellowpaper.technocore_chat_url),
+      integrationStep("calibrate", "GPU calibration", compute.gpu_probe.available ? "manual_required" : "blocked", "Measure GPU throughput, model roots and SOFT/HARD tier evidence before any capacity advertisement.", yellowpaper.miner_url),
+      integrationStep("settle", "PoUI settlement lane", "not_available", "Compute channels, co-signed transcript roots, validator quorum and replay guards must be wired before OSA can accept sessions or claim FLOP.", yellowpaper.url),
     ],
     readiness: checks,
     authority: {
@@ -159,6 +186,12 @@ export function buildFlopValidatorStatus(options = {}) {
     version: 1,
     generated_at: nowIso(),
     yellowpaper: { url: yellowpaper.url, sections: yellowpaper.validator_sections, summary: yellowpaper.validator_summary },
+    sources: [
+      { label: "FLOP validator guide", url: yellowpaper.validator_url, note: "Stake, data availability, active-set rotation, slashing and governance." },
+      { label: "FLOP yellowpaper", url: yellowpaper.url, note: "BFT finality, validator attestations, DA and PoUI-gated committees." },
+      { label: "Technocore DID Starter", url: yellowpaper.did_starter_url, note: "Signed DID identity and contribution evidence trail." },
+      { label: "technocore-chat", url: yellowpaper.technocore_chat_url, note: "Rooms/KV/signed-lane coordination substrate for public records." },
+    ],
     mode: boolEnv("OSA_FLOP_VALIDATOR_ENABLED") ? "operator_configured" : "readiness_only",
     overall_status: overallStatus(checks),
     readiness_score: readinessScore(checks),
@@ -168,12 +201,25 @@ export function buildFlopValidatorStatus(options = {}) {
       committee_gate: "active validator plus recent verified PoUI work within the work recency window",
       heavy_duties: ["DA store-and-serve", "committee-keeping GPU work"],
     },
+    economics: {
+      validator_set: "roughly 50 validators rotate per month toward a capped active/waiting-set model",
+      reward_share: "10% of block rewards for active validators, subject to finalized runtime rules",
+      governance: "most FLOP Improvement Proposals require two-thirds active-validator approval",
+      slash_risk: "dishonest blocks, DA failures, or invalid attestations can trigger severe slashing/ban paths",
+    },
     compute,
     lifecycle: [
       { id: "register", label: "Register", state: "manual_required", detail: "Self-sign registration and freeze stake into ValidatorQueue." },
       { id: "rotate", label: "Rotation", state: "not_started", detail: "Promotion into ActiveValidators happens through rotation and performance floors." },
       { id: "validate", label: "Validate", state: "not_started", detail: "Author BABE blocks, vote finality, host DA, and co-sign miner attestations." },
       { id: "recover", label: "Recover", state: "planned", detail: "Slashing, ejection cooldown, and rejoin flows require explicit chain/runtime handling." },
+    ],
+    integration_path: [
+      integrationStep("identity", "Validator DID", runtime.technocoreSignedMessages && runtime.technocoreDid ? "ready" : "manual_required", "Bind a durable operator DID to signed local records before registration or attestation authority exists.", yellowpaper.did_starter_url),
+      integrationStep("stake", "Stake and queue", options.walletConnected ? "manual_required" : "blocked", "Query live chain requirements, bond self-stake and enter the validator queue through an explicit wallet/runtime flow.", yellowpaper.validator_url),
+      integrationStep("da", "Data availability", configuredEnv("OSA_FLOP_DA_ENDPOINT") ? "manual_required" : "blocked", "Provision model-weight DA storage and serve-or-slash monitoring before any validator availability claim.", yellowpaper.validator_url),
+      integrationStep("consensus", "Consensus client", configuredEnv("OSA_FLOP_VALIDATOR_RPC") || boolEnv("OSA_FLOP_VALIDATOR_ENABLED") ? "manual_required" : "blocked", "Connect a FLOP/Substrate validator client, liveness monitor and committee rotation status once official endpoints are available.", yellowpaper.url),
+      integrationStep("attest", "Attestation quorum", "not_available", "Validator proof signing must wait for runtime-defined quorum, slashing and replay protections; this dashboard cannot sign attestations yet.", yellowpaper.url),
     ],
     readiness: checks,
     authority: {

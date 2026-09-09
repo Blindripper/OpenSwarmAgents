@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OSA</title>
+    <script>
+      (function () {
+        var routes = {
+          "projects": true,
+          "workspaces": true,
+          "miner": true,
+          "validator": true,
+          "work": true,
+          "market": true,
+          "deals": true,
+          "network": true,
+          "trust-vault": true,
+          "trust": true,
+          "vault": true
+        };
+        var path = window.location.pathname.replace(/^\/osa-network\/?/, "").replace(/^\/+/, "");
+        var slug = path.split("/")[0].toLowerCase();
+        var target = routes[slug] ? slug : "projects";
+        window.location.replace("/osa-network/#/" + target + window.location.search);
+      }());
+    </script>
+  </head>
+  <body></body>
+</html>

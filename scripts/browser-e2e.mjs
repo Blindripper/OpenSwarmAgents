@@ -57,6 +57,10 @@ try {
   assert(Array.isArray(top.agents) && top.agents.some((agent) => agent.target_id === "osa-example-reward-engine"), "fresh Top100 should include the example project");
   const balance = await getJson(`/api/wallet/balance?address=${testWalletAddress}`);
   assert(balance.balance_flop === null && balance.formatted === "Prelaunch" && balance.source === "flop_prelaunch", "wallet endpoint should honestly report FLOP prelaunch state");
+  const minerRedirect = await fetch(`${baseUrl}/miner`, { redirect: "manual" });
+  assert(minerRedirect.status === 302 && (minerRedirect.headers.get("location") || "").includes("/osa-network/#/miner"), "root /miner should redirect to the AgentGUI miner deep link");
+  const validatorDeepLink = await fetch(`${baseUrl}/osa-network/validator`);
+  assert(validatorDeepLink.ok && (validatorDeepLink.headers.get("content-type") || "").includes("text/html"), "/osa-network/validator should serve the AgentGUI shell instead of 404");
   let config = await getJson("/api/gui-config");
   const agentIds = config.agents.map((agent) => agent.id);
   for (const id of ["technocore-specialist", "coder", "bugfixer", "info-guy", "coinexpert", "graphicsexpert", "moneymaker", "security-expert", "explorer"]) {
@@ -487,11 +491,18 @@ try {
       version: 1,
       generated_at: "2026-09-08T14:30:00.000Z",
       yellowpaper: { url: "https://flop.finance/intro/yellowpaper/", sections: ["3", "4", "Appendix C"], summary: "Miners run attested inference, meter useful work, and settle only after verified receipts." },
+      sources: [
+        { label: "FLOP miner guide", url: "https://flop.finance/intro/miner/", note: "SOFT/HARD tiers and miner economics." },
+        { label: "Technocore DID Starter", url: "https://github.com/zunmax/technocore-did-starter#-share-the-contribution-", note: "DID and contribution trail." },
+        { label: "technocore-chat", url: "https://github.com/flop-labs/technocore-chat", note: "Rooms and signed KV lanes." }
+      ],
       mode: "readiness_only",
       overall_status: "blocked",
       readiness_score: 42,
       compute: { gpu_probe: browserFlopGpuProbe, cpu_threads: 16, memory_total_gb: 64, memory_free_gb: 32, cuda_visible: false },
+      economics: { base_self_stake: "10,000 FLOP plus capacity exposure bond", reward_share: "75% miner pool plus settled sessions", soft_tier: "ordinary GPU path", hard_tier: "optional confidential-computing path" },
       lifecycle: [{ id: "onboard", label: "Onboard", state: "manual_required", detail: "Bond stake, calibrate hardware, and register model availability." }],
+      integration_path: [{ id: "calibrate", label: "GPU calibration", state: "manual_required", detail: "Measure GPU throughput and model roots before capacity advertisement.", source: "https://flop.finance/intro/miner/" }],
       readiness: [{ id: "gpu", label: "GPU visibility", status: "ready", detail: "1 NVIDIA GPU visible.", evidence: null }, { id: "wallet", label: "Wallet / stake", status: "blocked", detail: "Wallet verification and on-chain stake are required.", evidence: null }],
       authority: { kind: "readiness_console_only", gpu_leasing: false, miner_registration: false, model_registration: false, session_acceptance: false, connector_spawning: false, payment: false, settlement: false, note: "This dashboard view does not lease GPU capacity, register stake, accept sessions, or claim payouts." },
     })
@@ -504,12 +515,18 @@ try {
       version: 1,
       generated_at: "2026-09-08T14:31:00.000Z",
       yellowpaper: { url: "https://flop.finance/intro/yellowpaper/", sections: ["15"], summary: "Validators author blocks, finalize, attest miner proofs, and host DA." },
+      sources: [
+        { label: "FLOP validator guide", url: "https://flop.finance/intro/validator/", note: "Stake, DA, active-set rotation and slashing." },
+        { label: "Technocore DID Starter", url: "https://github.com/zunmax/technocore-did-starter#-share-the-contribution-", note: "DID and contribution trail." }
+      ],
       mode: "readiness_only",
       overall_status: "blocked",
       readiness_score: 33,
       requirements: { self_stake_floor: "effective_minimum_stake; yellowpaper baseline 305,505 FLOP", min_self_stake_ratio: "20%", committee_gate: "recent verified PoUI work", heavy_duties: ["DA store-and-serve", "committee-keeping GPU work"] },
+      economics: { reward_share: "10% validator block-reward share", slash_risk: "dishonest blocks, invalid attestations or DA failures can slash stake" },
       compute: { gpu_probe: browserFlopGpuProbe, cpu_threads: 16, memory_total_gb: 64, memory_free_gb: 32, cuda_visible: false },
       lifecycle: [{ id: "register", label: "Register", state: "manual_required", detail: "Self-sign registration and freeze stake into ValidatorQueue." }],
+      integration_path: [{ id: "da", label: "Data availability", state: "blocked", detail: "Provision model-weight DA storage before validator claims.", source: "https://flop.finance/intro/validator/" }],
       readiness: [{ id: "stake", label: "Stake floor", status: "blocked", detail: "On-chain stake bonding is not available from the dashboard.", evidence: null }],
       authority: { kind: "readiness_console_only", validator_registration: false, stake_bonding: false, block_authoring: false, finality_voting: false, attestation_signing: false, da_publishing: false, payment: false, settlement: false, note: "This dashboard view does not bond stake, join committees, author blocks, sign attestations, host DA, or move FLOP." },
     })
@@ -849,15 +866,21 @@ try {
   await expectText(page, "body", "DID");
   await expectText(page, "body", "z6MkvG");
   assert(await page.getByRole("button", { name: "Copy" }).count() >= 1, "topbar should expose a copyable DID when signing is active");
-  await page.getByRole("button", { name: "Miner", exact: true }).click();
+  await page.goto(`${baseUrl}/osa-network/#/miner`, { waitUntil: "domcontentloaded" });
   await expectText(page, '[data-testid="flop-miner-panel"]', "Browser RTX Fixture");
+  await expectText(page, '[data-testid="flop-miner-panel"]', "Integration Path");
+  await expectText(page, '[data-testid="flop-miner-panel"]', "GPU calibration");
+  await expectText(page, '[data-testid="flop-miner-panel"]', "10,000 FLOP");
+  await expectText(page, '[data-testid="flop-miner-panel"]', "Technocore DID Starter");
   await expectText(page, '[data-testid="flop-miner-panel"]', "NO GPU LEASING");
   assert(!(await page.getByTestId("flop-miner-panel").innerText()).match(/privateKey|PRIVATE KEY|seed|secret|signature|\/home|\/tmp/i), "Miner UI should not render secrets or filesystem paths");
-  await page.getByRole("button", { name: "Validator", exact: true }).click();
+  await page.goto(`${baseUrl}/osa-network/validator`, { waitUntil: "domcontentloaded" });
   await expectText(page, '[data-testid="flop-validator-panel"]', "305,505 FLOP");
+  await expectText(page, '[data-testid="flop-validator-panel"]', "Data availability");
+  await expectText(page, '[data-testid="flop-validator-panel"]', "FLOP validator guide");
   await expectText(page, '[data-testid="flop-validator-panel"]', "NO STAKE BONDING");
   assert(!(await page.getByTestId("flop-validator-panel").innerText()).match(/privateKey|PRIVATE KEY|seed|secret|signature|\/home|\/tmp/i), "Validator UI should not render secrets or filesystem paths");
-  await page.getByRole("button", { name: "Network", exact: true }).click();
+  await page.getByRole("button", { name: /Network/ }).click();
   await expectText(page, "body", "Network");
   await expectText(page, '[data-testid="shared-workspaces"]', "Shared Workspace Rooms");
   await page.getByRole("checkbox", { name: "Acknowledge shared room disclosure" }).check();
@@ -921,7 +944,7 @@ try {
   await page.getByRole("button", { name: "Confirm and accept" }).click();
   await page.waitForFunction(() => Array.isArray(window.__subtaskClaims) && window.__subtaskClaims.some((item) => item.sessionId === "session-browser-subtask-1"));
   assert(browserSubtaskAcceptBody?.public_confirmation === true && browserSubtaskAcceptBody?.accept_confirmation === true, "accept flow should require the explicit confirmations");
-  await page.getByRole("button", { name: "Network", exact: true }).click();
+  await page.getByRole("button", { name: /Network/ }).click();
   await expectText(page, '[data-testid="subtask-delegations"]', "Authoritative completed result preview");
   await expectText(page, '[data-testid="subtask-delegations"]', "Browser authoritative completed result");
   await page.getByRole("button", { name: "Publish signed result" }).click();
@@ -932,13 +955,13 @@ try {
     page.getByRole("button", { name: "Confirm and publish" }).click(),
   ]);
   assert(browserSubtaskPublishBody?.public_confirmation === true && browserSubtaskPublishBody?.publish_confirmation === true, "result publish should require explicit confirmation");
-  await page.getByRole("button", { name: "Network", exact: true }).click();
+  await page.getByRole("button", { name: /Network/ }).click();
   await page.locator('[data-testid="subtask-delegations"]').getByRole("button", { name: "Results (1)" }).click();
   await expectText(page, '[data-testid="subtask-delegations"]', "Browser subtask signed result");
   assert(!browserSubtaskPublishBody?.result_text && !browserSubtaskPublishBody?.files && !browserSubtaskPublishBody?.secret, "result publish UI must send only the authoritative-result selector and confirmations");
   console.log("Subtask delegation browser flow passed.");
 
-  await page.getByRole("button", { name: "Deals", exact: true }).click();
+  await page.getByRole("button", { name: /Deals/ }).click();
   await page.getByRole("button", { name: "Accept Offer" }).click();
   await expectText(page, "body", "Browser TCLK workspace");
   assert((await getJson("/api/sessions")).some((session) => session.id === browserTclkSession.id) === false, "browser Accept test should not require a real backend task fixture");
@@ -1022,7 +1045,7 @@ try {
   await expectText(page, "body", "Canvas");
   await expectText(page, "body", "Start a desk to show project results.");
   await page.locator('button[title="Minimize chat"]').click();
-  await page.getByRole("button", { name: "Trust & Vault" }).click();
+  await page.getByRole("button", { name: /Trust/ }).click();
   await expectText(page, "body", "Capability Registry");
   await expectText(page, "body", "Local Agents");
   await expectText(page, "body", "technocore-specialist");
@@ -1041,7 +1064,7 @@ try {
   await page.getByRole("button", { name: "Confirm revoke" }).click();
   await expectText(page, "body", "REVOKED");
   assert(!(await page.locator("body").innerText()).match(/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}|\bsig\b/i), "Vault registry UI should not render raw signatures or signing material");
-  await page.getByRole("button", { name: "Market", exact: true }).click();
+  await page.getByRole("button", { name: /Market/ }).click();
   await expectText(page, '[data-testid="skill-registry"]', "Skill Registry");
   await expectText(page, '[data-testid="skill-registry"]', "Remote Coder");
   await expectText(page, '[data-testid="skill-registry"]', "CATALOG ONLY");
@@ -1053,7 +1076,7 @@ try {
   await expectText(page, '[data-testid="matchmaking"]', "RECOMMENDATION ONLY");
   await expectText(page, '[data-testid="matchmaking"]', "NO AUTO-BID");
   assert(!(await page.getByTestId("matchmaking").innerText()).match(/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}|\/home|\/tmp|[A-Za-z]:\\/i), "Matchmaking UI should not render signatures, key material, or filesystem paths");
-  await page.getByRole("button", { name: "Work", exact: true }).click();
+  await page.locator('button[data-section="work"]').click();
   await expectText(page, '[data-testid="federated-workbench"]', "Federated Workbench");
   await expectText(page, '[data-testid="federated-workbench"]', "Remote browser task");
   await expectText(page, '[data-testid="federated-workbench"]', "VERIFIED");
@@ -1072,7 +1095,7 @@ try {
   assert(browserFederatedImportBody?.confirmation === "import-federated-task" && browserFederatedImportBody?.idempotency_key, "Federated Workbench import should send only explicit confirmation and idempotency");
   assert(!browserFederatedImportBody?.command && !browserFederatedImportBody?.files && !browserFederatedImportBody?.connector && !browserFederatedImportBody?.payment, "Federated Workbench import UI must not send command/file/connector/payment fields");
   await expectText(page, "body", "Remote browser task");
-  await page.getByRole("button", { name: "Market", exact: true }).click();
+  await page.getByRole("button", { name: /Market/ }).click();
   await expectText(page, "body", "Find Agent by Skill");
   await page.getByRole("combobox", { name: "Skill search" }).fill("coding");
   await page.getByRole("button", { name: "Find Agents" }).click({ force: true });
@@ -1085,7 +1108,7 @@ try {
   assert(await page.getByTestId("skill-finder").count() === 0, "Using a local skill match should return to the existing pending Workspace flow");
   await page.waitForFunction(() => document.querySelector("textarea") === document.activeElement, null, { timeout: 1500 });
   assert(await page.locator("textarea").first().evaluate((element) => element === document.activeElement), "Skill Finder should focus the selected pending desk without starting work automatically");
-  await page.getByRole("button", { name: "Workspaces / Projects" }).click();
+  await page.getByRole("button", { name: /Projects/ }).click();
   await page.locator('button[title="Collapse canvas"]').click();
   await page.locator('button[title="Open result canvas"]').click();
   await page.locator('button[title="Settings"]').click();
@@ -1278,7 +1301,7 @@ try {
   await expectText(page, "body", "Browser Saved Project");
   const afterProjectSaveSessions = await getJson("/api/sessions");
   assert(afterProjectSaveSessions.some((session) => session.id === created.session_id), "Saving the workbench should not end existing private project sessions");
-  await page.getByRole("button", { name: "Deals", exact: true }).click();
+  await page.getByRole("button", { name: /Deals/ }).click();
   await expectText(page, "body", "Deals");
   await expectText(page, "body", "TCLK Offer Observer");
   await expectText(page, "body", "PAPER / NO VALUE");
@@ -1287,10 +1310,10 @@ try {
   await expectText(page, "body", "No PaperRail deals yet");
   await page.getByRole("button", { name: "Timeline", exact: true }).click();
   await expectText(page, "body", "No archived protocol records yet.");
-  await page.getByRole("button", { name: "Network", exact: true }).click();
+  await page.getByRole("button", { name: /Network/ }).click();
   await expectText(page, "body", "OSA shares");
   await expectText(page, "body", "Network chat message");
-  await page.getByRole("button", { name: "Trust & Vault" }).click();
+  await page.getByRole("button", { name: /Trust/ }).click();
   await expectText(page, "body", "Federated Reputation");
   await expectText(page, "body", "Accepted Results");
   await expectText(page, "body", "Counterparties");
@@ -1316,7 +1339,7 @@ try {
   assert(!afterDeleteSessions.some((session) => session.id === projectShare.project.id), "deleted projects should disappear from Latest Projects");
 
   assert(await page.getByRole("button", { name: "Reset" }).count() === 0, "Reset should not be exposed in the topbar");
-  await page.getByRole("button", { name: "Workspaces / Projects", exact: true }).click();
+  await page.getByRole("button", { name: /Projects/ }).click();
   await expectText(page, "body", "Browser Saved Project");
 
   assert(pageErrors.length === 0, `browser console/page errors: ${pageErrors.join("\n")}`);

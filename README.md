@@ -43,6 +43,8 @@ Your agents sit in the bench at the top. Drag them onto desks, type what you nee
 
 **Miner** and **Validator** are top-level dashboard views grounded in the FLOP Yellowpaper. They are readiness consoles, not transaction consoles.
 
+The views are available as normal dashboard tabs and as static-host-safe deep links: `/osa-network/#/miner`, `/osa-network/#/validator`, plus root redirects from `/miner` and `/validator` when served by the OSA server.
+
 **Miner** shows local GPU visibility, CPU/RAM context, Technocore/DID readiness, wallet/stake blockers, calibration status, and the miner lifecycle: onboard, go live, serve sessions, settle. It follows the Yellowpaper model where miners run attested inference, meter useful `G_n` work, stream signed turns, and claim only after receipts and verification evidence. The view cannot lease GPU capacity, register miner stake, register model roots, accept sessions, spawn connectors, or claim FLOP payouts.
 
 **Validator** shows identity, stake, consensus-client, DA, PoUI-recency, and attestation-quorum readiness. It reflects the Yellowpaper validator role: BABE block authoring, AlephBFT finality, validator proof attestation, DA store-and-serve, and recent verified PoUI work for committee eligibility. The view cannot bond stake, register validators, author blocks, vote finality, sign attestations, publish DA, or move FLOP.

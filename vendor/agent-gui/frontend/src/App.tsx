@@ -100,16 +100,53 @@ const ONBOARDING_DISMISSED_KEY = "osa-openclaw-onboarding-dismissed";
 const WALLET_STORAGE_KEY = "osa-wallet-session";
 const RESULT_CANVAS_OPEN_KEY = "osa-result-canvas-open";
 type DashboardTab = "workbench" | "miner" | "validator" | "work" | "market" | "deals" | "network" | "trustVault";
-const DASHBOARD_TABS: { id: DashboardTab; label: string }[] = [
-  { id: "workbench", label: "Workspaces / Projects" },
-  { id: "miner", label: "Miner" },
-  { id: "validator", label: "Validator" },
-  { id: "work", label: "Work" },
-  { id: "market", label: "Market" },
-  { id: "deals", label: "Deals" },
-  { id: "network", label: "Network" },
-  { id: "trustVault", label: "Trust & Vault" },
+const DASHBOARD_TABS: { id: DashboardTab; label: string; short: string; detail: string }[] = [
+  { id: "workbench", label: "Workspaces / Projects", short: "Workspaces / Projects", detail: "Local rooms and agent desks" },
+  { id: "miner", label: "Miner", short: "Miner", detail: "GPU readiness and PoUI path" },
+  { id: "validator", label: "Validator", short: "Validator", detail: "Stake, DA and quorum path" },
+  { id: "work", label: "Work", short: "Work", detail: "Jobs and federated tasks" },
+  { id: "market", label: "Market", short: "Market", detail: "Skills and matchmaking" },
+  { id: "deals", label: "Deals", short: "Deals", detail: "TCLK and PaperRail" },
+  { id: "network", label: "Network", short: "Network", detail: "Rooms and agent mail" },
+  { id: "trustVault", label: "Trust & Vault", short: "Trust & Vault", detail: "DID, reputation and policy" },
 ];
+const DASHBOARD_ROUTE_SLUGS: Record<DashboardTab, string> = {
+  workbench: "projects",
+  miner: "miner",
+  validator: "validator",
+  work: "work",
+  market: "market",
+  deals: "deals",
+  network: "network",
+  trustVault: "trust-vault",
+};
+const DASHBOARD_TABS_BY_SLUG = new Map<string, DashboardTab>([
+  ...Object.entries(DASHBOARD_ROUTE_SLUGS).map(([tab, slug]) => [slug, tab as DashboardTab] as const),
+  ["workspaces", "workbench"],
+  ["workspace", "workbench"],
+  ["projects", "workbench"],
+  ["trust", "trustVault"],
+  ["vault", "trustVault"],
+]);
+
+function dashboardTabFromSlug(value: string | null | undefined): DashboardTab | null {
+  const normalized = String(value || "").trim().toLowerCase().replace(/^\/+/, "").split(/[/?#]/)[0];
+  return DASHBOARD_TABS_BY_SLUG.get(normalized) || null;
+}
+
+function dashboardTabFromLocation(): DashboardTab {
+  const hashTab = dashboardTabFromSlug(window.location.hash.replace(/^#\/?/, ""));
+  if (hashTab) return hashTab;
+  const path = window.location.pathname
+    .replace(/^\/osa-network\/?/, "")
+    .replace(/^\/agent-gui\/?/, "")
+    .replace(/^\/+/, "");
+  return dashboardTabFromSlug(path) || "workbench";
+}
+
+function dashboardHref(tab: DashboardTab): string {
+  return `#/${DASHBOARD_ROUTE_SLUGS[tab]}`;
+}
 interface WalletSession {
   address: string;
   chain_id?: string | null;
@@ -483,7 +520,7 @@ export default function App() {
   const [justStartedId, setJustStartedId] = useState<string | null>(null);
   const [justStartedAnchor, setJustStartedAnchor] = useState<{ top: number; left: number } | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [dashboardTab, setDashboardTab] = useState<DashboardTab>("workbench");
+  const [dashboardTab, setDashboardTab] = useState<DashboardTab>(() => dashboardTabFromLocation());
   const [networkLive, setNetworkLive] = useState(false);
   const [networkNotice, setNetworkNotice] = useState<string | null>(null);
   const [networkEvents, setNetworkEvents] = useState<NetworkEvent[]>([]);
@@ -602,6 +639,16 @@ export default function App() {
   const sessionsRef = useRef<Session[]>([]);
   const workbenchRestoredRef = useRef(false);
   const projectScopedRef = useRef(false);
+
+  useEffect(() => {
+    const syncFromLocation = () => setDashboardTab(dashboardTabFromLocation());
+    window.addEventListener("hashchange", syncFromLocation);
+    window.addEventListener("popstate", syncFromLocation);
+    return () => {
+      window.removeEventListener("hashchange", syncFromLocation);
+      window.removeEventListener("popstate", syncFromLocation);
+    };
+  }, []);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -730,6 +777,15 @@ export default function App() {
     }
   }, []);
 
+  const selectDashboardTab = useCallback((tab: DashboardTab) => {
+    setDashboardTab(tab);
+    const nextHash = dashboardHref(tab);
+    if (window.location.hash !== nextHash) {
+      window.history.pushState(null, "", nextHash);
+    }
+    if (tab === "network") void refreshNetworkActivity();
+  }, [refreshNetworkActivity]);
+
   const refreshWalletBalance = useCallback(async () => {
     const wallet = readWalletSession();
     setWalletAddress(wallet?.address || null);
@@ -815,7 +871,7 @@ export default function App() {
   useEffect(() => {
     const handler = async (event: Event) => {
       const detail = (event as CustomEvent<{ sessionId: string; claim: Record<string, unknown> }>).detail;
-      setDashboardTab("workbench");
+      selectDashboardTab("workbench");
       if (!detail?.sessionId) {
         void loadSessions();
         return;
@@ -842,7 +898,7 @@ export default function App() {
       window.removeEventListener("osa:claim-job", handler);
       window.removeEventListener("osa:federated-workbench-import", handler);
     };
-  }, [loadSessions, HOME_TEAM_ID]);
+  }, [loadSessions, selectDashboardTab]);
 
   // Persist workbench to localStorage on every change
   useEffect(() => {
@@ -1414,7 +1470,7 @@ export default function App() {
     const assignedDeskId = Object.entries(pendingAssignments)
       .find(([deskId, assignment]) => assignment.agentId === agentId && Boolean(findDeskItem(teams, deskId)))?.[0];
     if (assignedDeskId) {
-      setDashboardTab("workbench");
+      selectDashboardTab("workbench");
       setActivePendingDeskId(assignedDeskId);
       setFocusedDeskId(assignedDeskId);
       queuePendingDeskTextareaFocus(assignedDeskId);
@@ -1450,7 +1506,7 @@ export default function App() {
       toolsEnabled: defaults.toolsEnabled,
       customized: false,
     });
-    setDashboardTab("workbench");
+    selectDashboardTab("workbench");
     setActivePendingDeskId(desk.id);
     setFocusedDeskId(desk.id);
     queuePendingDeskTextareaFocus(desk.id);
@@ -1564,7 +1620,7 @@ export default function App() {
       setTeams((prev) => mergeServerTeams(prev, nextSessions, {
         includeUnplacedPrivate: !projectScopedRef.current,
       }));
-      setDashboardTab("workbench");
+      selectDashboardTab("workbench");
     } catch (e) {
       window.alert((e as Error).message || "Couldn't copy this project into Home.");
     }
@@ -1738,7 +1794,7 @@ export default function App() {
       sessionsRef.current = latest.filter((session) => !privateSessionIds.includes(session.id));
       setSessions(sessionsRef.current);
       setTeams([makeHomeTeam()]);
-      setDashboardTab("workbench");
+      selectDashboardTab("workbench");
     } catch (e) {
       window.alert((e as Error).message || "Couldn't delete the current project.");
     }
@@ -1858,7 +1914,7 @@ export default function App() {
     }
     writeStoredItem(WORKBENCH_KEY_V2, raw);
     handleLoadSnapshot(name);
-    setDashboardTab("workbench");
+    selectDashboardTab("workbench");
   }
 
   function handleNewProject() {
@@ -1879,7 +1935,7 @@ export default function App() {
     setActiveSavedProject(null);
     clearActiveProjectUiState();
     setTeams([makeHomeTeam()]);
-    setDashboardTab("workbench");
+    selectDashboardTab("workbench");
   }
 
   const handleSearch = useCallback(async (q: string) => {
@@ -2178,19 +2234,20 @@ export default function App() {
       />
       <div style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
         <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <div className="osa-dashboard-tabs">
-        {DASHBOARD_TABS.map(({ id, label }) => (
+      <div className="osa-dashboard-tabs" role="navigation" aria-label="Dashboard sections">
+        {DASHBOARD_TABS.map(({ id, label, short, detail }) => (
           <button
             key={id}
             type="button"
-            onClick={() => {
-              setDashboardTab(id);
-              if (id === "network") void refreshNetworkActivity();
-            }}
+            onClick={() => selectDashboardTab(id)}
             className="osa-dashboard-tab"
             data-active={dashboardTab === id}
+            data-section={id}
+            title={`${label}: ${detail}`}
           >
-            {label}
+            <span className="osa-dashboard-tab-mark" aria-hidden="true" />
+            <span className="osa-dashboard-tab-main">{short}</span>
+            <span className="osa-dashboard-tab-detail">{detail}</span>
           </button>
         ))}
         {dashboardTab === "workbench" && <button

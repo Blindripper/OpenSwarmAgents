@@ -763,16 +763,33 @@ export interface FlopOperatorLifecycleStep {
   detail: string;
 }
 
+export interface FlopOperatorSourceRef {
+  label: string;
+  url: string;
+  note: string;
+}
+
+export interface FlopOperatorIntegrationStep {
+  id: string;
+  label: string;
+  state: "ready" | "manual_required" | "blocked" | "planned" | "not_available" | string;
+  detail: string;
+  source: string;
+}
+
 export interface FlopMinerOverview {
   schema: "osa-flop-miner-console/1" | string;
   version: number;
   generated_at: string;
   yellowpaper: { url: string; sections: string[]; summary: string };
+  sources?: FlopOperatorSourceRef[];
   mode: string;
   overall_status: string;
   readiness_score: number;
   compute: { gpu_probe: FlopGpuProbe; cpu_threads: number; memory_total_gb: number; memory_free_gb: number; cuda_visible: boolean };
+  economics?: { base_self_stake?: string; reward_share?: string; soft_tier?: string; hard_tier?: string; [key: string]: string | undefined };
   lifecycle: FlopOperatorLifecycleStep[];
+  integration_path?: FlopOperatorIntegrationStep[];
   readiness: FlopOperatorCheck[];
   authority: { kind: string; gpu_leasing: false; miner_registration: false; model_registration: false; session_acceptance: false; connector_spawning: false; payment: false; settlement: false; note: string };
 }
@@ -782,12 +799,15 @@ export interface FlopValidatorOverview {
   version: number;
   generated_at: string;
   yellowpaper: { url: string; sections: string[]; summary: string };
+  sources?: FlopOperatorSourceRef[];
   mode: string;
   overall_status: string;
   readiness_score: number;
   requirements: { self_stake_floor: string; min_self_stake_ratio: string; committee_gate: string; heavy_duties: string[] };
+  economics?: { validator_set?: string; reward_share?: string; governance?: string; slash_risk?: string; [key: string]: string | undefined };
   compute: { gpu_probe: FlopGpuProbe; cpu_threads: number; memory_total_gb: number; memory_free_gb: number; cuda_visible: boolean };
   lifecycle: FlopOperatorLifecycleStep[];
+  integration_path?: FlopOperatorIntegrationStep[];
   readiness: FlopOperatorCheck[];
   authority: { kind: string; validator_registration: false; stake_bonding: false; block_authoring: false; finality_voting: false; attestation_signing: false; da_publishing: false; payment: false; settlement: false; note: string };
 }

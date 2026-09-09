@@ -56,30 +56,81 @@ button {
 .osa-dashboard-tabs {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
+  gap: 10px;
+  padding: 10px 16px 12px;
   border-bottom: 1px solid var(--card-border);
-  background: linear-gradient(180deg, rgba(15, 22, 38, .98), rgba(9, 14, 26, .98));
+  background: linear-gradient(180deg, rgba(12, 18, 32, .98), rgba(8, 13, 24, .99));
   overflow-x: auto;
 }
 
 .osa-dashboard-tab {
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 6px;
-  border: 1px solid #2a3558;
-  background: #121828;
+  min-height: 48px;
+  min-width: 118px;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: center;
+  padding: 8px 11px;
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 105, .56);
+  background: rgba(15, 23, 42, .78);
   color: var(--text-dim);
   font-size: 12px;
   font-weight: 850;
   white-space: nowrap;
+  text-align: left;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+  transition: border-color .12s ease, background .12s ease, color .12s ease, transform .12s ease;
+}
+
+.osa-dashboard-tab:hover {
+  transform: translateY(-1px);
+  border-color: rgba(125, 211, 252, .52);
+  background: rgba(18, 27, 46, .98);
 }
 
 .osa-dashboard-tab[data-active="true"] {
-  border-color: rgba(15, 155, 186, .9);
-  background: linear-gradient(180deg, #0f9bba, #0b6f91);
+  border-color: rgba(126, 224, 194, .72);
+  background: linear-gradient(180deg, rgba(18, 42, 55, .98), rgba(10, 31, 39, .98));
   color: #fff;
-  box-shadow: 0 0 0 1px rgba(15, 155, 186, .22), 0 8px 26px rgba(15, 155, 186, .18);
+  box-shadow: 0 0 0 1px rgba(126, 224, 194, .16), 0 10px 28px rgba(0, 0, 0, .28);
+}
+
+.osa-dashboard-tab-mark {
+  grid-row: 1 / span 2;
+  width: 8px;
+  height: 28px;
+  border-radius: 999px;
+  background: #334155;
+}
+
+.osa-dashboard-tab[data-section="miner"] .osa-dashboard-tab-mark { background: #7ee0c2; }
+.osa-dashboard-tab[data-section="workbench"],
+.osa-dashboard-tab[data-section="trustVault"] { min-width: 178px; }
+.osa-dashboard-tab[data-section="validator"] .osa-dashboard-tab-mark { background: #facc15; }
+.osa-dashboard-tab[data-section="market"] .osa-dashboard-tab-mark { background: #93c5fd; }
+.osa-dashboard-tab[data-section="deals"] .osa-dashboard-tab-mark { background: #fca5a5; }
+.osa-dashboard-tab[data-section="network"] .osa-dashboard-tab-mark { background: #38bdf8; }
+.osa-dashboard-tab[data-section="trustVault"] .osa-dashboard-tab-mark { background: #c4b5fd; }
+
+.osa-dashboard-tab-main {
+  min-width: 0;
+  color: inherit;
+  font-weight: 950;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.osa-dashboard-tab-detail {
+  min-width: 0;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .osa-dashboard-page {
@@ -113,8 +164,20 @@ button {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 16px;
   align-items: center;
-  padding: 16px;
+  padding: 18px;
+  position: relative;
+  overflow: hidden;
 }
+
+.osa-page-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(126,224,194,.10), transparent 45%, rgba(250,204,21,.07));
+}
+
+.osa-page-hero > * { position: relative; }
 
 .osa-page-eyebrow {
   color: var(--accent2);
@@ -147,6 +210,146 @@ button {
   align-items: start;
 }
 
+.osa-stat-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.osa-stat-card {
+  min-height: 76px;
+  padding: 14px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+
+.osa-stat-card div {
+  color: #7ee0c2;
+  font-size: 25px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.osa-stat-card span {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.osa-operator-hero[data-kind="miner"] { border-color: rgba(126, 224, 194, .42); }
+.osa-operator-hero[data-kind="validator"] { border-color: rgba(250, 204, 21, .40); }
+
+.osa-operator-hero-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.osa-operator-card { padding: 14px; }
+
+.osa-operator-section-title {
+  color: #e2e8f0;
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.osa-operator-muted {
+  margin-top: 4px;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.osa-operator-timeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 10px;
+}
+
+.osa-operator-step {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 11px;
+  min-height: 136px;
+  padding: 12px;
+  border: 1px solid #24324f;
+  border-radius: 8px;
+  background: rgba(9, 17, 30, .74);
+}
+
+.osa-operator-step-index {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  border: 1px solid #2a3558;
+  background: #101827;
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.osa-operator-step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.osa-operator-step-head strong { color: #e2e8f0; font-size: 13px; }
+
+.osa-operator-step-copy {
+  margin-top: 7px;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.osa-operator-source-link {
+  display: inline-flex;
+  margin-top: 9px;
+  color: #7dd3fc;
+  font-size: 11px;
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.osa-source-grid,
+.osa-economics-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.osa-source-card,
+.osa-economics-item {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid #1e2a45;
+  border-radius: 8px;
+  background: #09111e;
+  text-decoration: none;
+}
+
+.osa-source-card strong,
+.osa-economics-item strong {
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.osa-source-card span,
+.osa-economics-item div {
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .osa-pill {
   display: inline-flex;
   align-items: center;
@@ -170,5 +373,9 @@ button {
   .osa-page-hero,
   .osa-dashboard-grid-2 {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .osa-dashboard-tab {
+    min-width: 106px;
   }
 }
