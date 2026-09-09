@@ -64,6 +64,10 @@ function jsonResponse(body: unknown, ok = true) {
   return Promise.resolve({ ok, json: () => Promise.resolve(body) } as Response);
 }
 
+function notFoundResponse() {
+  return Promise.resolve({ ok: false, status: 404, statusText: "Not Found", json: () => Promise.resolve({ detail: "not found" }) } as Response);
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -121,5 +125,15 @@ describe("SkillRegistryPanel", () => {
     await waitFor(() => expect(screen.getByText("Unsafe Claim")).toBeInTheDocument());
     expect(screen.getByText("UNTRUSTED")).toBeInTheDocument();
     expect(screen.getByText("Rejected: agent_signature_invalid")).toBeInTheDocument();
+  });
+
+  it("shows the built-in registry model instead of raw 404 text", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => notFoundResponse());
+    render(<SkillRegistryPanel />);
+
+    expect(await screen.findByText(/built-in Skill Registry model/i)).toBeInTheDocument();
+    expect(screen.getAllByText("Technocore Specialist").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Federated Miner Specialist").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("skill-registry").textContent).not.toMatch(/404|Not Found/i);
   });
 });

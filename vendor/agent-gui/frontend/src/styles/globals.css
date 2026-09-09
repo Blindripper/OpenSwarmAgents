@@ -179,6 +179,53 @@ button {
 
 .osa-page-hero > * { position: relative; }
 
+.osa-market-priority-card {
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 18px 55px rgba(37, 99, 235, .15), inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+
+.osa-market-priority-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: linear-gradient(180deg, #60a5fa, #7ee0c2);
+  opacity: .9;
+}
+
+.osa-market-priority-card > * {
+  position: relative;
+}
+
+.osa-explainer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 9px;
+}
+
+.osa-explainer-card {
+  display: grid;
+  gap: 5px;
+  padding: 10px 11px;
+  border: 1px solid rgba(96, 165, 250, .25);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, .72);
+  min-width: 0;
+}
+
+.osa-explainer-card strong {
+  color: #dbeafe;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.osa-explainer-card span {
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .osa-page-eyebrow {
   color: var(--accent2);
   font-size: 11px;

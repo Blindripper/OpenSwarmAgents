@@ -7,6 +7,77 @@ type Overview = FlopMinerOverview | FlopValidatorOverview;
 
 const buttonStyle = { height: 32, padding: "0 12px", borderRadius: 6, border: "1px solid #2563eb", background: "#10204a", color: "#bfdbfe", fontSize: 12, fontWeight: 900, cursor: "pointer" } as const;
 
+const fallbackGpuProbe = { available: false, source: "browser fallback", error: "Live OSA backend is not connected to this page.", gpus: [] };
+
+function baseFallback(kind: Kind) {
+  const generated = new Date().toISOString();
+  const common = {
+    version: 1,
+    generated_at: generated,
+    mode: "offline_explainer",
+    overall_status: "manual_required",
+    readiness_score: 18,
+    compute: { gpu_probe: fallbackGpuProbe, cpu_threads: 0, memory_total_gb: 0, memory_free_gb: 0, cuda_visible: false },
+    sources: [
+      { label: "FLOP yellowpaper", url: "https://flop.finance/intro/yellowpaper/", note: "PoUI, miner settlement, validator committees, DA and slashing model." },
+      { label: "Technocore DID Starter", url: "https://github.com/zunmax/technocore-did-starter#-share-the-contribution-", note: "DID-backed contribution proof pattern for public operator reputation." },
+      { label: "technocore-chat", url: "https://github.com/flop-labs/technocore-chat", note: "Signed rooms and KV records for bounded public operator descriptors." },
+    ],
+    authority: kind === "miner"
+      ? { kind: "offline_readiness_console_only", gpu_leasing: false, miner_registration: false, model_registration: false, session_acceptance: false, connector_spawning: false, payment: false, settlement: false, note: "Offline mode explains the integration path only; it cannot inspect hardware or register a FLOP miner." }
+      : { kind: "offline_readiness_console_only", validator_registration: false, stake_bonding: false, block_authoring: false, finality_voting: false, attestation_signing: false, da_publishing: false, payment: false, settlement: false, note: "Offline mode explains the integration path only; it cannot bond stake, join committees or sign validator attestations." },
+  };
+  if (kind === "miner") {
+    return {
+      ...common,
+      schema: "osa-flop-miner-console/1",
+      yellowpaper: { url: "https://flop.finance/intro/yellowpaper/", sections: ["3", "4", "6.1", "7", "8", "12", "Appendix C"], summary: "Miner mode turns local GPU capacity into attested inference work: publish identity, calibrate hardware, serve signed sessions, then settle only after receipts and validator proofs." },
+      economics: { base_self_stake: "10,000 FLOP plus a capacity exposure bond", reward_share: "G_n work rewards plus session settlement after verified receipts", soft_tier: "standard GPU benchmark path", hard_tier: "confidential-compute path with measured model roots" },
+      lifecycle: [
+        { id: "identity", label: "Identity", state: "manual_required", detail: "Bind this node to a durable did:key before advertising capacity." },
+        { id: "calibrate", label: "Calibration", state: "manual_required", detail: "Measure GPU throughput, model roots and TOPLOC/PoUI evidence." },
+        { id: "serve", label: "Serve", state: "not_started", detail: "Accept sessions only after the runtime can meter work and retain signed receipts." },
+        { id: "settle", label: "Settle", state: "not_available", detail: "FLOP settlement needs validator attestation quorum and replay protection." },
+      ],
+      integration_path: [
+        { id: "did", label: "Create operator DID", state: "manual_required", detail: "Use the Technocore DID pattern to bind the local node to signed contribution records.", source: "https://github.com/zunmax/technocore-did-starter#-share-the-contribution-" },
+        { id: "record", label: "Publish signed availability", state: "planned", detail: "Write bounded miner descriptors to Technocore rooms/KV once official fields are finalized.", source: "https://github.com/flop-labs/technocore-chat" },
+        { id: "gpu", label: "Calibrate GPU", state: "manual_required", detail: "Benchmark model throughput, roots and capacity before any public miner claim.", source: "https://flop.finance/intro/yellowpaper/" },
+        { id: "settlement", label: "Wire PoUI settlement", state: "not_available", detail: "Require co-signed transcript roots, receipts, validator quorum and replay guards before payouts.", source: "https://flop.finance/intro/yellowpaper/" },
+      ],
+      readiness: [
+        { id: "api", label: "Live OSA backend", status: "blocked", detail: "This page cannot reach the miner status endpoint, so hardware and wallet state are not live.", evidence: null },
+        { id: "identity", label: "DID contribution trail", status: "manual", detail: "Operator identity and signed public contribution history are required before advertisement.", evidence: null },
+        { id: "safety", label: "Execution boundary", status: "ready", detail: "Dashboard remains read-only and does not lease GPU capacity or move FLOP.", evidence: null },
+      ],
+    } as FlopMinerOverview;
+  }
+  return {
+    ...common,
+    schema: "osa-flop-validator-console/1",
+    yellowpaper: { url: "https://flop.finance/intro/yellowpaper/", sections: ["2", "3.6", "5.3", "13.2", "15"], summary: "Validator mode is the security role: stake, DA service, committee rotation, block/finality participation and attestation quorum for miner proofs." },
+    requirements: { self_stake_floor: "effective_minimum_stake; yellowpaper baseline 305,505 FLOP", min_self_stake_ratio: "20% self-stake ratio", committee_gate: "active validator plus recent verified PoUI work", heavy_duties: ["DA store-and-serve", "committee liveness", "attestation review"] },
+    economics: { validator_set: "rotating active validator set", reward_share: "validator reward slice after finalized runtime rules", governance: "active validators gate protocol changes", slash_risk: "dishonest blocks, DA failure and invalid attestations are slashable" },
+    lifecycle: [
+      { id: "identity", label: "Identity", state: "manual_required", detail: "Bind operator DID and contribution history before any registration flow." },
+      { id: "stake", label: "Stake", state: "manual_required", detail: "Bond self-stake through an explicit wallet/runtime flow, never from this offline dashboard." },
+      { id: "da", label: "DA", state: "blocked", detail: "Provision store-and-serve data availability before validator claims." },
+      { id: "attest", label: "Attest", state: "not_available", detail: "Attestation signing waits for official quorum, replay and slashing protections." },
+    ],
+    integration_path: [
+      { id: "did", label: "Bind validator DID", state: "manual_required", detail: "Use signed DID records to identify the operator and preserve contribution evidence.", source: "https://github.com/zunmax/technocore-did-starter#-share-the-contribution-" },
+      { id: "queue", label: "Stake into validator queue", state: "manual_required", detail: "Query live chain parameters and bond stake only via explicit wallet confirmation.", source: "https://flop.finance/intro/yellowpaper/" },
+      { id: "da", label: "Serve data availability", state: "blocked", detail: "Host and prove model-weight DA before active-set availability claims.", source: "https://flop.finance/intro/yellowpaper/" },
+      { id: "attest", label: "Join attestation quorum", state: "not_available", detail: "Only official runtime rules can enable attestation signing and slashing-aware voting.", source: "https://flop.finance/intro/yellowpaper/" },
+    ],
+    readiness: [
+      { id: "api", label: "Live OSA backend", status: "blocked", detail: "This page cannot reach the validator status endpoint, so chain and node state are not live.", evidence: null },
+      { id: "stake", label: "Stake and queue", status: "manual", detail: "Validator onboarding requires explicit wallet/runtime confirmation and cannot be inferred from a static page.", evidence: null },
+      { id: "safety", label: "Execution boundary", status: "ready", detail: "Dashboard does not bond stake, author blocks or sign attestations.", evidence: null },
+    ],
+  } as FlopValidatorOverview;
+}
+
 function tone(status: string): "good" | "warn" | "bad" | "blue" | undefined {
   if (status === "ready") return "good";
   if (status === "manual" || status === "manual_required" || status === "warning") return "warn";
@@ -142,8 +213,9 @@ function OperatorPage({ kind }: { kind: Kind }) {
     setError(null);
     try {
       setView(kind === "miner" ? await api.flop.miner() : await api.flop.validator());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "FLOP operator status unavailable");
+    } catch {
+      setView(baseFallback(kind));
+      setError("Live OSA backend is not available here. Showing the built-in FLOP/Technocore integration plan instead of a raw API error.");
     } finally {
       setLoading(false);
     }

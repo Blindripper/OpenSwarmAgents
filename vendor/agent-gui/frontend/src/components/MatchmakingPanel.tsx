@@ -4,6 +4,80 @@ import type { MatchmakingCandidate, MatchmakingEntry, MatchmakingOverview } from
 
 const button = { height: 32, padding: "0 11px", borderRadius: 6, border: "1px solid #2563eb", background: "#10204a", color: "#bfdbfe", fontSize: 11, fontWeight: 900, cursor: "pointer" } as const;
 const badgeBase = { padding: "3px 7px", borderRadius: 6, fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" } as const;
+const offlineMessage = "Live OSA backend is not available here. Showing the built-in Matchmaking model instead of a raw API error.";
+
+function fallbackMatchmakingView(): MatchmakingOverview {
+  return {
+    schema: "osa-matchmaking/1",
+    version: 1,
+    generated_at: new Date().toISOString(),
+    query: { job_id: null, include_claimed: false, include_stale: false, include_untrusted: false },
+    policy: {
+      source_of_truth: "osa-skill-registry/1 + canonical job views",
+      matching: "deterministic_skill_overlap_trust_reputation_rank",
+      signature_meaning: "provider identity and record integrity only, not quality guarantee",
+      authority: "recommendation_only",
+      remote_execution: false,
+      connector_spawning: false,
+      auto_bidding: false,
+      payment: false,
+      settlement: false,
+    },
+    status: { job_count: 1, matched_count: 1, partial_count: 0, no_match_count: 0, provider_count: 2, available_skill_count: 4, registry_schema: "osa-skill-registry/1" },
+    matches: [{
+      id: "matchmaking-offline-demo",
+      job: {
+        id: "offline:example-job",
+        source: "local",
+        room: "offline",
+        seq: "example-job",
+        title: "Example: build a wallet-safe FLOP miner dashboard",
+        preview: "Matchmaking reads the job text, extracts required skills, ranks local and federated providers, and explains missing capability or trust gaps before any market action exists.",
+        text_hash: "offline-demo",
+        required_skills: ["coding", "testing", "security_review", "technocore"],
+        observed_at: null,
+        claimed: false,
+      },
+      candidate_count: 2,
+      top_score: 94,
+      status: "matched",
+      candidates: [
+        {
+          provider_id: "offline:local:coder",
+          agent_id: "coder",
+          name: "Local Coder Profile",
+          source: "local",
+          node_id: "this-node",
+          did: "did:key:local-preview",
+          score: 94,
+          eligible: true,
+          matched_skills: ["coding", "testing", "security_review"],
+          missing_skills: ["technocore"],
+          verification: { state: "verified", verified: true, stale: false, label: "LOCAL PROFILE" },
+          reputation: { status: "local_signed_record", evidence_count: 0 },
+          authority: { kind: "local_selectable", selectable_for_local_workspace: true, remote_execution: false, connector_spawning: false, auto_bidding: false, payment: false },
+          reasons: ["local workspace profile", "matches implementation skills", "missing technocore specialization"],
+        },
+        {
+          provider_id: "offline:federated:technocore-specialist",
+          agent_id: "technocore-specialist",
+          name: "Federated Technocore Specialist",
+          source: "federated",
+          node_id: "remote-node-preview",
+          did: "did:key:remote-preview",
+          score: 88,
+          eligible: true,
+          matched_skills: ["technocore", "security_review"],
+          missing_skills: ["coding", "testing"],
+          verification: { state: "verified", verified: true, stale: false, label: "CATALOG VERIFIED" },
+          reputation: { status: "signed_record", evidence_count: 0 },
+          authority: { kind: "recommendation_only", selectable_for_local_workspace: false, remote_execution: false, connector_spawning: false, auto_bidding: false, payment: false },
+          reasons: ["federated catalog provider", "recommendation only", "no remote execution authority"],
+        },
+      ],
+    }],
+  };
+}
 
 function badge(kind: string): import("react").CSSProperties {
   const color = kind === "local"
@@ -88,8 +162,9 @@ export function MatchmakingPanel() {
     setError(null);
     try {
       setView(await api.matchmaking.overview({ include_stale: nextUnsafe, include_untrusted: nextUnsafe, include_claimed: nextClaimed, limit: 24, candidate_limit: 4 }));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Matchmaking unavailable");
+    } catch {
+      setView(fallbackMatchmakingView());
+      setError(offlineMessage);
     } finally {
       setLoading(false);
     }
@@ -98,13 +173,18 @@ export function MatchmakingPanel() {
   useEffect(() => { void load(false, false); }, []);
   const matches = useMemo(() => view?.matches || [], [view]);
 
-  return <section data-testid="matchmaking" style={{ border: "1px solid #2563eb", borderRadius: 10, padding: 14, background: "rgba(10,20,40,.96)", display: "grid", gap: 12 }}>
+  return <section data-testid="matchmaking" className="osa-market-priority-card" style={{ border: "1px solid #2563eb", borderRadius: 10, padding: 14, background: "rgba(10,20,40,.96)", display: "grid", gap: 12 }}>
     <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
       <div>
-        <strong style={{ fontSize: 17 }}>Matchmaking</strong>
-        <div style={{ marginTop: 4, color: "#94a3b8", fontSize: 12 }}>Job-to-agent recommendations from the Skill Registry.</div>
+        <strong style={{ fontSize: 18 }}>Matchmaking</strong>
+        <div style={{ marginTop: 4, color: "#94a3b8", fontSize: 12, maxWidth: 780 }}>The first market screen: read open jobs, infer required skills, rank local and federated providers by skill overlap, verified provenance and reputation evidence. Output is a reasoned recommendation, not an automatic bid or execution.</div>
       </div>
       <button type="button" onClick={() => void load()} style={button}>{loading ? "Loading..." : "Refresh"}</button>
+    </div>
+    <div className="osa-explainer-grid">
+      <div className="osa-explainer-card"><strong>1. Job signals</strong><span>Title, body and explicit Skills fields become bounded required-skill hints.</span></div>
+      <div className="osa-explainer-card"><strong>2. Provider ranking</strong><span>Skill Registry providers are scored by overlap, trust state, local availability and reputation evidence.</span></div>
+      <div className="osa-explainer-card"><strong>3. Human gate</strong><span>Recommendations do not claim jobs, start connectors, send bids, move files or settle FLOP.</span></div>
     </div>
     <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
       <label style={{ display: "flex", gap: 7, alignItems: "center", color: "#94a3b8", fontSize: 11 }}>
@@ -116,7 +196,7 @@ export function MatchmakingPanel() {
         Include stale and untrusted providers
       </label>
     </div>
-    {error && <div role="alert" style={{ color: "#fca5a5", fontSize: 12 }}>{error}</div>}
+    {error && <div role="status" className="osa-dashboard-card" style={{ padding: 10, color: "#fde68a", borderColor: "#a16207", background: "#1f1b10", fontSize: 12 }}>{error}</div>}
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
       <span style={badge("matched")}>{view?.status.matched_count || 0} matched</span>
       <span style={badge("partial")}>{view?.status.partial_count || 0} partial</span>

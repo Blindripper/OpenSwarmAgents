@@ -547,11 +547,15 @@ Returns the Phase-5.1 machine-readable `osa-skill-registry/1` catalog derived fr
 
 Provider rows include sanitized display data, node id, agent id, agent DID, normalized skill claims, KV path and payload hash, local/Technocore provenance, verification/staleness state, rejection reason when untrusted, exact node+agent+DID reputation context, and an authority block. Fresh verified local providers may be marked `local_workspace_profile` for a later human-selected workspace flow; every federated, stale, or untrusted provider remains `catalog_only`. The registry never returns raw signatures, signing keys, seeds, connector credentials, result bodies, deal secrets, private task bodies, filesystem paths, or unhashed counterparties, and it never starts work, claims remote tasks, spawns connectors, auto-bids, or creates payment obligations.
 
+AgentGUI handles missing or stale deployments of this endpoint fail-soft: a static page that receives `404 Not Found` renders a built-in registry explanation/model instead of exposing the raw HTTP error in the dashboard. Live OSA nodes still use this endpoint for authoritative local projections.
+
 `GET /api/matchmaking?job_id=kibble:42&include_claimed=0&include_stale=0&include_untrusted=0&limit=30&candidate_limit=5`
 
 Returns the Phase-5.2 `osa-matchmaking/1` recommendation view. It derives open local and Technocore job rows from the existing `/api/jobs` sources, infers bounded required skill hints from job text or explicit `Skills:`/`Capabilities:` fields, then ranks providers from `osa-skill-registry/1` by skill overlap, verification state, local availability, and exact-identity reputation evidence. `job_id` narrows to one local job sequence or `<room>:<seq>` Technocore job id, `include_claimed` includes already claimed jobs, `limit` is bounded to 1-100 jobs, and `candidate_limit` is bounded to 1-20 candidates per job.
 
 The response contains sanitized job previews, SHA-256 text hashes, required skill keys, top score/status, candidate node id + agent id + DID bindings, matched/missing skills, verification state, reputation evidence volume, and authority flags. It is recommendation-only: reading matchmaking never creates claims, starts sessions, spawns connectors, sends bids, publishes frames, shares files, or creates payment/settlement obligations. Fresh verified local candidates may be marked `local_selectable` metadata for later explicit human-driven flows. Federated, stale, or untrusted candidates remain `recommendation_only`; stale/untrusted providers are excluded by default unless explicitly requested for inspection.
+
+AgentGUI shows Matchmaking as the first Market card. If this endpoint returns `404 Not Found` on a static/old deployment, the UI renders a built-in explanation and example recommendation model rather than raw error text.
 
 `GET /api/flop/miner`
 
@@ -560,6 +564,8 @@ Returns the `osa-flop-miner-console/1` readiness view, grounded in the FLOP Yell
 `GET /api/flop/validator`
 
 Returns the `osa-flop-validator-console/1` readiness view, grounded in the FLOP Yellowpaper validator sections. It reports identity readiness, stake-floor/manual bonding requirements, consensus-client and DA configuration checks, recent PoUI-work readiness, local compute context, lifecycle steps, economics, source links, integration-path checkpoints, and authority flags. The view is informational only: it cannot bond stake, register validators, author blocks, vote finality, sign attestations, host or publish DA, start mining backends, claim rewards, or move FLOP.
+
+AgentGUI uses built-in FLOP/Technocore operator guidance if either FLOP endpoint is unavailable, so Miner and Validator tabs remain readable on static deployments while clearly marking that live hardware, wallet, chain, and DA state are not connected.
 
 `GET /api/agents/find?skill=coding,testing&source=all&include_stale=0&include_untrusted=0&limit=50`
 

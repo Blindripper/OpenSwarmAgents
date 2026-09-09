@@ -105,7 +105,7 @@ const DASHBOARD_TABS: { id: DashboardTab; label: string; short: string; detail: 
   { id: "miner", label: "Miner", short: "Miner", detail: "GPU readiness and PoUI path" },
   { id: "validator", label: "Validator", short: "Validator", detail: "Stake, DA and quorum path" },
   { id: "work", label: "Work", short: "Work", detail: "Jobs and federated tasks" },
-  { id: "market", label: "Market", short: "Market", detail: "Skills and matchmaking" },
+  { id: "market", label: "Market", short: "Market", detail: "Matchmaking first, then skills" },
   { id: "deals", label: "Deals", short: "Deals", detail: "TCLK and PaperRail" },
   { id: "network", label: "Network", short: "Network", detail: "Rooms and agent mail" },
   { id: "trustVault", label: "Trust & Vault", short: "Trust & Vault", detail: "DID, reputation and policy" },
@@ -2404,11 +2404,11 @@ export default function App() {
               <div>
                 <div className="osa-page-eyebrow">Discovery and routing</div>
                 <div className="osa-page-title">Market</div>
-                <div className="osa-page-copy">Skill Registry, deterministic matchmaking and agent discovery. Federated results remain catalog or recommendation data until later bidding phases.</div>
+                <div className="osa-page-copy">Matchmaking is the main market view: open jobs are ranked against local and federated skill providers, with Skill Registry and agent discovery underneath. Federated results remain catalog or recommendation data until later bidding phases.</div>
               </div>
             </header>
-            <SkillRegistryPanel />
             <MatchmakingPanel />
+            <SkillRegistryPanel />
             <SkillFinderPanel onUseLocalAgent={useLocalAgentFromSkillFinder} />
           </div>
         </div>

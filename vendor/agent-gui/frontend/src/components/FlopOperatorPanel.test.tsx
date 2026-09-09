@@ -47,6 +47,10 @@ function jsonResponse(body: unknown) {
   return Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response);
 }
 
+function notFoundResponse() {
+  return Promise.resolve({ ok: false, status: 404, statusText: "Not Found", json: () => Promise.resolve({ detail: "not found" }) } as Response);
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("FlopOperatorPanel", () => {
@@ -80,5 +84,15 @@ describe("FlopOperatorPanel", () => {
     expect(screen.getByText("NO STAKE BONDING")).toBeInTheDocument();
     expect(screen.getByText("NO ATTESTATION SIGNING")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /start|stake|register|attest|author/i })).not.toBeInTheDocument();
+  });
+
+  it("shows a useful built-in operator guide instead of raw 404 text", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => notFoundResponse());
+    render(<MinerPanel />);
+
+    expect(await screen.findByText(/built-in FLOP\/Technocore integration plan/i)).toBeInTheDocument();
+    expect(screen.getByText("Create operator DID")).toBeInTheDocument();
+    expect(screen.getByText("Wire PoUI settlement")).toBeInTheDocument();
+    expect(screen.getByTestId("flop-miner-panel").textContent).not.toMatch(/404|Not Found/i);
   });
 });

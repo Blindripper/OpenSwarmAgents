@@ -57,6 +57,10 @@ function jsonResponse(body: unknown, ok = true) {
   return Promise.resolve({ ok, json: () => Promise.resolve(body) } as Response);
 }
 
+function notFoundResponse() {
+  return Promise.resolve({ ok: false, status: 404, statusText: "Not Found", json: () => Promise.resolve({ detail: "not found" }) } as Response);
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -92,5 +96,15 @@ describe("MatchmakingPanel", () => {
     await waitFor(() => expect(screen.getByText("Unsafe Claim")).toBeInTheDocument());
     expect(screen.getByText("UNTRUSTED")).toBeInTheDocument();
     expect(screen.getAllByText("RECOMMENDATION ONLY").length).toBeGreaterThan(0);
+  });
+
+  it("shows the built-in recommendation model instead of raw 404 text", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => notFoundResponse());
+    render(<MatchmakingPanel />);
+
+    expect(await screen.findByText(/built-in Matchmaking model/i)).toBeInTheDocument();
+    expect(screen.getByText("Example: build a wallet-safe FLOP miner dashboard")).toBeInTheDocument();
+    expect(screen.getByText("Federated Technocore Specialist")).toBeInTheDocument();
+    expect(screen.getByTestId("matchmaking").textContent).not.toMatch(/404|Not Found/i);
   });
 });

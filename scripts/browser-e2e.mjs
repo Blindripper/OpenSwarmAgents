@@ -1065,6 +1065,12 @@ try {
   await expectText(page, "body", "REVOKED");
   assert(!(await page.locator("body").innerText()).match(/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}|\bsig\b/i), "Vault registry UI should not render raw signatures or signing material");
   await page.getByRole("button", { name: /Market/ }).click();
+  const marketOrder = await page.evaluate(() => {
+    const match = document.querySelector('[data-testid="matchmaking"]');
+    const registry = document.querySelector('[data-testid="skill-registry"]');
+    return Boolean(match && registry && match.compareDocumentPosition(registry) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  assert(marketOrder, "Matchmaking should render above Skill Registry in the Market dashboard");
   await expectText(page, '[data-testid="skill-registry"]', "Skill Registry");
   await expectText(page, '[data-testid="skill-registry"]', "Remote Coder");
   await expectText(page, '[data-testid="skill-registry"]', "CATALOG ONLY");

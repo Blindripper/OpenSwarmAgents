@@ -6,6 +6,72 @@ type Source = "all" | "local" | "federated";
 
 const button = { height: 32, padding: "0 11px", borderRadius: 6, border: "1px solid #2a8c72", background: "#10251f", color: "#7ee0c2", fontSize: 11, fontWeight: 900, cursor: "pointer" } as const;
 const field = { height: 34, borderRadius: 7, border: "1px solid #2a3558", background: "#111827", color: "#e5e7eb", fontSize: 12, padding: "0 10px", minWidth: 0 } as const;
+const offlineMessage = "Live OSA backend is not available here. Showing the built-in Skill Registry model instead of a raw API error.";
+
+function fallbackProvider(overrides: Partial<SkillRegistryProvider> = {}): SkillRegistryProvider {
+  return {
+    id: "offline:local:technocore-specialist",
+    source: "local",
+    agent_id: "technocore-specialist",
+    name: "Technocore Specialist",
+    tagline: "Local profile for protocol-shaped coding, testing, research and OSA coordination.",
+    did: "did:key:local-preview",
+    node_id: "this-node",
+    skills: ["technocore", "coding", "testing", "security_review", "research"],
+    eligible: true,
+    verification: { verified: true, stale: false, state: "verified", label: "LOCAL PROFILE", note: "Local preview record; live backend verifies signed records." },
+    provenance: { kind: "local", kv_path: null, payload_hash: "offline-preview", last_seen_at: null },
+    reputation: { status: "offline_preview", label: "OFFLINE PREVIEW", verified: false, stale: false, counts: { accepted_results: 0, verified_job_results: 0, claimed_deals: 0, refunded_deals: 0, disputed_deals: 0, unique_counterparties: 0 }, note: "Connect the live OSA backend for exact reputation joins." },
+    authority: { kind: "local_workspace_profile", selectable_for_local_workspace: true, remote_execution: false, connector_spawning: false, auto_bidding: false, payment: false, note: "Human selectable only when live backend is connected." },
+    ...overrides,
+  };
+}
+
+function fallbackSkillRegistryView(): SkillRegistryOverview {
+  const local = fallbackProvider();
+  const remote = fallbackProvider({
+    id: "offline:federated:remote-miner-specialist",
+    source: "federated",
+    agent_id: "remote-miner-specialist",
+    name: "Federated Miner Specialist",
+    tagline: "Example remote provider claim for GPU calibration, signed contribution proof and PoUI review.",
+    did: "did:key:remote-preview",
+    node_id: "remote-node-preview",
+    skills: ["gpu_calibration", "technocore", "security_review", "research"],
+    authority: { kind: "catalog_only", selectable_for_local_workspace: false, remote_execution: false, connector_spawning: false, auto_bidding: false, payment: false, note: "Catalog only; remote work needs later explicit bidding and settlement phases." },
+  });
+  const providers = [local, remote];
+  return {
+    schema: "osa-skill-registry/1",
+    version: 1,
+    generated_at: new Date().toISOString(),
+    query: { raw: "", skills: [], source: "all", include_stale: false, include_untrusted: false },
+    policy: { source_of_truth: "osa-capability-registry/1", reputation_context: "exact_node_agent_did_join", signature_meaning: "authorship_and_integrity_not_endorsement_or_skill_truth", default_visibility: "fresh_verified_claims_only", authority: "catalog_only", matching_phase: "Consumed by Matchmaking; does not start work by itself.", remote_execution: false, connector_spawning: false, auto_bidding: false, payment: false },
+    status: { capability_scan: "offline_preview", capability_error: null, reputation_scan: "offline_preview", reputation_error: null, available_skill_count: 6, skill_count: 3, provider_count: providers.length, excluded: { untrusted: 0, stale: 0 } },
+    available_skills: ["coding", "gpu_calibration", "research", "security_review", "technocore", "testing"],
+    providers,
+    skills: ["technocore", "security_review", "gpu_calibration"].map((skill) => {
+      const skillProviders = providers.filter((provider) => provider.skills.includes(skill));
+      return {
+        id: `offline-skill-${skill}`,
+        schema: "osa-skill/1",
+        version: 1,
+        skill,
+        label: skill.replace(/_/g, " "),
+        provider_count: skillProviders.length,
+        eligible_provider_count: skillProviders.filter((provider) => provider.eligible).length,
+        local_provider_count: skillProviders.filter((provider) => provider.source === "local").length,
+        federated_provider_count: skillProviders.filter((provider) => provider.source === "federated").length,
+        verified_provider_count: skillProviders.length,
+        stale_provider_count: 0,
+        untrusted_provider_count: 0,
+        reputation_evidence_count: 0,
+        reputation_counts: local.reputation.counts,
+        providers: skillProviders,
+      };
+    }),
+  };
+}
 
 function badge(state: string): import("react").CSSProperties {
   const palette = state === "local"
@@ -71,8 +137,9 @@ export function SkillRegistryPanel() {
     setError(null);
     try {
       setView(await api.skillRegistry.overview({ skill: nextQuery, source: nextSource, include_stale: nextUnsafe, include_untrusted: nextUnsafe, limit: 24, provider_limit: 6 }));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Skill Registry unavailable");
+    } catch {
+      setView(fallbackSkillRegistryView());
+      setError(offlineMessage);
     } finally {
       setLoading(false);
     }
@@ -87,9 +154,14 @@ export function SkillRegistryPanel() {
     <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
       <div>
         <strong style={{ fontSize: 17 }}>Skill Registry</strong>
-        <div style={{ marginTop: 4, color: "#94a3b8", fontSize: 12 }}>Machine-readable skill catalog derived from signed Capability Registry records.</div>
+        <div style={{ marginTop: 4, color: "#94a3b8", fontSize: 12, maxWidth: 760 }}>The provider catalog behind Matchmaking: signed capability records become normalized skill descriptors with exact node, agent and DID bindings, plus reputation context and authority flags.</div>
       </div>
       <button type="button" onClick={() => void load()} style={button}>{loading ? "Loading..." : "Refresh"}</button>
+    </div>
+    <div className="osa-explainer-grid">
+      <div className="osa-explainer-card"><strong>Capability source</strong><span>Local and federated agents publish bounded skill claims through the Capability Registry.</span></div>
+      <div className="osa-explainer-card"><strong>Trust context</strong><span>Fresh verified claims are shown by default; stale or untrusted records require explicit inspection.</span></div>
+      <div className="osa-explainer-card"><strong>Catalog boundary</strong><span>Skill Registry never runs agents, starts connectors, sends bids or authorizes payment.</span></div>
     </div>
     <form onSubmit={(event) => { event.preventDefault(); void load(); }} style={{ display: "grid", gridTemplateColumns: "minmax(180px,1fr) minmax(125px,170px) auto", gap: 8, alignItems: "center" }}>
       <input aria-label="Registry skill filter" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="coding or security_review" list="osa-skill-registry-options" style={field} />
@@ -105,7 +177,7 @@ export function SkillRegistryPanel() {
       <input type="checkbox" checked={includeUnsafe} onChange={(event) => { const next = event.target.checked; setIncludeUnsafe(next); void load(query, source, next); }} />
       Include stale and untrusted skill claims
     </label>
-    {error && <div role="alert" style={{ color: "#fca5a5", fontSize: 12 }}>{error}</div>}
+    {error && <div role="status" className="osa-dashboard-card" style={{ padding: 10, color: "#fde68a", borderColor: "#a16207", background: "#1f1b10", fontSize: 12 }}>{error}</div>}
     {(view?.status.capability_error || view?.status.reputation_error) && <div style={{ color: "#fde68a", fontSize: 11 }}>Cached registry context: {view.status.capability_error || view.status.reputation_error}</div>}
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
       <span style={badge("verified")}>{view?.status.skill_count || 0} skills</span>
