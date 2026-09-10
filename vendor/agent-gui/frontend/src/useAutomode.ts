@@ -67,6 +67,8 @@ async function waitForSessionCompletion(sid: string, statusLine: (msg: string) =
   const deadline = Date.now() + 5 * 60 * 1000; // 5 min max wait
   let consoleText = "";
   let activityTitles: string[] = [];
+  let idleLogged = false;
+  let lastTitleCount = 0;
 
   while (Date.now() < deadline) {
     try {
@@ -79,15 +81,25 @@ async function waitForSessionCompletion(sid: string, statusLine: (msg: string) =
       consoleText = consoleData.text || "";
       activityTitles = (activityData.events || []).map((e) => e.title || e.event_type || "event").filter(Boolean).slice(-30);
 
+      const freshTitles = activityTitles.length > lastTitleCount;
+      lastTitleCount = activityTitles.length;
+
       const finished = !session.is_running || session.task_solved === true || session.ended_at != null;
       if (finished) {
         statusLine("Agent completed the work.");
         return { consoleText, activityTitles };
       }
 
-      statusLine(`Agent working... ${activityTitles.length > 0 ? `last: ${activityTitles[activityTitles.length - 1].slice(0, 80)}` : "waiting for activity"}`);
+      // Only log status changes — suppress repeated idle lines
+      if (freshTitles) {
+        statusLine(`Agent produced activity: "${activityTitles[activityTitles.length - 1].slice(0, 80)}"`);
+        idleLogged = false;
+      } else if (!idleLogged) {
+        statusLine("Agent working... waiting for activity.");
+        idleLogged = true;
+      }
     } catch {
-      statusLine("Polling agent session...");
+      // silent — retry next poll
     }
 
     await sleep(4000);
@@ -121,7 +133,24 @@ export function useAutomode(sessionId: string | undefined, agentId: string | und
         return;
       }
 
-      const job = allJobs[0] as { seq?: string | number; room?: string; text?: string };
+      // Skip jobs already claimed in history (deduplicate by room:seq)
+      const claimedKeys = new Set<string>();
+      for (const entry of state.history) {
+        const key = `${entry.jobRoom}:${entry.jobId}`;
+        if (key !== "technocore:scan" && key !== "technocore:error") claimedKeys.add(key);
+        if (entry.claimId) claimedKeys.add(`claim:${entry.claimId}`);
+      }
+      const freshJob = allJobs.find((j: unknown) => {
+        const jj = j as { seq?: string | number; room?: string };
+        return !claimedKeys.has(`${jj.room || "?"}:${String(jj.seq ?? "")}`);
+      }) as { seq?: string | number; room?: string; text?: string } | undefined;
+
+      if (!freshJob) {
+        current = log(current, "All open jobs already processed. Waiting for new ones...");
+        setState((prev) => ({ ...prev, lastJobBoardScan: new Date().toISOString(), current }));
+        return;
+      }
+      const job = freshJob;
       const title = (job.text || "").split("\n")[0]?.replace(/^JOB v\d+:\s*/i, "").trim() || `Job #${job.seq}`;
 
       current = makeEntry(String(job.seq ?? ""), job.room || "technocore", title, agentId);
