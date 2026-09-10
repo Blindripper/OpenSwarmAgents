@@ -1542,6 +1542,18 @@ export function TaskDesk({ session, scene, isActive, searchMatch, index, autoExp
               >
                 {exporting ? "Saving…" : "💾 Save desk"}
               </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent("osa:automode-toggle")); }}
+                title="Toggle Automode — autonomous job hunting on Technocore channels"
+                style={{
+                  fontSize: 11, padding: "3px 10px", borderRadius: 6,
+                  cursor: "pointer",
+                  background: "transparent", color: "#7ee0c2",
+                  border: "1px solid #2a8c72",
+                }}
+              >
+                🤖 Auto
+              </button>
             </div>
             {activityView === "overview" ? (
               <ActivityOverview

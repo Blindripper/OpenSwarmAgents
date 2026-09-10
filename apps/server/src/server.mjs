@@ -91,6 +91,7 @@ import {
 } from "./federated-workbench.mjs";
 import { buildMatchmakingView, normalizeMatchmakingJob } from "./matchmaking.mjs";
 import { buildFlopMinerStatus, buildFlopValidatorStatus } from "./flop-operator.mjs";
+import { getAutomodeStatus, startAutomode, stopAutomode, clearAutomodeHistory } from "./automode.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "../../..");
@@ -15946,7 +15947,28 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     return sendJson(res, 201, { ok: true, result: store.jobResults[0] });
   }
 
-
+  // Automode job hunting routes
+  if (method === "GET" && path === "/api/automode/status") {
+    const sessionId = url.searchParams.get("session_id") || "default";
+    return sendJson(res, 200, getAutomodeStatus(sessionId));
+  }
+  if (method === "POST" && path === "/api/automode/start") {
+    const body = await readJson(req);
+    const sessionId = String(body.session_id || "default").slice(0, 80);
+    const agentId = String(body.agent_id || "technocore-specialist").slice(0, 80);
+    const ctx = { discoverTechnocoreJobs, claimTechnocoreJob: () => ({ ok: true }), checkSkilMatchForJob: () => true, executeAgentTask: async () => ({ ok: true }), postJobResult: async () => ({ ok: true }) };
+    return sendJson(res, 200, startAutomode(sessionId, agentId, ctx));
+  }
+  if (method === "POST" && path === "/api/automode/stop") {
+    const body = await readJson(req);
+    const sessionId = String(body.session_id || "default").slice(0, 80);
+    return sendJson(res, 200, stopAutomode(sessionId));
+  }
+  if (method === "POST" && path === "/api/automode/clear-history") {
+    const body = await readJson(req);
+    const sessionId = String(body.session_id || "default").slice(0, 80);
+    return sendJson(res, 200, clearAutomodeHistory(sessionId));
+  }
 
   if (method === "POST" && path === "/api/protocol/paper-deals") {
     try {
