@@ -21,7 +21,7 @@ import { FlopSessionFlowPanel } from "./components/FlopSessionFlowPanel";
 import { SkillFinderPanel } from "./components/SkillFinderPanel";
 import { FederatedWorkbenchPanel } from "./components/FederatedWorkbenchPanel";
 import { TrustPanel } from "./components/TrustPanel";
-import { AutomodeControl, AutomodeHistoryView } from "./components/AutomodeControl";
+import { AutomodeControl } from "./components/AutomodeControl";
 import { useAutomode } from "./useAutomode";
 import { NetworkChatWindow } from "./components/NetworkChatWindow";
 import { ProjectDetailsModal } from "./components/ProjectDetailsModal";
@@ -554,8 +554,7 @@ export default function App() {
   const [autoModeSessionId, setAutoModeSessionId] = useState<string | null>(null);
   const [autoModeAgentId, setAutoModeAgentId] = useState<string>("technocore-specialist");
   const [autoModeCollapsed, setAutoModeCollapsed] = useState(false);
-  const [showAutoHistory, setShowAutoHistory] = useState(false);
-  const [autoModeInitialized, setAutoModeInitialized] = useState(false);
+  const [autoModePanelOpen, setAutoModePanelOpen] = useState(false);
   const autoHook = useAutomode(autoModeSessionId ?? undefined, autoModeAgentId ?? undefined);
   const [preview, setPreview] = useState<FilePreviewData | null>(null);
   const [resultCanvasOpen, setResultCanvasOpen] = useState(defaultResultCanvasOpen);
@@ -916,7 +915,7 @@ export default function App() {
     window.addEventListener("osa:claim-job", handler);
     window.addEventListener("osa:federated-workbench-import", handler);
     const automodeHandler = () => {
-      setShowAutoHistory((prev) => !prev);
+      if (!autoModePanelOpen) setAutoModePanelOpen(true);
       if (!autoHook.state.running) {
         // Use the first running session if available, otherwise use a virtual id
         const session = teams.flatMap((t) => t.desks).find((d) => !("isPending" in d) && (d as Session).is_running) as Session | undefined;
@@ -2902,7 +2901,7 @@ export default function App() {
         onCopy={copyDeskToHome}
       />
       {/* Automode floating overlay */}
-      {dashboardTab === "workbench" && (autoHook.state.running || autoHook.state.current || !autoModeCollapsed) && (
+      {autoModePanelOpen && dashboardTab === "workbench" && (
         <div style={{
           position: "fixed", bottom: 16, right: 16,
           width: autoModeCollapsed ? "auto" : 400,
@@ -2923,20 +2922,10 @@ export default function App() {
             onClick={() => setAutoModeCollapsed(!autoModeCollapsed)}
           >
             <span style={{ fontSize: 12, fontWeight: 950, color: "#7ee0c2" }}>
-              {autoModeCollapsed ? "▶ " : "▼ "}🤖 Automode {autoHook.state.running ? "• Active" : ""}
+              {autoModeCollapsed ? "▶ " : "▼ "}Automode {autoHook.state.running ? "• Active" : ""}
             </span>
             <div style={{ display: "flex", gap: 4 }}>
-              {!autoModeCollapsed && (autoHook.state.running
-                ? <button type="button" onClick={(e) => { e.stopPropagation(); autoHook.stop(); }}
-                    style={{ height: 22, padding: "0 6px", borderRadius: 4, border: "1px solid #7f1d1d", background: "#2a1015", color: "#fca5a5", fontSize: 9, fontWeight: 900, cursor: "pointer" }}>
-                    Stop
-                  </button>
-                : <button type="button" onClick={(e) => { e.stopPropagation(); autoHook.start(); }}
-                    style={{ height: 22, padding: "0 6px", borderRadius: 4, border: "1px solid #2a8c72", background: "#10251f", color: "#7ee0c2", fontSize: 9, fontWeight: 900, cursor: "pointer" }}>
-                    Start
-                  </button>
-              )}
-              <button type="button" onClick={(e) => { e.stopPropagation(); if (!autoHook.state.running && !autoHook.state.current) setShowAutoHistory(false); setAutoModeCollapsed(true); }}
+              <button type="button" onClick={(e) => { e.stopPropagation(); setAutoModePanelOpen(false); autoHook.stop(); }}
                 style={{ height: 22, padding: "0 6px", borderRadius: 4, border: "1px solid #2a3558", background: "#121828", color: "#94a3b8", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                 ✕
               </button>

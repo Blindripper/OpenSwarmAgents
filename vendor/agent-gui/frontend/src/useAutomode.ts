@@ -174,7 +174,7 @@ export function useAutomode(sessionId: string | undefined, agentId: string | und
       current.status = "completed";
       current.resultSummary = `Completed: ${jobTitle}`;
       current.completedAt = new Date().toISOString();
-      current = logEntry(current, "Job cycle complete. Reward lifecycle: pending protocol settlement.");
+      current = logEntry(current, "Result submitted. Claim pipeline: claimed -> work done -> result in -> reward (reward stage pending).");
       setState((prev) => ({
         ...prev,
         lastJobBoardScan: new Date().toISOString(),
