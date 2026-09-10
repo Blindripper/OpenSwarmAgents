@@ -92,6 +92,10 @@ function jsonResponse(body: unknown, ok = true): Promise<Response> {
   return Promise.resolve({ ok, status: ok ? 200 : 400, statusText: ok ? "OK" : "Bad Request", json: () => Promise.resolve(body) } as Response);
 }
 
+function notFoundResponse(): Promise<Response> {
+  return Promise.resolve({ ok: false, status: 404, statusText: "Not Found", json: () => Promise.resolve({ detail: "not found" }) } as Response);
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("SubtaskDelegationsPanel", () => {
@@ -180,5 +184,14 @@ describe("SubtaskDelegationsPanel", () => {
     expect(screen.getByText("UNVERIFIED")).toBeInTheDocument();
     expect(screen.getByText("NO AUTHORITY")).toBeInTheDocument();
     expect(screen.getByTestId("subtask-delegations").textContent).not.toMatch(/BEGIN PRIVATE KEY|-----BEGIN|connector token:\s*\S+|seed phrase:\s*\S+|privateKey\s*[:=]|secret\s*[:=]\s*[A-Za-z0-9+/=_-]{16,}/i);
+  });
+
+  it("shows a Network setup notice instead of raw 404 text", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => notFoundResponse());
+    render(<SubtaskDelegationsPanel />);
+
+    expect(await screen.findByText("Delegation backend required")).toBeInTheDocument();
+    expect(screen.getByText(/sends bounded public TASK envelopes/i)).toBeInTheDocument();
+    expect(screen.getByTestId("subtask-delegations").textContent).not.toMatch(/404|Not Found/i);
   });
 });

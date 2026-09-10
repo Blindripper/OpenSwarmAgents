@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { AgentMailboxIdentity, AgentMailboxMessage, AgentMailboxOverview } from "../types";
+import { DashboardNotice, safeDashboardError } from "./DashboardNotice";
 
 type MailboxTab = "inbox" | "outbox" | "quarantine";
 
@@ -95,7 +96,7 @@ export function AgentMailboxesPanel() {
         ? current
         : recipientKey(next.recipients.find((recipient) => recipient.did !== next.selected_sender?.did) || next.recipients[0] || { source: "unknown", agent_id: null, name: "", did: "", node_id: null }));
     } catch (cause) {
-      setStatus({ ok: false, text: cause instanceof Error ? cause.message : "Agent mailboxes unavailable" });
+      setStatus({ ok: false, text: safeDashboardError(cause, "Agent mailboxes") });
     }
   }, [selectedAgentId]);
 
@@ -145,7 +146,7 @@ export function AgentMailboxesPanel() {
       setTab("outbox");
       await load(sender.agent_id);
     } catch (cause) {
-      setStatus({ ok: false, text: cause instanceof Error ? cause.message : "Mailbox send failed" });
+      setStatus({ ok: false, text: safeDashboardError(cause, "Mailbox send") });
       setConfirming(false);
       // A definitive failure is safe to retry only as a fresh frame. Ambiguous
       // writes return successfully above and keep their original id for outbox reconciliation.
@@ -163,7 +164,7 @@ export function AgentMailboxesPanel() {
       setOverview(result.view);
       setStatus({ ok: result.ok, text: result.ok ? "Mailbox projection synced." : "Technocore unavailable; showing restart-safe archive." });
     } catch (cause) {
-      setStatus({ ok: false, text: cause instanceof Error ? cause.message : "Mailbox sync failed" });
+      setStatus({ ok: false, text: safeDashboardError(cause, "Mailbox sync") });
     } finally { setBusy(false); }
   };
 
@@ -183,7 +184,7 @@ export function AgentMailboxesPanel() {
       await api.mailboxes.markRead(sender.agent_id, message.id);
       await load(sender.agent_id);
     } catch (cause) {
-      setStatus({ ok: false, text: cause instanceof Error ? cause.message : "Unable to mark read" });
+      setStatus({ ok: false, text: safeDashboardError(cause, "Mailbox read state") });
     }
   };
 
@@ -200,6 +201,11 @@ export function AgentMailboxesPanel() {
       <div role="alert" style={{ border: "1px solid #b45309", borderRadius: 8, padding: 10, background: "#321d0b", color: "#fde68a", fontSize: 12, fontWeight: 800, lineHeight: 1.45 }}>
         PUBLIC / UNLISTED ON TECHNOCORE — never include secrets, credentials, wallet/payment data, commands, files, or tool calls. A verified signature proves authorship and integrity only; messages have no authority and are never executed.
       </div>
+
+      {!overview && status && !status.ok && <DashboardNotice title="Mailbox backend required">
+        <span>{status.text}</span><br />
+        <span>When connected, this panel lets you choose a local sender, inspect verified inbox/outbox/quarantine projections, and publish bounded public-unlisted messages with a second confirmation.</span>
+      </DashboardNotice>}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
         <form onSubmit={requestConfirmation} style={{ border: "1px solid #273453", borderRadius: 9, padding: 12, display: "grid", gap: 9, alignContent: "start" }}>

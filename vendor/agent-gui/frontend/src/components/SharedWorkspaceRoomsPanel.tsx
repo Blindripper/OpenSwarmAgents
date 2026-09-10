@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { SharedWorkspaceOverview, SharedWorkspaceRoom } from "../types";
+import { DashboardNotice, safeDashboardError } from "./DashboardNotice";
 
 const field = { width: "100%", boxSizing: "border-box", border: "1px solid #2a3558", borderRadius: 7, background: "#101827", color: "#e2e8f0", padding: "9px 10px", fontSize: 12 } as const;
 const button = { height: 31, padding: "0 11px", borderRadius: 6, border: "1px solid #2563eb", background: "#172d61", color: "#bfdbfe", fontSize: 11, fontWeight: 900, cursor: "pointer" } as const;
@@ -44,7 +45,7 @@ export function SharedWorkspaceRoomsPanel() {
         return [own, ...local.filter((item) => item !== own)].slice(0, 2).map((item) => item?.key || "").filter(Boolean);
       });
       setSelectedRoom((current) => current || next.rooms[0]?.workspace_id || "");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Shared Workspaces unavailable"); }
+    } catch (cause) { setError(safeDashboardError(cause, "Shared Workspace rooms")); }
     finally { setLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -59,7 +60,7 @@ export function SharedWorkspaceRoomsPanel() {
       const result = await api.sharedWorkspaces.create({ session_id: sessionId, title: title.trim(), member_keys: members, idempotency_key: createKey, expires_days: 7, private_room_warning_acknowledged: true, share_confirmation: true });
       setStatus(`Opened #${result.room.room}.`); setSelectedRoom(result.room.workspace_id); setConfirming(false); setAck(false); setCreateKey(key("shared-workspace"));
       await load();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to open shared Workspace"); }
+    } catch (cause) { setError(safeDashboardError(cause, "Shared Workspace open")); }
     finally { setBusy(false); }
   };
 
@@ -70,7 +71,7 @@ export function SharedWorkspaceRoomsPanel() {
       await api.sharedWorkspaces.publishNote(room.workspace_id, { agent_id: noteAgent, text: noteText.trim(), idempotency_key: noteKey, private_room_warning_acknowledged: true, publish_confirmation: true });
       setStatus(`Published signed note to #${room.room}.`); setNoteText(""); setNoteAck(false); setNoteConfirming(false); setNoteKey(key("shared-note"));
       await load();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to publish room note"); }
+    } catch (cause) { setError(safeDashboardError(cause, "Shared room note")); }
     finally { setBusy(false); }
   };
 
@@ -79,10 +80,14 @@ export function SharedWorkspaceRoomsPanel() {
   return <section data-testid="shared-workspaces" style={{ border: "1px solid #315777", borderRadius: 11, padding: 14, background: "rgba(9,20,34,.96)", display: "grid", gap: 12 }}>
     <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
       <div><strong style={{ fontSize: 17 }}>Shared Workspace Rooms</strong><div style={{ marginTop: 4, color: "#94a3b8", fontSize: 12 }}>Signed bounded coordination in private-name <code>p-osa-ws-&lt;uuid&gt;</code> team rooms.</div></div>
-      <div style={{ display: "flex", gap: 7 }}><button type="button" style={button} onClick={() => void load()}>{loading ? "Loading…" : "Refresh"}</button><button type="button" style={button} onClick={() => api.sharedWorkspaces.scan().then((next) => { setView(next); setStatus("Shared room scan completed."); }).catch((cause) => setError(cause instanceof Error ? cause.message : "Scan failed"))}>Scan rooms</button></div>
+      <div style={{ display: "flex", gap: 7 }}><button type="button" style={button} onClick={() => void load()}>{loading ? "Loading…" : "Refresh"}</button><button type="button" style={button} onClick={() => api.sharedWorkspaces.scan().then((next) => { setView(next); setStatus("Shared room scan completed."); }).catch((cause) => setError(safeDashboardError(cause, "Shared room scan")))}>Scan rooms</button></div>
     </div>
     <div role="note" style={{ border: "1px solid #854d0e", borderRadius: 8, padding: 10, background: "#2b210c", color: "#fde68a", fontSize: 11, lineHeight: 1.5 }}>PRIVATE-NAME / UNLISTED, NOT CONFIDENTIAL. Anyone who learns the room name may read it. Signatures prove authorship and integrity only. No files, credentials, commands, remote execution, authority, payment, or settlement.</div>
-    {error && <div role="alert" style={{ color: "#fca5a5", fontSize: 12 }}>{error}</div>}
+    {error && !view && <DashboardNotice title="Shared room backend required">
+      <span>{error}</span><br />
+      <span>When connected, this panel opens private-name team rooms, scans verified room events, and publishes bounded notes only after explicit confirmation.</span>
+    </DashboardNotice>}
+    {error && view && <div role="alert" style={{ color: "#fca5a5", fontSize: 12 }}>{error}</div>}
     {status && <div style={{ color: "#7ee0c2", fontSize: 12 }}>{status}</div>}
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 12 }}>
       <form onSubmit={(event) => { event.preventDefault(); if (!ack) return setError("Acknowledge the private-name disclosure first."); setConfirming(true); }} style={{ border: "1px solid #273453", borderRadius: 9, padding: 11, display: "grid", gap: 8 }}>

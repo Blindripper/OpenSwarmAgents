@@ -57,6 +57,10 @@ function jsonResponse(body: unknown, ok = true): Promise<Response> {
   return Promise.resolve({ ok, status: ok ? 200 : 400, statusText: ok ? "OK" : "Bad Request", json: () => Promise.resolve(body) } as Response);
 }
 
+function notFoundResponse(): Promise<Response> {
+  return Promise.resolve({ ok: false, status: 404, statusText: "Not Found", json: () => Promise.resolve({ detail: "not found" }) } as Response);
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("AgentMailboxesPanel", () => {
@@ -113,5 +117,14 @@ describe("AgentMailboxesPanel", () => {
     expect(canReplyToMailboxMessage(inbound, overview().recipients)).toBe(true);
     expect(canReplyToMailboxMessage({ ...inbound, verified: false, trust: "untrusted" }, overview().recipients)).toBe(false);
     expect(canReplyToMailboxMessage(inbound, [])).toBe(false);
+  });
+
+  it("shows a Network setup notice instead of raw 404 text", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => notFoundResponse());
+    render(<AgentMailboxesPanel />);
+
+    expect(await screen.findByText("Mailbox backend required")).toBeInTheDocument();
+    expect(screen.getByText(/choose a local sender/i)).toBeInTheDocument();
+    expect(screen.getByTestId("agent-mailboxes").textContent).not.toMatch(/404|Not Found/i);
   });
 });

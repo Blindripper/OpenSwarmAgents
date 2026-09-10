@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { NetworkChannel, NetworkChatMessage } from "../types";
+import { safeDashboardError } from "./DashboardNotice";
 
 interface Props {
   walletAddress?: string | null;
@@ -400,7 +401,7 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
       const failures = Math.min(5, (refreshFailuresByChannelRef.current[channel] || 0) + 1);
       refreshFailuresByChannelRef.current[channel] = failures;
       refreshBackoffUntilByChannelRef.current[channel] = Date.now() + Math.min(2000, 250 * (2 ** (failures - 1)));
-      setError((err as Error).message || "Chat refresh failed.");
+      setError(safeDashboardError(err, "Network chat refresh"));
     } finally {
       if (chatAbortControllersRef.current.get(channel) === controller) {
         chatAbortControllersRef.current.delete(channel);
@@ -595,7 +596,7 @@ export function NetworkChatWindow({ walletAddress, refreshKey = 0, dockRightOffs
       setDraft("");
       void refreshMessages(activeChannel);
     } catch (err) {
-      setError((err as Error).message || "Message failed.");
+      setError(safeDashboardError(err, "Network chat send"));
     } finally {
       setPending(false);
     }

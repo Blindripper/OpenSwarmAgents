@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { SubtaskDelegationOverview, SubtaskDelegationRecord } from "../types";
+import { DashboardNotice, safeDashboardError } from "./DashboardNotice";
 
 type DelegationTab = "incoming" | "outgoing" | "results" | "quarantine";
 
@@ -195,7 +196,7 @@ export function SubtaskDelegationsPanel() {
       setSelectedRecipientKey((current) => current || next.recipients.find((recipient) => recipient.eligibility && !recipient.eligibility.includes("mismatch"))?.key || next.recipients[0]?.key || next.recipients[0]?.did || "");
       setSelectedCapabilities((current) => current.length ? current : next.capability_options.slice(0, Math.min(2, next.capability_options.length)));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Subtask delegations unavailable");
+      setError(safeDashboardError(cause, "Subtask delegations"));
     } finally {
       setLoading(false);
     }
@@ -260,7 +261,7 @@ export function SubtaskDelegationsPanel() {
       setComposeKey(randomKey("subtask-create"));
       await refreshAndReset();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to create subtask delegation");
+      setError(safeDashboardError(cause, "Subtask delegation create"));
     } finally {
       setBusyId(null);
     }
@@ -284,7 +285,7 @@ export function SubtaskDelegationsPanel() {
       setAcceptConfirming(null);
       await refreshAndReset();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to accept subtask delegation");
+      setError(safeDashboardError(cause, "Subtask delegation accept"));
     } finally {
       setBusyId(null);
     }
@@ -307,7 +308,7 @@ export function SubtaskDelegationsPanel() {
       }
       await refreshAndReset();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to publish subtask result");
+      setError(safeDashboardError(cause, "Subtask result publish"));
     } finally {
       setBusyId(null);
     }
@@ -326,7 +327,7 @@ export function SubtaskDelegationsPanel() {
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button type="button" onClick={() => void load()} disabled={loading} style={smallButtonStyle}>{loading ? "Syncing…" : "Refresh"}</button>
-          <button type="button" onClick={() => api.subtaskDelegations.scan().then((view) => { setOverview(view); setStatus("Subtask delegation scan completed."); }).catch((cause) => setError(cause instanceof Error ? cause.message : "Scan failed"))} disabled={loading} style={smallButtonStyle}>Scan Technocore</button>
+          <button type="button" onClick={() => api.subtaskDelegations.scan().then((view) => { setOverview(view); setStatus("Subtask delegation scan completed."); }).catch((cause) => setError(safeDashboardError(cause, "Subtask delegation scan")))} disabled={loading} style={smallButtonStyle}>Scan Technocore</button>
         </div>
       </div>
 
@@ -334,7 +335,11 @@ export function SubtaskDelegationsPanel() {
         PUBLIC / UNLISTED ON TECHNOCORE. Verified signatures prove authorship and integrity only, never permission. Do not include secrets, credentials, wallets, payments, commands, files, or tool calls.
       </div>
 
-      {error && <div role="alert" style={{ border: "1px solid #7f1d1d", background: "#2a1015", color: "#fca5a5", borderRadius: 8, padding: 10, fontSize: 12 }}>{error}</div>}
+      {error && !overview && <DashboardNotice title="Delegation backend required">
+        <span>{error}</span><br />
+        <span>When connected, this panel sends bounded public TASK envelopes, shows incoming/outgoing/result queues, and keeps invalid frames in quarantine.</span>
+      </DashboardNotice>}
+      {error && overview && <div role="alert" style={{ border: "1px solid #7f1d1d", background: "#2a1015", color: "#fca5a5", borderRadius: 8, padding: 10, fontSize: 12 }}>{error}</div>}
       {status && <div style={{ border: "1px solid #1f6f4a", background: "#0f2419", color: "#7ee0c2", borderRadius: 8, padding: 10, fontSize: 12 }}>{status}</div>}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>

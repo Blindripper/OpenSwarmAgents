@@ -102,10 +102,10 @@ const RESULT_CANVAS_OPEN_KEY = "osa-result-canvas-open";
 type DashboardTab = "workbench" | "miner" | "validator" | "work" | "market" | "deals" | "network" | "trustVault";
 const DASHBOARD_TABS: { id: DashboardTab; label: string; short: string; detail: string }[] = [
   { id: "workbench", label: "Workspaces / Projects", short: "Workspaces / Projects", detail: "Local rooms and agent desks" },
+  { id: "market", label: "Market", short: "Market", detail: "Match jobs to agents" },
   { id: "miner", label: "Miner", short: "Miner", detail: "GPU readiness and PoUI path" },
   { id: "validator", label: "Validator", short: "Validator", detail: "Stake, DA and quorum path" },
   { id: "work", label: "Work", short: "Work", detail: "Jobs and federated tasks" },
-  { id: "market", label: "Market", short: "Market", detail: "Matchmaking first, then skills" },
   { id: "deals", label: "Deals", short: "Deals", detail: "TCLK and PaperRail" },
   { id: "network", label: "Network", short: "Network", detail: "Rooms and agent mail" },
   { id: "trustVault", label: "Trust & Vault", short: "Trust & Vault", detail: "DID, reputation and policy" },
@@ -2388,9 +2388,13 @@ export default function App() {
               <div>
                 <div className="osa-page-eyebrow">Task operations</div>
                 <div className="osa-page-title">Work</div>
-                <div className="osa-page-copy">Local and Technocore jobs plus inspectable federated tasks. Claiming/importing still requires explicit human action.</div>
+                <div className="osa-page-copy">Use Work when you want to inspect job queues and federated task cards. Use Market first when you want OSA to recommend the right agent before you claim anything.</div>
               </div>
             </header>
+            <div className="osa-command-grid">
+              <div className="osa-action-card" data-accent="blue"><strong>Review local jobs</strong><span>Scan open and claimed jobs without starting connectors.</span><em>Next: claim only when you choose a task.</em></div>
+              <div className="osa-action-card" data-accent="green"><strong>Inspect federated tasks</strong><span>Read sanitized task metadata from other OSA nodes.</span><em>Next: import requires explicit confirmation.</em></div>
+            </div>
             <div className="osa-dashboard-grid-2">
               <JobsPanel />
               <FederatedWorkbenchPanel />
@@ -2404,9 +2408,14 @@ export default function App() {
               <div>
                 <div className="osa-page-eyebrow">Discovery and routing</div>
                 <div className="osa-page-title">Market</div>
-                <div className="osa-page-copy">Matchmaking is the main market view: open jobs are ranked against local and federated skill providers, with Skill Registry and agent discovery underneath. Federated results remain catalog or recommendation data until later bidding phases.</div>
+                <div className="osa-page-copy">Start here. Matchmaking reads jobs, checks the Skill Registry, weighs trust and reputation, then explains which agent is the best candidate. No bids, no execution and no payment happen from this screen.</div>
               </div>
             </header>
+            <div className="osa-command-grid">
+              <div className="osa-action-card" data-accent="blue"><strong>1. Match a job</strong><span>See ranked recommendations and missing skill gaps.</span><em>Main action: decide who should handle the work.</em></div>
+              <div className="osa-action-card" data-accent="green"><strong>2. Inspect providers</strong><span>Check which local or federated agents claim each skill.</span><em>Source: signed Capability Registry rows.</em></div>
+              <div className="osa-action-card" data-accent="cyan"><strong>3. Use local profiles</strong><span>Move a verified local profile into a workspace.</span><em>Remote providers stay recommendation-only until bidding.</em></div>
+            </div>
             <MatchmakingPanel />
             <SkillRegistryPanel />
             <SkillFinderPanel onUseLocalAgent={useLocalAgentFromSkillFinder} />
@@ -2438,9 +2447,13 @@ export default function App() {
               <div>
                 <div className="osa-page-eyebrow">Identity, reputation and authority</div>
                 <div className="osa-page-title">Trust & Vault</div>
-                <div className="osa-page-copy">Signed reputation, review bridge, capability publication, signing policies and delegation notes in one governance surface.</div>
+                <div className="osa-page-copy">Use this area for governance: signed reputation, capability publication, review bridge, wallet/vault state and delegation notes. It explains authority before anything can affect trust or value.</div>
               </div>
             </header>
+            <div className="osa-command-grid">
+              <div className="osa-action-card" data-accent="green"><strong>Trust</strong><span>Inspect signed reputation and capability evidence.</span><em>Signatures prove authorship, not quality by themselves.</em></div>
+              <div className="osa-action-card" data-accent="amber"><strong>Vault</strong><span>Review wallet, signing and delegation boundaries.</span><em>No hidden settlement or automatic authority changes.</em></div>
+            </div>
             <div className="osa-dashboard-grid-2">
               <TrustPanel />
               <VaultPanel />
