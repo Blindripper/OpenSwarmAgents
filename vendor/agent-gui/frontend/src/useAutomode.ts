@@ -209,18 +209,33 @@ export function useAutomode(sessionId: string | undefined, agentId: string | und
       current = log(current, `Job claimed (id: ${claimId || "pending"}, session: ${current.sessionId})`);
       setState((prev) => ({ ...prev, current }));
 
+      // --- Try PaperRail TCLK rehearsal deal ---
+      let dealId = null;
+      try {
+        const deal = await apiPost<{ ok: boolean; id?: string; contract_id?: string; mode?: string; next_action?: string; has_value?: boolean }>("/api/protocol/paper-deals", {});
+        if (deal?.ok) {
+          dealId = deal.contract_id || deal.id || null;
+          current = log(current, `PaperRail rehearsal deal: ${deal.next_action || "offer created"} (${deal.mode || "paper"})`);
+        }
+      } catch {
+        // PaperRail not available — proceed without deal (reward shown as pending)
+      }
+
       // --- Execute ---
       current.status = "executing";
-      current = log(current, "Dispatching job to agent...");
+      current.claimId = claimId || dealId || null;  // show deal id if available
+      current = log(current, dealId
+        ? `Dispatching job to agent with PaperRail deal ${dealId.slice(0, 20)}...`
+        : "Dispatching job to agent (reward settlement pending FLOP mainnet)...");
       setState((prev) => ({ ...prev, current }));
 
       const actualSid = claimSessionId || sessionId;
       try {
         await apiPost(`/api/sessions/${actualSid}/resume`, {
-          content: `You have claimed a Technocore job:\n\n${job.text || "Complete the described task."}\n\nWork through this thoroughly. Report what you accomplished.`,
+          content: `You have claimed and must now execute this Technocore job. Read the requirements carefully and produce the requested deliverable.\n\n--- ORIGINAL JOB ---\n${job.text || "Complete the described task."}\n--- END JOB ---\n\nWhen you finish, save your deliverable as a file in the workspace and describe what you produced. Execute real work — do not just summarize the request back.`,
           agent: agentId,
         });
-        current = log(current, "Agent dispatched. Waiting for completion (WebSocket → instant, fallback poll → 120 min timeout)...");
+        current = log(current, "Agent dispatched with full job context. Waiting for completion...");
       } catch {
         current = log(current, "Dispatch note: agent runs independently.");
       }
@@ -272,7 +287,7 @@ export function useAutomode(sessionId: string | undefined, agentId: string | und
       current.resultSummary = resultDetail ? resultDetail.slice(0, 300) : `Completed: ${title}`;
       current.status = "completed";
       current.completedAt = new Date().toISOString();
-      current = log(current, "Job done. Pipeline: claimed ✓ work done ✓ result in ✓ reward (pending protocol settlement).");
+      current = log(current, "Job completed. Pipeline: claimed \u2713 work done \u2713 result in \u2713 reward (requires TCLK deal + FLOP mainnet — pending until settlement rail is live).");
       setState((prev) => ({
         ...prev,
         lastJobBoardScan: new Date().toISOString(),

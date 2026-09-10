@@ -11,7 +11,7 @@ const stateColors: Record<string, { bg: string; color: string; border: string; l
   failed: { bg: "#2a1015", color: "#fca5a5", border: "#7f1d1d", label: "FAILED" },
 };
 
-export function pipelineStages(status: AutomodeEntry["status"]): { label: string; done: boolean }[] {
+export function pipelineStages(status: AutomodeEntry["status"]): { label: string; done: boolean; info?: string }[] {
   const done = ["accepted", "executing", "completing", "completed", "failed"];
   const workDone = ["completing", "completed", "failed"];
   const resultDone = ["completed", "failed"];
@@ -19,7 +19,7 @@ export function pipelineStages(status: AutomodeEntry["status"]): { label: string
     { label: "Claimed", done: done.includes(status) },
     { label: "Work done", done: workDone.includes(status) },
     { label: "Result in", done: resultDone.includes(status) },
-    { label: "Reward", done: status === "completed" && false },
+    { label: "Reward", done: false, info: "TCLK deal + FLOP mainnet required" },
   ];
 }
 
@@ -36,6 +36,7 @@ function Pipeline({ status }: { status: AutomodeEntry["status"] }) {
           border: `1px solid ${s.done ? "#2a8c72" : "#2a3558"}`,
         }}>
           {s.done ? "✓ " : "○ "}{s.label}
+          {s.info && <span title={s.info} style={{ fontSize: 8, opacity: 0.6, marginLeft: 2 }}>ⓘ</span>}
         </span>
       ))}
     </div>
