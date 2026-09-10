@@ -122,7 +122,11 @@ export function ResultCanvas({ open, autoModeHistory = [], autoModeRunning = fal
                   }}>{c.label}</span>
                 </div>
                 <div style={{ color: "#64748b", fontSize: 9 }}>#{entry.jobRoom} · {new Date(entry.startedAt).toLocaleString()}</div>
-                {entry.resultSummary && <div style={{ color: "#94a3b8", fontSize: 10, lineHeight: 1.4 }}>{entry.resultSummary}</div>}
+                {entry.resultDetail ? (
+                  <div style={{ color: "#94a3b8", fontSize: 10, lineHeight: 1.4, maxHeight: 50, overflow: "hidden", textOverflow: "ellipsis" }}>{entry.resultDetail.slice(0, 200)}</div>
+                ) : entry.resultSummary ? (
+                  <div style={{ color: "#94a3b8", fontSize: 10, lineHeight: 1.4 }}>{entry.resultSummary}</div>
+                ) : null}
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 2 }}>
                   {stages.map((s, i) => (
                     <span key={i} style={{
@@ -208,12 +212,17 @@ function JobDetailModal({ entry, onClose }: { entry: AutomodeEntry; onClose: () 
             ))}
           </div>
 
-          {entry.resultSummary && (
+          {entry.resultDetail ? (
+            <div>
+              <div style={{ color: "#64748b", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.3 }}>Output / Agent work</div>
+              <pre style={{ color: "#94a3b8", fontSize: 10, lineHeight: 1.5, whiteSpace: "pre-wrap", maxHeight: 200, overflow: "auto", marginTop: 4, fontFamily: "ui-monospace, monospace" }}>{entry.resultDetail.slice(0, 4000)}</pre>
+            </div>
+          ) : entry.resultSummary ? (
             <div>
               <div style={{ color: "#64748b", fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.3 }}>Result</div>
               <div style={{ color: "#7ee0c2", fontSize: 12, marginTop: 3, lineHeight: 1.5 }}>{entry.resultSummary}</div>
             </div>
-          )}
+          ) : null}
 
           <div>
             <details open>

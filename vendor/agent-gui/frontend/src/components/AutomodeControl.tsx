@@ -113,6 +113,11 @@ export function AutomodeControl({
                 ? entry.activityLog.map((l, i) => <div key={i} style={{ padding: "1px 0" }}>{l}</div>)
                 : entry.activityLog.slice(-2).map((l, i) => <div key={i} style={{ padding: "1px 0" }}>{l}</div>)}
             </div>
+            {entry.resultDetail && (
+              <div style={{ fontSize: 9, color: "#64748b", lineHeight: 1.4, marginTop: 2, maxHeight: 60, overflow: "hidden" }}>
+                <strong>Agent output:</strong> {entry.resultDetail.slice(0, 150)}
+              </div>
+            )}
           </div>
         </>
       )}
