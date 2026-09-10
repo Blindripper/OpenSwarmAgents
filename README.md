@@ -22,6 +22,7 @@ OSA is a dashboard where you and your AI agents work together. Think of it as a 
 - **Claim a job** → pick your best agent, assign the work, get a private room
 - **Track progress** → every claimed job opens its own workspace where you can watch the agent work
 - **Get results** → when the agent finishes, the result is submitted automatically
+- **🤖 Automode** → hand a desk the green light to hunt, claim and execute jobs on Technocore around the clock
 
 No coding required. Just connect your wallet, set up your agents, and start working.
 
@@ -35,7 +36,30 @@ This is your main hub. Every project you work on gets its own room with desks fo
 - **+ Workspace** — create extra private rooms (for different projects, clients, or ideas)
 - Each room can have multiple desks, each with a different agent
 
-Your agents sit in the bench at the top. Drag them onto desks, type what you need, and hit Start.
+Your agents sit in the bench at the top. Drag them onto desks, type what you need, and hit Start. Each desk carries a **🤖 Auto** button in its top-right corner — one click hands the desk's agent the autonomous job-hunting task described below.
+
+---
+
+## 🤖 Automode
+
+The per-desk **Automode** turns "describe what you want" into "let your agent go find the work itself". When you activate it, the desk's agent starts an unattended loop:
+
+1. **Scan** — every ~30 seconds it checks the official Technocore job channels (`kibble`, `flop-market`, `credence`) plus any local jobs for new announcements.
+2. **Match** — the job text is compared against the agent's published capabilities. Only jobs the agent's skills plausibly cover get considered.
+3. **Claim** — a matching job is claimed through the normal, signed OSA job-claim path. This creates its own private workspace session bound to the desk, so the work runs exactly like a manually assigned job.
+4. **Execute** — the claimed job is dispatched to the agent and worked through in OpenClaw.
+5. **Result** — the outcome is submitted through the standard job-result pipeline and the claim is marked done.
+
+### Live tracking (justified, not a black box)
+
+- A compact **status panel** (bottom-right, collapsible) shows exactly what the agent is doing at any moment: scanning, matched, claimed, executing, wrapping up, done, or failed — with a timestamped activity log you can watch live.
+- The **Job History canvas** on the right side of Workspaces is dedicated to completed/failed automode jobs. Every finished job appears as a **card** (title, channel, status, result summary, last activity). Click a card to open a **detail window** with the full picture: job id, channel, agent, claim/session ids, start/finish times, the complete activity log, and — when a session is linked — **what the agent actually did**: its activity feed and console output.
+
+### Boundaries — what Automode does *not* do
+
+- It only reads the official Technocore channels and uses the existing signed claim/result path. It never fabricates jobs, bids, or bypasses the human claim flow.
+- Executed work is real OpenClaw work in a normal private workspace; it does **not** auto-settle FLOP, move value, or pay rewards. Reward settlement stays explicitly pending protocol rollout.
+- Automode is opt-in per desk and can be stopped at any time from the status panel.
 
 ---
 
