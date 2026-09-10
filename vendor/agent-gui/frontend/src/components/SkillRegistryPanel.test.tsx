@@ -127,11 +127,11 @@ describe("SkillRegistryPanel", () => {
     expect(screen.getByText("Rejected: agent_signature_invalid")).toBeInTheDocument();
   });
 
-  it("shows the built-in registry model instead of raw 404 text", async () => {
+  it("shows a guided provider catalog preview instead of raw 404 text", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() => notFoundResponse());
     render(<SkillRegistryPanel />);
 
-    expect(await screen.findByText(/built-in Skill Registry model/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Preview mode: live Skill Registry records are not connected/i)).toBeInTheDocument();
     expect(screen.getAllByText("Technocore Specialist").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Federated Miner Specialist").length).toBeGreaterThan(0);
     expect(screen.getByTestId("skill-registry").textContent).not.toMatch(/404|Not Found/i);

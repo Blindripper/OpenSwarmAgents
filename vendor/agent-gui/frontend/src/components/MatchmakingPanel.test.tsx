@@ -98,13 +98,16 @@ describe("MatchmakingPanel", () => {
     expect(screen.getAllByText("RECOMMENDATION ONLY").length).toBeGreaterThan(0);
   });
 
-  it("shows the built-in recommendation model instead of raw 404 text", async () => {
+  it("shows a guided preview model instead of raw 404 text", async () => {
+    const onDraftRequest = vi.fn();
     vi.spyOn(globalThis, "fetch").mockImplementation(() => notFoundResponse());
-    render(<MatchmakingPanel />);
+    render(<MatchmakingPanel onDraftRequest={onDraftRequest} />);
 
-    expect(await screen.findByText(/built-in Matchmaking model/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Preview mode: live jobs and providers are not connected/i)).toBeInTheDocument();
     expect(screen.getByText("Example: build a wallet-safe FLOP miner dashboard")).toBeInTheDocument();
     expect(screen.getByText("Federated Technocore Specialist")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Draft FLOP request" }));
+    expect(onDraftRequest).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("matchmaking").textContent).not.toMatch(/404|Not Found/i);
   });
 });

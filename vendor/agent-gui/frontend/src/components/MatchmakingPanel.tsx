@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
+import { DashboardNotice } from "./DashboardNotice";
 import type { MatchmakingCandidate, MatchmakingEntry, MatchmakingOverview } from "../types";
 
 const button = { height: 32, padding: "0 11px", borderRadius: 6, border: "1px solid #2563eb", background: "#10204a", color: "#bfdbfe", fontSize: 11, fontWeight: 900, cursor: "pointer" } as const;
 const badgeBase = { padding: "3px 7px", borderRadius: 6, fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" } as const;
-const offlineMessage = "Live OSA backend is not available here. Showing the built-in Matchmaking model instead of a raw API error.";
+const offlineMessage = "Preview mode: live jobs and providers are not connected on this page. The built-in model shows how OSA will route a FLOP request when the backend is live.";
 
 function fallbackMatchmakingView(): MatchmakingOverview {
   return {
@@ -32,7 +33,7 @@ function fallbackMatchmakingView(): MatchmakingOverview {
         room: "offline",
         seq: "example-job",
         title: "Example: build a wallet-safe FLOP miner dashboard",
-        preview: "Matchmaking reads the job text, extracts required skills, ranks local and federated providers, and explains missing capability or trust gaps before any market action exists.",
+        preview: "A FLOP request defines model hash, latency, FLOPs, confidentiality and fee. Matchmaking extracts skills, ranks providers, and explains trust gaps before any bid or execution exists.",
         text_hash: "offline-demo",
         required_skills: ["coding", "testing", "security_review", "technocore"],
         observed_at: null,
@@ -150,7 +151,7 @@ function MatchCard({ entry }: { entry: MatchmakingEntry }) {
   </article>;
 }
 
-export function MatchmakingPanel() {
+export function MatchmakingPanel({ onDraftRequest }: { onDraftRequest?: () => void }) {
   const [view, setView] = useState<MatchmakingOverview | null>(null);
   const [includeUnsafe, setIncludeUnsafe] = useState(false);
   const [includeClaimed, setIncludeClaimed] = useState(false);
@@ -196,14 +197,23 @@ export function MatchmakingPanel() {
         Include stale and untrusted providers
       </label>
     </div>
-    {error && <div role="status" className="osa-dashboard-card" style={{ padding: 10, color: "#fde68a", borderColor: "#a16207", background: "#1f1b10", fontSize: 12 }}>{error}</div>}
+    {error && <DashboardNotice eyebrow="Preview mode" title="Matchmaking can still be explored">
+      <span>{error}</span>
+      <div className="osa-notice-actions">
+        {onDraftRequest && <button type="button" className="osa-primary-action" onClick={onDraftRequest}>Draft FLOP request</button>}
+        <span>Connect the live OSA backend to replace this model with real jobs and providers.</span>
+      </div>
+    </DashboardNotice>}
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
       <span style={badge("matched")}>{view?.status.matched_count || 0} matched</span>
       <span style={badge("partial")}>{view?.status.partial_count || 0} partial</span>
       <span style={badge("remote")}>{view?.status.provider_count || 0} providers</span>
       <span style={badge("remote")}>RECOMMENDATION ONLY</span>
     </div>
-    {!loading && !matches.length && <div style={{ padding: 12, border: "1px dashed #334155", borderRadius: 8, color: "#94a3b8", fontSize: 12 }}>No open jobs to match.</div>}
+    {!loading && !matches.length && <div style={{ padding: 12, border: "1px dashed #334155", borderRadius: 8, color: "#94a3b8", fontSize: 12, display: "grid", gap: 9 }}>
+      <span>No open jobs to match yet. Create a request draft first, then connect a live backend when you are ready to publish it.</span>
+      {onDraftRequest && <button type="button" className="osa-primary-action" onClick={onDraftRequest}>Draft FLOP request</button>}
+    </div>}
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,390px),1fr))", gap: 10 }}>
       {matches.map((entry) => <MatchCard key={entry.id} entry={entry} />)}
     </div>

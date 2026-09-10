@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
+import { DashboardNotice } from "./DashboardNotice";
 import type { FlopMinerOverview, FlopOperatorCheck, FlopOperatorIntegrationStep, FlopOperatorLifecycleStep, FlopOperatorSourceRef, FlopValidatorOverview } from "../types";
 
 type Kind = "miner" | "validator";
@@ -215,7 +216,7 @@ function OperatorPage({ kind }: { kind: Kind }) {
       setView(kind === "miner" ? await api.flop.miner() : await api.flop.validator());
     } catch {
       setView(baseFallback(kind));
-      setError("Live OSA backend is not available here. Showing the built-in FLOP/Technocore integration plan instead of a raw API error.");
+      setError("Preview mode: live operator telemetry is not connected on this page. The built-in FLOP and Technocore plan shows the manual path without registering hardware, stake or settlement.");
     } finally {
       setLoading(false);
     }
@@ -241,7 +242,10 @@ function OperatorPage({ kind }: { kind: Kind }) {
           <button type="button" onClick={() => void load()} disabled={loading} style={buttonStyle}>{loading ? "Refreshing" : "Refresh"}</button>
         </div>
       </header>
-      {error && <div role="alert" className="osa-dashboard-card" style={{ padding: 12, color: "#fca5a5", borderColor: "#7f1d1d", background: "#2a1015" }}>{error}</div>}
+      {error && <DashboardNotice eyebrow="Preview mode" title={`${title} operator guide`}>
+        <span>{error}</span>
+        <div className="osa-notice-actions"><span>Use this page to understand readiness. Connect the live OSA backend before checking hardware, signing operator records or joining protocol flows.</span></div>
+      </DashboardNotice>}
       {view && <>
         <div className="osa-stat-strip">
           <div className="osa-dashboard-card osa-stat-card"><div>{view.readiness.filter((item) => item.status === "ready").length}</div><span>Ready checks</span></div>

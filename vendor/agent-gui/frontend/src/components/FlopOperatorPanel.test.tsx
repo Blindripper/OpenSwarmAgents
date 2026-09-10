@@ -86,11 +86,11 @@ describe("FlopOperatorPanel", () => {
     expect(screen.queryByRole("button", { name: /start|stake|register|attest|author/i })).not.toBeInTheDocument();
   });
 
-  it("shows a useful built-in operator guide instead of raw 404 text", async () => {
+  it("shows a useful preview operator guide instead of raw 404 text", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() => notFoundResponse());
     render(<MinerPanel />);
 
-    expect(await screen.findByText(/built-in FLOP\/Technocore integration plan/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Preview mode: live operator telemetry is not connected/i)).toBeInTheDocument();
     expect(screen.getByText("Create operator DID")).toBeInTheDocument();
     expect(screen.getByText("Wire PoUI settlement")).toBeInTheDocument();
     expect(screen.getByTestId("flop-miner-panel").textContent).not.toMatch(/404|Not Found/i);

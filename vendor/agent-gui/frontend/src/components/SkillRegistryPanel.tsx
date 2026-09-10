@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
+import { DashboardNotice } from "./DashboardNotice";
 import type { SkillRegistryOverview, SkillRegistryProvider } from "../types";
 
 type Source = "all" | "local" | "federated";
 
 const button = { height: 32, padding: "0 11px", borderRadius: 6, border: "1px solid #2a8c72", background: "#10251f", color: "#7ee0c2", fontSize: 11, fontWeight: 900, cursor: "pointer" } as const;
 const field = { height: 34, borderRadius: 7, border: "1px solid #2a3558", background: "#111827", color: "#e5e7eb", fontSize: 12, padding: "0 10px", minWidth: 0 } as const;
-const offlineMessage = "Live OSA backend is not available here. Showing the built-in Skill Registry model instead of a raw API error.";
+const offlineMessage = "Preview mode: live Skill Registry records are not connected on this page. The built-in catalog shows how signed capability claims feed Matchmaking.";
 
 function fallbackProvider(overrides: Partial<SkillRegistryProvider> = {}): SkillRegistryProvider {
   return {
@@ -177,7 +178,10 @@ export function SkillRegistryPanel() {
       <input type="checkbox" checked={includeUnsafe} onChange={(event) => { const next = event.target.checked; setIncludeUnsafe(next); void load(query, source, next); }} />
       Include stale and untrusted skill claims
     </label>
-    {error && <div role="status" className="osa-dashboard-card" style={{ padding: 10, color: "#fde68a", borderColor: "#a16207", background: "#1f1b10", fontSize: 12 }}>{error}</div>}
+    {error && <DashboardNotice eyebrow="Preview mode" title="Provider catalog preview">
+      <span>{error}</span>
+      <div className="osa-notice-actions"><span>Connect the live OSA backend to replace preview providers with exact signed node, agent and DID records.</span></div>
+    </DashboardNotice>}
     {(view?.status.capability_error || view?.status.reputation_error) && <div style={{ color: "#fde68a", fontSize: 11 }}>Cached registry context: {view.status.capability_error || view.status.reputation_error}</div>}
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
       <span style={badge("verified")}>{view?.status.skill_count || 0} skills</span>

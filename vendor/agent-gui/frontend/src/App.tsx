@@ -17,6 +17,7 @@ import { MinerPanel, ValidatorPanel } from "./components/FlopOperatorPanel";
 import { NetworkOperationsPanel } from "./components/NetworkOperationsPanel";
 import { SkillRegistryPanel } from "./components/SkillRegistryPanel";
 import { MatchmakingPanel } from "./components/MatchmakingPanel";
+import { FlopSessionFlowPanel } from "./components/FlopSessionFlowPanel";
 import { SkillFinderPanel } from "./components/SkillFinderPanel";
 import { FederatedWorkbenchPanel } from "./components/FederatedWorkbenchPanel";
 import { TrustPanel } from "./components/TrustPanel";
@@ -46,6 +47,18 @@ const LEGACY_PUBLIC_TEAM_ID = "public-room";
 const LEGACY_PUBLIC_ROOMS_TEAM_ID = "public-rooms-room";
 const PUBLIC_PROJECTS_TEAM_ID = "public-projects-room";
 const PUBLIC_TEAM_IDS = new Set([LEGACY_PUBLIC_TEAM_ID, LEGACY_PUBLIC_ROOMS_TEAM_ID, PUBLIC_PROJECTS_TEAM_ID]);
+const FLOP_REQUEST_TEMPLATE = [
+  "FLOP Session Request",
+  "",
+  "Model hash: ",
+  "Latency target: ",
+  "FLOPs budget: ",
+  "Confidentiality: public metadata / private payload",
+  "Fee: preview only until settlement rail is enabled",
+  "",
+  "Task:",
+  "Describe the inference or agent work you want routed through Matchmaking.",
+].join("\n");
 // Shown until the backend reports the selected model's real capability.
 const EMPTY_REASONING_OPTIONS: { value: ReasoningEffort; label: string }[] = [];
 
@@ -1512,6 +1525,27 @@ export default function App() {
     queuePendingDeskTextareaFocus(desk.id);
   }
 
+  function draftFlopSessionRequest() {
+    const home = teams.find((team) => team.id === HOME_TEAM_ID);
+    const reusable = home?.desks.find((desk) => (
+      "isPending" in desk
+      && !pendingAssignments[desk.id]
+      && !(pendingTexts[desk.id] || "").trim()
+    ));
+    const desk = reusable || makePending();
+    if (!reusable) {
+      setTeams((prev) => prev.map((team) => team.id === HOME_TEAM_ID ? { ...team, desks: [...team.desks, desk] } : team));
+    }
+    setPendingTexts((prev) => ({
+      ...prev,
+      [desk.id]: (prev[desk.id] || "").trim() ? prev[desk.id] : FLOP_REQUEST_TEMPLATE,
+    }));
+    selectDashboardTab("workbench");
+    setActivePendingDeskId(desk.id);
+    setFocusedDeskId(desk.id);
+    queuePendingDeskTextareaFocus(desk.id);
+  }
+
   function addRoom() {
     const roomNumber = teams.filter((team) => team.id !== HOME_TEAM_ID && !PUBLIC_TEAM_IDS.has(team.id)).length + 1;
     const id = `room-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -2406,17 +2440,22 @@ export default function App() {
           <div className="osa-dashboard-inner">
             <header className="osa-page-hero">
               <div>
-                <div className="osa-page-eyebrow">Discovery and routing</div>
+                <div className="osa-page-eyebrow">FLOP market workflow</div>
                 <div className="osa-page-title">Market</div>
-                <div className="osa-page-copy">Start here. Matchmaking reads jobs, checks the Skill Registry, weighs trust and reputation, then explains which agent is the best candidate. No bids, no execution and no payment happen from this screen.</div>
+                <div className="osa-page-copy">Start here when you have work to route. Draft a FLOP session request, let Matchmaking explain the best provider, then move to Miner and Validator readiness only when the protocol gates are satisfied.</div>
               </div>
             </header>
+            <FlopSessionFlowPanel
+              onDraftRequest={draftFlopSessionRequest}
+              onOpenMiner={() => selectDashboardTab("miner")}
+              onOpenValidator={() => selectDashboardTab("validator")}
+            />
             <div className="osa-command-grid">
-              <div className="osa-action-card" data-accent="blue"><strong>1. Match a job</strong><span>See ranked recommendations and missing skill gaps.</span><em>Main action: decide who should handle the work.</em></div>
-              <div className="osa-action-card" data-accent="green"><strong>2. Inspect providers</strong><span>Check which local or federated agents claim each skill.</span><em>Source: signed Capability Registry rows.</em></div>
-              <div className="osa-action-card" data-accent="cyan"><strong>3. Use local profiles</strong><span>Move a verified local profile into a workspace.</span><em>Remote providers stay recommendation-only until bidding.</em></div>
+              <div className="osa-action-card" data-accent="blue"><strong>Draft the request</strong><span>Write the model hash, latency, FLOPs, confidentiality and fee intent before anything is submitted.</span><em>Action: creates a local Workspace draft.</em></div>
+              <div className="osa-action-card" data-accent="green"><strong>Match the provider</strong><span>Compare the request with local and federated skill claims, trust state and reputation evidence.</span><em>Action: inspect recommendations.</em></div>
+              <div className="osa-action-card" data-accent="cyan"><strong>Choose the safe next step</strong><span>Use a local profile now, or wait for later bidding and settlement phases for remote providers.</span><em>No auto-bid, no execution.</em></div>
             </div>
-            <MatchmakingPanel />
+            <MatchmakingPanel onDraftRequest={draftFlopSessionRequest} />
             <SkillRegistryPanel />
             <SkillFinderPanel onUseLocalAgent={useLocalAgentFromSkillFinder} />
           </div>

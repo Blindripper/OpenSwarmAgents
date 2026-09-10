@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 export function dashboardOfflineMessage(feature: string): string {
-  return `${feature} needs the live OSA backend. This dashboard is showing the safe setup view instead of a raw API error.`;
+  return `${feature} needs the live OSA backend. This dashboard is showing a safe setup view with the next useful step.`;
 }
 
 export function isBackendUnavailable(cause: unknown): boolean {

@@ -1065,6 +1065,11 @@ try {
   await expectText(page, "body", "REVOKED");
   assert(!(await page.locator("body").innerText()).match(/privateKey|PRIVATE KEY|seed|pkcs8|agent_signature|node_signature|signature:\s*[A-Za-z0-9_-]{32,}|\bsig\b/i), "Vault registry UI should not render raw signatures or signing material");
   await page.getByRole("button", { name: /Market/ }).click();
+  await expectText(page, '[data-testid="flop-session-flow"]', "Request -> Match -> Prove -> Settle");
+  await expectText(page, '[data-testid="flop-session-flow"]', "Draft request");
+  await page.getByTestId("flop-session-flow").getByRole("button", { name: "Draft request" }).click();
+  await page.waitForFunction(() => Array.from(document.querySelectorAll("textarea")).some((textarea) => textarea.value.includes("FLOP Session Request")));
+  await page.getByRole("button", { name: /Market/ }).click();
   const marketOrder = await page.evaluate(() => {
     const match = document.querySelector('[data-testid="matchmaking"]');
     const registry = document.querySelector('[data-testid="skill-registry"]');

@@ -64,13 +64,15 @@ The **Federated Workbench** projects existing signed federation snapshots into b
 
 ## Market
 
-Market contains discovery and routing, separate from job execution and deals. The dashboard puts **Matchmaking** first because it is the practical decision surface: which agent should handle which job.
+Market contains the FLOP session workflow, separate from job execution and deals. The first screen follows the production-shaped flow from the FLOP intro: **Request -> Match -> Prove -> Settle**. Today the safe primary action is **Draft request**, which creates a local Workspaces draft with model hash, latency, FLOPs, confidentiality, fee, and task fields. It does not publish to a mempool, start a session, open a miner connection, submit proofs, or settle value.
+
+The dashboard puts **Matchmaking** first because it is the practical decision surface: which agent should handle which job.
 
 **Matchmaking** ranks open jobs against the Skill Registry. OSA derives required skill hints from bounded job previews, then scores local and federated providers by skill overlap, verification state, and exact-identity reputation evidence. The result is `osa-matchmaking/1` recommendation metadata only: local providers can be shown as selectable candidates for existing human-driven flows, while federated providers remain recommendation-only until later bidding phases. The matcher never claims a job, starts a session, spawns a connector, executes work, sends a bid, shares files, or creates payment obligations.
 
 **Skill Registry** is the provider catalog behind Matchmaking. It exposes the machine-readable `osa-skill-registry/1` catalog derived from signed Capability Registry records. It groups normalized skills such as `coding`, `testing`, `research`, or `security_review` by local and federated providers, exact node/agent/DID bindings, verification state, and exact-identity reputation context. The catalog is read-only market metadata: it cannot bid, start work, spawn connectors, share files, or settle payment.
 
-When AgentGUI is served as a static page without the live OSA API, Miner, Validator, Matchmaking, and Skill Registry render built-in explanatory fallback cards instead of raw `404 Not Found` text. Live nodes still use the `/api/flop/*`, `/api/matchmaking`, and `/api/skill-registry` endpoints whenever they are available.
+When AgentGUI is served as a static page without the live OSA API, Miner, Validator, Matchmaking, and Skill Registry render guided preview/setup cards with safe next steps. Live nodes still use the `/api/flop/*`, `/api/matchmaking`, and `/api/skill-registry` endpoints whenever they are available.
 
 **Find Agent by Skill** remains deterministic AND matching over the same verified data. Only eligible local profiles expose **Use in Workspace**, which selects the profile on a pending private desk without starting work. Federated results remain discovery-only.
 
