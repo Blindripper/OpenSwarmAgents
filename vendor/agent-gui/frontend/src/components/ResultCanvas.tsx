@@ -2,15 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { api } from "../api/client";
 import type { ActivityEvent, AuditResult, FileNode, FilePreviewData, Session, Team } from "../types";
+import type { AutomodeEntry } from "../useAutomode";
 import { MarkdownView } from "./FilePreview";
 
-type CanvasTab = "result" | "audit" | "task" | "files";
+type CanvasTab = "result" | "audit" | "task" | "files" | "jobs";
 
 interface Props {
   open: boolean;
   teams: Team[];
   focusedDeskId?: string | null;
   taskContents?: Record<string, string>;
+  autoModeHistory?: AutomodeEntry[];
+  autoModeRunning?: boolean;
   onOpenChange: (open: boolean) => void;
   onPreview: (data: FilePreviewData) => void;
 }
@@ -36,12 +39,15 @@ export function ResultCanvas({
   teams,
   focusedDeskId = null,
   taskContents = {},
+  autoModeHistory = [],
+  autoModeRunning = false,
   onOpenChange,
   onPreview,
 }: Props) {
   const [tab, setTab] = useState<CanvasTab>("result");
   const [deskData, setDeskData] = useState<Record<string, DeskCanvasData>>({});
   const [loading, setLoading] = useState(false);
+  const [autoJobsOpen, setAutoJobsOpen] = useState(false);
 
   const projectTeams = useMemo(() => {
     return teams
@@ -147,6 +153,7 @@ export function ResultCanvas({
           ["audit", "Audit"],
           ["task", "Task"],
           ["files", "Files"],
+          ["jobs", "Jobs"],
         ] as const).map(([id, label]) => (
           <button
             key={id}
@@ -165,7 +172,9 @@ export function ResultCanvas({
       </div>
 
       <div style={bodyStyle}>
-        {projectSessions.length === 0 ? (
+        {tab === "jobs" ? (
+          <JobsView history={autoModeHistory} running={autoModeRunning} />
+        ) : projectSessions.length === 0 ? (
           <div style={emptyStyle}>Start a desk to show project results.</div>
         ) : (
           <div style={{ display: "grid", gap: 12 }}>
@@ -201,6 +210,76 @@ export function ResultCanvas({
         )}
       </div>
     </aside>
+  );
+}
+
+function JobsView({ history, running }: { history: AutomodeEntry[]; running: boolean }) {
+  if (history.length === 0 && !running) {
+    return (
+      <div style={emptyStyle}>
+        No automode jobs yet. Activate 🤖 Auto on a desk and completed jobs will show here.
+      </div>
+    );
+  }
+  const badge = (status: AutomodeEntry["status"]) => {
+    const map: Record<AutomodeEntry["status"], { bg: string; color: string; border: string; label: string }> = {
+      scanning: { bg: "#0f2131", color: "#38bdf8", border: "#1e6091", label: "SCANNING" },
+      matched: { bg: "#1f3010", color: "#a3e635", border: "#558520", label: "MATCHED" },
+      accepted: { bg: "#10251f", color: "#7ee0c2", border: "#2a8c72", label: "ACCEPTED" },
+      executing: { bg: "#241f10", color: "#facc15", border: "#7a6420", label: "EXECUTING" },
+      completing: { bg: "#151a2e", color: "#a5b4fc", border: "#3d4a8c", label: "WRAPPING UP" },
+      completed: { bg: "#10251f", color: "#7ee0c2", border: "#2a8c72", label: "DONE" },
+      failed: { bg: "#2a1015", color: "#fca5a5", border: "#7f1d1d", label: "FAILED" },
+    };
+    return map[status];
+  };
+  if (running) {
+    return (
+      <div style={{ display: "grid", gap: 8, padding: "10px 0" }}>
+        <div style={{ fontSize: 12, color: "#7ee0c2", fontWeight: 900 }}>● Automode active — scanning every 30s</div>
+        {history.length === 0 && <div style={emptyStyle}>Waiting for first job…</div>}
+        {history.map((entry) => {
+          const b = badge(entry.status);
+          return (
+            <div key={entry.id} style={{ border: `1px solid ${b.border}`, borderRadius: 8, padding: 10, background: b.bg }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+                <strong style={{ fontSize: 11, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.jobTitle}</strong>
+                <span style={{ fontSize: 9, fontWeight: 900, color: b.color, flexShrink: 0 }}>{b.label}</span>
+              </div>
+              {entry.resultSummary && <div style={{ color: "#94a3b8", fontSize: 10, marginTop: 4 }}>{entry.resultSummary}</div>}
+              {entry.activityLog.length > 0 && (
+                <div style={{ color: "#64748b", fontSize: 9, marginTop: 4 }}>{entry.activityLog[entry.activityLog.length - 1]}</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "grid", gap: 8, padding: "10px 0" }}>
+      {history.map((entry) => {
+        const b = badge(entry.status);
+        return (
+          <div key={entry.id} style={{ border: `1px solid ${b.border}`, borderRadius: 8, padding: 10, background: b.bg }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+              <strong style={{ fontSize: 11, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.jobTitle}</strong>
+              <span style={{ fontSize: 9, fontWeight: 900, color: b.color, flexShrink: 0 }}>{b.label}</span>
+            </div>
+            <div style={{ color: "#64748b", fontSize: 9, marginTop: 4 }}>#{entry.jobRoom} · {new Date(entry.startedAt).toLocaleString()}</div>
+            {entry.resultSummary && <div style={{ color: "#94a3b8", fontSize: 10, marginTop: 4 }}>{entry.resultSummary}</div>}
+            {entry.activityLog.length > 0 && (
+              <details style={{ marginTop: 6 }}>
+                <summary style={{ fontSize: 9, color: "#64748b", cursor: "pointer" }}>Activity log</summary>
+                <div style={{ fontSize: 9, color: "#94a3b8", lineHeight: 1.6, marginTop: 4 }}>
+                  {entry.activityLog.map((line, i) => <div key={i}>{line}</div>)}
+                </div>
+              </details>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -240,6 +319,8 @@ function DeskCanvasSection({
         <AuditView audit={data.audit} />
       ) : tab === "task" ? (
         <MarkdownBox content={data.taskFile || taskContent || "No task loaded."} />
+      ) : tab === "jobs" ? (
+        <div style={emptyStyle}>Job history is shown per-desession at the Canvas level.</div>
       ) : (
         <FilesView nodes={data.files} onPreview={onPreview} />
       )}

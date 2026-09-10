@@ -917,12 +917,16 @@ export default function App() {
     const automodeHandler = () => {
       setShowAutoHistory((prev) => !prev);
       if (!autoHook.state.running) {
+        // Use the first running session if available, otherwise use a virtual id
         const session = teams.flatMap((t) => t.desks).find((d) => !("isPending" in d) && (d as Session).is_running) as Session | undefined;
         if (session) {
           setAutoModeSessionId(session.id);
           setAutoModeAgentId(session.agent || "technocore-specialist");
-          autoHook.start();
+        } else {
+          setAutoModeSessionId("automode-default");
+          setAutoModeAgentId("technocore-specialist");
         }
+        setTimeout(() => autoHook.start(), 100);
       }
     };
     window.addEventListener("osa:automode-toggle", automodeHandler);
@@ -2591,6 +2595,8 @@ export default function App() {
           teams={projectCanvasTeams}
           focusedDeskId={selectedCanvasSession?.id ?? null}
           taskContents={taskContents}
+          autoModeHistory={autoHook.state.history}
+          autoModeRunning={autoHook.state.running}
           onOpenChange={(open) => {
             setResultCanvasOpen(open);
             writeStoredItem(RESULT_CANVAS_OPEN_KEY, String(open));
