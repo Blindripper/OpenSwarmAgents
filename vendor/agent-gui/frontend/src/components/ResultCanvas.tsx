@@ -13,6 +13,8 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
+const CANVAS_W = 340;
+
 const stateColors: Record<string, { bg: string; color: string; border: string; label: string }> = {
   scanning: { bg: "#0f2131", color: "#38bdf8", border: "#1e6091", label: "SCANNING" },
   matched: { bg: "#1f3010", color: "#a3e635", border: "#558520", label: "MATCHED" },
@@ -32,104 +34,122 @@ export function ResultCanvas({ open, autoModeHistory = [], autoModeRunning = fal
   const completed = autoModeHistory.filter((e) => e.status === "completed").length;
   const failed = autoModeHistory.filter((e) => e.status === "failed").length;
 
-  if (!open) {
-    return (
-      <button type="button" onClick={() => onOpenChange(true)} title="Open job history"
-        style={{
-          position: "fixed", right: 16, bottom: 60, zIndex: 9000,
-          width: 26, height: 26, borderRadius: 6,
-          border: "1px solid #2a3558", background: "#121828",
-          color: "#94a3b8", fontSize: 13, cursor: "pointer",
-        }}>
-        📋
-      </button>
-    );
-  }
-
   return (
-    <aside style={{
-      width: 340, minWidth: 300, maxWidth: "42vw", height: "100%",
-      display: "flex", flexDirection: "column",
-      borderLeft: "1px solid #273453",
-      background: "rgba(9, 15, 26, 0.98)",
-      color: "#cbd5e1", fontSize: 12, overflow: "hidden",
-    }}>
-      <div style={{
-        display: "flex", justifyContent: "space-between", alignItems: "center",
-        padding: "12px 14px", borderBottom: "1px solid #273453", flexShrink: 0,
-      }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 950, color: "#e2e8f0" }}>Job History</div>
-          <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>
-            {autoModeHistory.length
-              ? `${autoModeHistory.length} job${autoModeHistory.length === 1 ? "" : "s"} · ✓ ${completed} · ✗ ${failed}`
-              : "No automode jobs yet"}
-            {autoModeRunning ? " ● active" : ""}
-          </div>
-        </div>
-        <button type="button" onClick={() => onOpenChange(false)}
-          style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid #2a3558", background: "#121828", color: "#94a3b8", fontSize: 13, cursor: "pointer", flexShrink: 0 }}>
-          ›
-        </button>
+    <>
+      {/* Fixed toggle tab — always visible at the right edge */}
+      <div
+        onClick={() => onOpenChange(!open)}
+        style={{
+          position: "fixed", right: open ? CANVAS_W : 0, top: "50%", transform: "translateY(-50%)",
+          zIndex: 9000,
+          height: 60, width: 22,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "rgba(11, 18, 28, .96)",
+          border: "1px solid #273453",
+          borderRight: "none",
+          borderRadius: "6px 0 0 6px",
+          cursor: "pointer",
+          color: "#94a3b8", fontSize: 11, fontWeight: 900,
+          transition: "right .22s ease",
+          userSelect: "none",
+        }}
+        title={open ? "Close job history" : "Open job history"}
+      >
+        <span style={{ writingMode: "vertical-rl", letterSpacing: 1 }}>
+          {open ? "›" : "📋 Jobs"}
+        </span>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "grid", gap: 10, alignContent: "start" }}>
-        {autoModeHistory.length === 0 && (
-          <div style={{ border: "1px dashed #2a3558", borderRadius: 8, padding: 20, textAlign: "center", color: "#94a3b8", fontSize: 12, marginTop: 8 }}>
-            No automode jobs yet. Activate 🤖 Auto on a desk to get started.
+      {/* Panel — slides in from the right */}
+      <aside style={{
+        position: "fixed", top: 0, right: open ? 0 : -CANVAS_W - 12,
+        width: CANVAS_W, height: "100%",
+        zIndex: 8999,
+        display: "flex", flexDirection: "column",
+        borderLeft: "1px solid #273453",
+        background: "rgba(9, 15, 26, .99)",
+        color: "#cbd5e1", fontSize: 12,
+        overflow: "hidden",
+        transition: "right .22s ease",
+        boxShadow: open ? "-8px 0 40px rgba(0,0,0,.5)" : "none",
+      }}>
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          padding: "12px 14px", borderBottom: "1px solid #273453", flexShrink: 0,
+        }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 950, color: "#e2e8f0" }}>Job History</div>
+            <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>
+              {autoModeHistory.length
+                ? `${autoModeHistory.length} job${autoModeHistory.length === 1 ? "" : "s"} · ✓ ${completed} · ✗ ${failed}`
+                : "No automode jobs yet"}
+              {autoModeRunning ? " ● active" : ""}
+            </div>
           </div>
-        )}
-        {autoModeHistory.map((entry) => {
-          const c = stateColors[entry.status] || stateColors.failed;
-          const pipeline = pipelineStages(entry.status);
-          return (
-            <button key={entry.id} type="button" onClick={() => setSelected(entry)}
-              style={{
-                textAlign: "left", display: "grid", gap: 6,
-                padding: 12, borderRadius: 9, cursor: "pointer", width: "100%",
-                border: `1px solid ${c.border}`,
-                background: `linear-gradient(180deg, ${c.bg.replace(")", "").replace("rgba", "rgba")}dd, #0b1525)`,
-                boxShadow: "0 12px 24px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.04)",
-              }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 6, alignItems: "flex-start" }}>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <strong style={{ fontSize: 13, color: "#f1f5f9", lineHeight: 1.3, display: "block" }}>{entry.agentId}</strong>
-                  <span style={{ fontSize: 10, color: "#94a3b8", marginTop: 2, display: "block" }}>{entry.jobTitle || entry.jobId}</span>
+          <button type="button" onClick={() => onOpenChange(false)}
+            style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid #2a3558", background: "#121828", color: "#94a3b8", fontSize: 13, cursor: "pointer", flexShrink: 0 }}>
+            ›
+          </button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "grid", gap: 10, alignContent: "start" }}>
+          {autoModeHistory.length === 0 && (
+            <div style={{ border: "1px dashed #2a3558", borderRadius: 8, padding: 20, textAlign: "center", color: "#94a3b8", fontSize: 12, marginTop: 8 }}>
+              No automode jobs yet. Activate 🤖 Auto on a desk to get started.
+            </div>
+          )}
+          {autoModeHistory.map((entry) => {
+            const c = stateColors[entry.status] || stateColors.failed;
+            const stages = pipelineStages(entry.status);
+            return (
+              <button key={entry.id} type="button" onClick={() => setSelected(entry)}
+                style={{
+                  textAlign: "left", display: "grid", gap: 6,
+                  padding: 12, borderRadius: 9, cursor: "pointer", width: "100%",
+                  border: `1px solid ${c.border}`,
+                  background: `linear-gradient(180deg, ${c.bg}, #0b1525)`,
+                  boxShadow: "0 12px 24px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.04)",
+                }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 6, alignItems: "flex-start" }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <strong style={{ fontSize: 13, color: "#f1f5f9", lineHeight: 1.3, display: "block" }}>{entry.agentId}</strong>
+                    <span style={{ fontSize: 10, color: "#94a3b8", marginTop: 2, display: "block" }}>{entry.jobTitle || entry.jobId}</span>
+                  </div>
+                  <span style={{
+                    height: 18, padding: "0 6px", borderRadius: 4, flexShrink: 0, whiteSpace: "nowrap",
+                    fontSize: 9, fontWeight: 900, color: c.color, border: `1px solid ${c.border}`,
+                    background: "rgba(11, 21, 37, .85)",
+                  }}>{c.label}</span>
                 </div>
-                <span style={{
-                  height: 18, padding: "0 6px", borderRadius: 4, flexShrink: 0, whiteSpace: "nowrap",
-                  fontSize: 9, fontWeight: 900, color: c.color, border: `1px solid ${c.border}`,
-                  background: "rgba(11, 21, 37, .85)",
-                }}>{c.label}</span>
-              </div>
-              <div style={{ color: "#64748b", fontSize: 9 }}>#{entry.jobRoom} · {new Date(entry.startedAt).toLocaleString()}</div>
-              {entry.resultSummary && <div style={{ color: "#94a3b8", fontSize: 10, lineHeight: 1.4 }}>{entry.resultSummary}</div>}
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 2 }}>
-                {pipeline.map((s, i) => (
-                  <span key={i} style={{
-                    fontSize: 8, fontWeight: 900, padding: "2px 5px", borderRadius: 3,
-                    background: s.done ? "rgba(126,224,194,.12)" : "rgba(71,85,105,.15)",
-                    color: s.done ? "#7ee0c2" : "#64748b",
-                    border: `1px solid ${s.done ? "rgba(126,224,194,.3)" : "rgba(71,85,105,.3)"}`,
-                  }}>
-                    {s.done ? "✓ " : ""}{s.label}
-                  </span>
-                ))}
-              </div>
-              <div style={{ color: "#38bdf8", fontSize: 9, fontWeight: 900, marginTop: 2 }}>View details →</div>
-            </button>
-          );
-        })}
-      </div>
+                <div style={{ color: "#64748b", fontSize: 9 }}>#{entry.jobRoom} · {new Date(entry.startedAt).toLocaleString()}</div>
+                {entry.resultSummary && <div style={{ color: "#94a3b8", fontSize: 10, lineHeight: 1.4 }}>{entry.resultSummary}</div>}
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 2 }}>
+                  {stages.map((s, i) => (
+                    <span key={i} style={{
+                      fontSize: 8, fontWeight: 900, padding: "2px 5px", borderRadius: 3,
+                      background: s.done ? "rgba(126,224,194,.12)" : "rgba(71,85,105,.15)",
+                      color: s.done ? "#7ee0c2" : "#64748b",
+                      border: `1px solid ${s.done ? "rgba(126,224,194,.3)" : "rgba(71,85,105,.3)"}`,
+                    }}>
+                      {s.done ? "✓ " : ""}{s.label}
+                    </span>
+                  ))}
+                </div>
+                <div style={{ color: "#38bdf8", fontSize: 9, fontWeight: 900, marginTop: 2 }}>View details →</div>
+              </button>
+            );
+          })}
+        </div>
+      </aside>
 
       {selected && <JobDetailModal entry={selected} onClose={() => setSelected(null)} />}
-    </aside>
+    </>
   );
 }
 
 function JobDetailModal({ entry, onClose }: { entry: AutomodeEntry; onClose: () => void }) {
   const c = stateColors[entry.status] || stateColors.failed;
-  const pipeline = pipelineStages(entry.status);
+  const stages = pipelineStages(entry.status);
   return createPortal(
     <div style={{
       position: "fixed", inset: 0, zIndex: 30000,
@@ -156,7 +176,7 @@ function JobDetailModal({ entry, onClose }: { entry: AutomodeEntry; onClose: () 
             <h2 style={{ fontSize: 17, fontWeight: 950, color: "#f1f5f9", marginTop: 3, lineHeight: 1.3 }}>{entry.agentId}</h2>
             <span style={{ color: "#94a3b8", fontSize: 11, marginTop: 2, display: "block" }}>{entry.jobTitle}</span>
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
-              {pipeline.map((s, i) => (
+              {stages.map((s, i) => (
                 <span key={i} style={{
                   fontSize: 9, fontWeight: 900, padding: "2px 8px", borderRadius: 4,
                   background: s.done ? "rgba(126,224,194,.15)" : "rgba(71,85,105,.2)",
