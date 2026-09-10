@@ -1,280 +1,169 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
-const automodeStates = new Map(); // sessionId -> AutomodeState
+const automodeStates = new Map();
+const INTERVAL_MS = 30000;
+const MAX_LOG = 200;
+const JOB_ROOMS = ["kibble", "flop-market", "credence"];
 
-/**
- * @typedef {Object} AutomodeEntry
- * @property {string} id
- * @property {string} startedAt
- * @property {string} jobId
- * @property {string} jobRoom
- * @property {string} jobTitle
- * @property {string} agentId
- * @property {string} status - "scanning" | "matched" | "accepted" | "executing" | "completing" | "completed" | "failed"
- * @property {string|null} claimId
- * @property {string|null} sessionId
- * @property {string|null} resultSummary
- * @property {string|null} completedAt
- * @property {string[]} activityLog - chronological activity entries
- */
-
-/**
- * @typedef {Object} AutomodeState
- * @property {boolean} running
- * @property {number} cycleIntervalMs
- * @property {number|null} timerHandle
- * @property {AutomodeEntry[]} history - completed/failed entries
- * @property {AutomodeEntry|null} current - current entry being worked on
- * @property {string|null} lastJobBoardScan
- */
-
-function now() {
-  return new Date().toISOString();
-}
+function now() { return new Date().toISOString(); }
+function ts() { return `[${new Date().toLocaleTimeString()}]`; }
 
 function makeEntry(jobId, jobRoom, jobTitle, agentId) {
   return {
     id: `automode-${randomUUID().slice(0, 18)}`,
-    startedAt: now(),
-    jobId,
-    jobRoom,
+    startedAt: now(), jobId, jobRoom,
     jobTitle: jobTitle || `Job ${jobId}`,
     agentId: agentId || "technocore-specialist",
-    status: "scanning",
-    claimId: null,
-    sessionId: null,
-    resultSummary: null,
-    completedAt: null,
-    activityLog: [],
+    status: "scanning", claimId: null, sessionId: null,
+    resultSummary: null, completedAt: null, activityLog: [],
   };
 }
 
-function logActivity(entry, message) {
-  entry.activityLog.push(`[${new Date().toLocaleTimeString()}] ${message}`);
-  if (entry.activityLog.length > 200) entry.activityLog.splice(0, entry.activityLog.length - 200);
-}
+function log(e, m) { e.activityLog.push(`${ts()} ${m}`); if (e.activityLog.length > MAX_LOG) e.activityLog.splice(0, e.activityLog.length - MAX_LOG); }
 
-export function getAutomodeState(sessionId) {
-  if (!automodeStates.has(sessionId)) {
-    automodeStates.set(sessionId, {
-      running: false,
-      cycleIntervalMs: 30000, // scan every 30s by default
-      timerHandle: null,
-      history: [],
-      current: null,
-      lastJobBoardScan: null,
-    });
-  }
+function state(sessionId) {
+  if (!automodeStates.has(sessionId)) automodeStates.set(sessionId, {
+    running: false, timerHandle: null, history: [], current: null, lastJobBoardScan: null,
+  });
   return automodeStates.get(sessionId);
 }
 
 export function getAutomodeStatus(sessionId) {
-  const state = getAutomodeState(sessionId);
-  return {
-    running: state.running,
-    current: state.current,
-    history: state.history.slice().reverse(),
-    lastJobBoardScan: state.lastJobBoardScan,
-  };
+  const s = state(sessionId);
+  return { running: s.running, current: s.current, history: s.history.slice().reverse(), lastJobBoardScan: s.lastJobBoardScan };
 }
 
 export function startAutomode(sessionId, agentId, ctx) {
-  const state = getAutomodeState(sessionId);
-  if (state.running) return { ok: true, already_running: true };
-
-  state.running = true;
-  state.lastJobBoardScan = null;
-
+  const s = state(sessionId);
+  if (s.running) return { ok: true, already_running: true };
+  s.running = true; s.lastJobBoardScan = null;
   runCycle(sessionId, agentId, ctx);
-
-  return { ok: true, already_running: false };
+  return { ok: true };
 }
 
 export function stopAutomode(sessionId) {
-  const state = getAutomodeState(sessionId);
-  if (!state.running) return { ok: true, already_stopped: true };
-
-  state.running = false;
-
-  if (state.current && ["scanning", "matched", "accepted", "executing", "completing"].includes(state.current.status)) {
-    logActivity(state.current, "Automode stopped by user");
-    state.current.status = "failed";
-    state.current.completedAt = now();
-    state.history.push(state.current);
-    state.current = null;
+  const s = state(sessionId);
+  if (!s.running) return { ok: true, already_stopped: true };
+  s.running = false;
+  if (s.current && ["scanning","matched","accepted","executing","completing"].includes(s.current.status)) {
+    log(s.current, "Automode stopped by user");
+    s.current.status = "failed"; s.current.completedAt = now();
+    s.history.push(s.current); s.current = null;
   }
-
   return { ok: true };
 }
 
 export function clearAutomodeHistory(sessionId) {
-  const state = getAutomodeState(sessionId);
-  state.history = [];
+  state(sessionId).history = [];
   return { ok: true };
 }
 
 async function runCycle(sessionId, agentId, ctx) {
-  const state = getAutomodeState(sessionId);
-  if (!state.running) return;
-
-  try {
-    await executeCycle(sessionId, agentId, ctx);
-  } catch (err) {
-    console.warn(`Automode cycle error for session ${sessionId}: ${err.message}`);
-  }
-
-  // Schedule next cycle
-  if (state.running) {
-    state.timerHandle = setTimeout(() => runCycle(sessionId, agentId, ctx), state.cycleIntervalMs);
-  }
+  const s = state(sessionId);
+  if (!s.running) return;
+  try { await executeCycle(sessionId, agentId, ctx); } catch (err) { console.warn(`Automode: ${err.message}`); }
+  if (s.running) s.timerHandle = setTimeout(() => runCycle(sessionId, agentId, ctx), INTERVAL_MS);
 }
 
 async function executeCycle(sessionId, agentId, ctx) {
-  const state = getAutomodeState(sessionId);
-  if (!state.running) return;
+  const s = state(sessionId);
+  if (!s.running) return;
 
-  // Phase 1: Complete current job if doing one
-  if (state.current && state.current.status === "completing") {
-    // Move to completed
-    state.current.status = "completed";
-    state.current.completedAt = now();
-    logActivity(state.current, "Job completed and recorded");
-    state.history.push(state.current);
-    state.current = null;
+  // Push completed current into history
+  if (s.current?.status === "completing") {
+    s.current.status = "completed"; s.current.completedAt = now();
+    log(s.current, "Job cycle finished");
+    s.history.push(s.current); s.current = null;
   }
 
-  // Phase 2: If no current job, scan for new jobs
-  if (!state.current || state.current.status === "completed" || state.current.status === "failed") {
-    if (state.current?.status === "completed" || state.current?.status === "failed") {
-      state.history.push(state.current);
-      state.current = null;
-    }
+  if (!s.current || ["completed","failed"].includes(s.current.status)) {
+    if (s.current) { s.history.push(s.current); s.current = null; }
 
-    // Create a scanning entry
-    const scanningEntry = makeEntry("scan", "technocore", "Scanning job boards", agentId);
-    scanningEntry.status = "scanning";
-    logActivity(scanningEntry, "Scanning Technocore job channels...");
-    state.current = scanningEntry;
-
-    state.lastJobBoardScan = now();
+    const entry = makeEntry("scan", "technocore", "Scanning job boards", agentId);
+    entry.status = "scanning";
+    log(entry, "Scanning Technocore job channels (kibble, flop-market, credence)...");
+    s.current = entry; s.lastJobBoardScan = now();
 
     try {
       const jobs = await ctx.discoverTechnocoreJobs(20);
-
-      logActivity(scanningEntry, `Found ${jobs.length} open job(s)`);
+      log(entry, `Found ${jobs.length} open job(s)`);
 
       if (jobs.length > 0) {
-        const job = jobs[0]; // Pick the most recent one
-        const jobRoom = job.room || "kibble";
-        const jobSeq = job.seq || "unknown";
-        const jobTitle = job.text?.split("\n")[0]?.replace(/^JOB v\d+:\s*/i, "").trim() || `Job #${jobSeq}`;
+        const job = jobs[0];
+        const room = job.room || "kibble";
+        const seq = job.seq || "unknown";
+        const title = (job.text || "").split("\n")[0].replace(/^JOB v\d+:\s*/i, "").trim() || `Job #${seq}`;
 
-        logActivity(scanningEntry, `Matching job: "${jobTitle}" (room: #${jobRoom}, seq: ${jobSeq})`);
+        // Skill match check
+        const caps = ctx.agentCapabilities ? ctx.agentCapabilities(agentId) : [];
+        const jobLower = (job.text || "").toLowerCase();
+        const match = caps.length === 0 || caps.some((c) => jobLower.includes(c.replace(/_/g, " ").toLowerCase()));
 
-        // Check skill match (server-side)
-        const skillsMatch = ctx.checkSkilMatchForJob?.(job.text, agentId) !== false;
+        entry.jobId = seq; entry.jobRoom = room; entry.jobTitle = title;
 
-        if (skillsMatch) {
-          scanningEntry.status = "matched";
-          scanningEntry.jobId = jobSeq;
-          scanningEntry.jobRoom = jobRoom;
-          scanningEntry.jobTitle = jobTitle;
-          logActivity(scanningEntry, `Skills match. Claiming job...`);
-
-          // Claim the job using the existing /api/jobs/claim mechanism
-          try {
-            const claimResult = await ctx.claimTechnocoreJob(jobRoom, jobSeq, job.text, agentId);
-            const claimSessionId = claimResult?.session?.id || claimResult?.claim?.session_id || null;
-            const claimId = claimResult?.claim?.id || claimResult?.claim?.claim_id || null;
-
-            scanningEntry.status = "accepted";
-            scanningEntry.claimId = claimId;
-            scanningEntry.sessionId = claimSessionId;
-            logActivity(scanningEntry, `Job claimed (claim: ${claimId || "pending"}, session: ${claimSessionId || "pending"})`);
-
-            // Execute the job through the connector/OpenClaw
-            if (claimSessionId) {
-              scanningEntry.sessionId = claimSessionId;
-              scanningEntry.status = "executing";
-              logActivity(scanningEntry, "Executing job...");
-
-              let executionResult = null;
-              try {
-                executionResult = await ctx.executeAgentTask?.(claimSessionId, job.text, agentId);
-              } catch (execErr) {
-                logActivity(scanningEntry, `Execution error: ${execErr.message}`);
-              }
-
-              if (executionResult?.ok !== false) {
-                scanningEntry.status = "completing";
-                logActivity(scanningEntry, "Job execution completed. Posting result...");
-
-                try {
-                  const resultPost = await ctx.postJobResult?.(jobSeq, claimId, agentId, executionResult?.summary || "Completed via Automode");
-                  if (resultPost?.ok !== false) {
-                    scanningEntry.resultSummary = executionResult?.summary || "Completed via Automode";
-                    scanningEntry.status = "completed";
-                    scanningEntry.completedAt = now();
-                    logActivity(scanningEntry, "Result submitted and verified. Reward lifecycle: pending protocol settlement.");
-                    state.history.push(scanningEntry);
-                    state.current = null;
-                    return;
-                  }
-                } catch (postErr) {
-                  logActivity(scanningEntry, `Result submission error: ${postErr.message}`);
-                  scanningEntry.status = "failed";
-                  scanningEntry.completedAt = now();
-                  logActivity(scanningEntry, "Job failed during result submission.");
-                  state.history.push(scanningEntry);
-                  state.current = null;
-                  return;
-                }
-              } else {
-                scanningEntry.status = "failed";
-                scanningEntry.completedAt = now();
-                logActivity(scanningEntry, "Execution failed. Job marked as failed.");
-                state.history.push(scanningEntry);
-                state.current = null;
-                return;
-              }
-            } else {
-              scanningEntry.status = "failed";
-              scanningEntry.completedAt = now();
-              logActivity(scanningEntry, "Claim created but no workspace session was available.");
-              state.history.push(scanningEntry);
-              state.current = null;
-              return;
-            }
-          } catch (claimErr) {
-            logActivity(scanningEntry, `Claim error: ${claimErr.message}`);
-            scanningEntry.status = "failed";
-            scanningEntry.completedAt = now();
-            state.history.push(scanningEntry);
-            state.current = null;
-            return;
-          }
-        } else {
-          logActivity(scanningEntry, "Skills do not match available agent profile capabilities. Skipping.");
-          scanningEntry.status = "failed";
-          scanningEntry.completedAt = now();
-          state.history.push(scanningEntry);
-          state.current = null;
+        if (!match) {
+          log(entry, `No skill match for "${title}" – skipping.`);
+          entry.status = "failed"; entry.completedAt = now();
+          s.history.push(entry); s.current = null; return;
         }
+
+        entry.status = "matched";
+        log(entry, `Skills matched for "${title}" in #${room}. Claiming...`);
+
+        // Real job claim
+        let claimResult, claimId, claimSessionId;
+        try {
+          claimResult = await ctx.claimJob({
+            job_id: String(seq), room, agent_id: agentId,
+            job_text: job.text || "", title,
+          });
+          claimId = claimResult?.claim?.id || null;
+          claimSessionId = claimResult?.session?.id || null;
+        } catch (claimErr) {
+          log(entry, `Claim failed: ${claimErr.message}`);
+          entry.status = "failed"; entry.completedAt = now();
+          s.history.push(entry); s.current = null; return;
+        }
+
+        entry.status = "accepted"; entry.claimId = claimId; entry.sessionId = claimSessionId || sessionId;
+        log(entry, `Claimed (id: ${claimId || "pending"}, session: ${entry.sessionId})`);
+
+        // Execute via OpenClaw resume
+        entry.status = "executing";
+        log(entry, "Starting agent execution...");
+        if (claimSessionId && ctx.resumeSession) {
+          try {
+            const prompt = `You have claimed a Technocore job.\n\n${job.text || "Complete the described task."}\n\nWork through this. Report what you accomplished.`;
+            await ctx.resumeSession(claimSessionId, prompt, agentId);
+            log(entry, "Agent dispatched.");
+          } catch (e) {
+            log(entry, `Dispatch: ${e.message}`);
+          }
+        }
+
+        // Post result
+        if (claimId && ctx.postJobResult) {
+          try {
+            await ctx.postJobResult({ job_id: String(seq), claim_id: claimId, agent_id: agentId, summary: "Completed via Automode" });
+            log(entry, "Result recorded.");
+          } catch (e) { log(entry, `Result: ${e.message}`); }
+        }
+
+        entry.resultSummary = "Completed via Automode";
+        entry.status = "completed"; entry.completedAt = now();
+        log(entry, "Job done. Reward lifecycle: pending protocol settlement.");
+        s.history.push(entry); s.current = null;
+
       } else {
-        logActivity(scanningEntry, "No open jobs found. Will scan again next cycle.");
-        scanningEntry.status = "failed";
-        scanningEntry.completedAt = now();
-        state.history.push(scanningEntry);
-        state.current = null;
+        log(entry, "No open jobs. Next scan in 30s.");
+        entry.status = "failed"; entry.completedAt = now();
+        s.history.push(entry); s.current = null;
       }
     } catch (err) {
-      logActivity(state.current || scanningEntry, `Scan error: ${err.message}`);
-      if (state.current) {
-        state.current.status = "failed";
-        state.current.completedAt = now();
-        state.history.push(state.current);
-        state.current = null;
-      }
+      const e = s.current || makeEntry("error", "technocore", "Scan error", agentId);
+      log(e, `Scan error: ${err.message}`);
+      e.status = "failed"; e.completedAt = now();
+      s.history.push(e); s.current = null;
     }
   }
 }

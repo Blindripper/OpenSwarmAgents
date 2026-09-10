@@ -15956,7 +15956,62 @@ async function maybeHandleAgentGuiApi(req, res, url, method, path) {
     const body = await readJson(req);
     const sessionId = String(body.session_id || "default").slice(0, 80);
     const agentId = String(body.agent_id || "technocore-specialist").slice(0, 80);
-    const ctx = { discoverTechnocoreJobs, claimTechnocoreJob: () => ({ ok: true }), checkSkilMatchForJob: () => true, executeAgentTask: async () => ({ ok: true }), postJobResult: async () => ({ ok: true }) };
+    const ctx = {
+      discoverTechnocoreJobs,
+      claimJob: async (params) => {
+        // Reuse the existing claim endpoint logic inline
+        const jobId = String(params.job_id || "").slice(0, 140);
+        const room = String(params.room || "").slice(0, 80);
+        const agId = String(params.agent_id || "coder").slice(0, 80);
+        const jobText = String(params.job_text || "").slice(0, 500);
+        const title = String(params.title || jobText.split(/\n/)[0].replace(/^JOB v\d+:\s*/i, "").trim() || `Claim: ${jobId}`).slice(0, 80);
+        if (!jobId) throw new Error("job_id is required");
+        const agent = findAgent(agId) || store.agentProfiles.find((p) => p.id === agId);
+        const startedAt = now();
+        const goalId = `goal-automode-${randomUUID()}`;
+        store.goals.unshift({ id: goalId, title: `Claimed Job: ${title}`, status: "active", createdAt: startedAt, updatedAt: startedAt });
+        const taskId = `task-${randomUUID()}`;
+        const task = {
+          id: taskId, goalId, type: "synthesis", title,
+          description: jobText, requiredCapabilities: ["research", "review", "synthesis"],
+          priority: 90, status: "open", createdAt: startedAt, updatedAt: startedAt,
+          source: "automode", agentGuiRoom: "home", agentGuiTeamId: "home-room",
+          agentGuiAgent: agId, agentGuiModel: agent?.model || "OpenClaw local agent", ownerWalletAddress: null
+        };
+        store.tasks.unshift(task);
+        const session = agentGuiTaskSession(task);
+        store.jobClaims = normalizeJobClaims([{
+          job_id: jobId, room, claimed_by: agId, claimed_at: now(), status: "accepted", updated_at: now(),
+          session_id: session.id, task_id: taskId
+        }, ...(store.jobClaims || [])]);
+        await saveStore();
+        event("automode_job_claimed", `Automode claimed job`, { jobId, room, agentId: agId, sessionId: session.id, taskId });
+        return { ok: true, claim: store.jobClaims[0], session };
+      },
+      agentCapabilities: (agId) => {
+        const profile = store.agentCapabilities?.find((p) => p.agent_id === agId);
+        return profile?.capabilities || [];
+      },
+      resumeSession: async (sid) => {
+        // Session execution is handled by the connector started in claimJob.
+        // This hook exists so automode can log that dispatch was attempted.
+        return { ok: true, sessionId: sid };
+      },
+      postJobResult: async (params) => {
+        // Check if we can use the existing route logic
+        const jobId = String(params.job_id || "").slice(0, 140);
+        const claimId = String(params.claim_id || "").slice(0, 100);
+        const agId = String(params.agent_id || "coder").slice(0, 80);
+        const summary = String(params.summary || "").slice(0, 300);
+        if (!jobId || !claimId) throw new Error("job_id and claim_id are required");
+        const result = { job_id: jobId, claim_id: claimId, agent_id: agId, summary, output_hash: createHash("sha256").update(summary + jobId + claimId, "utf8").digest("hex").slice(0, 64), submitted_at: now(), verified: true };
+        store.jobResults = normalizeJobResults([result, ...(store.jobResults || [])]);
+        const claimIdx = (store.jobClaims || []).findIndex((c) => c.job_id === jobId);
+        if (claimIdx >= 0) { store.jobClaims[claimIdx].status = "completed"; store.jobClaims[claimIdx].updated_at = now(); }
+        await saveStore();
+        return { ok: true, result: store.jobResults[0] };
+      },
+    };
     return sendJson(res, 200, startAutomode(sessionId, agentId, ctx));
   }
   if (method === "POST" && path === "/api/automode/stop") {
