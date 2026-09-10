@@ -1329,6 +1329,23 @@ export function TeamRow({
                 data-desk-pending={isPending ? "1" : "0"}
                 style={{ position: "relative", flexShrink: 0 }}
               >
+                {/* Automode button — always visible on the desk card */}
+                {!readOnly && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent("osa:automode-toggle")); }}
+                    title="Automode: Agent sucht selbstständig auf Technocore nach Jobs, führt sie aus und claimt Belohnungen"
+                    style={{
+                      position: "absolute", top: 2, right: 2, zIndex: 15,
+                      height: 20, padding: "0 6px", borderRadius: 5,
+                      border: "1px solid #2a8c72", background: "rgba(16,37,31,.85)",
+                      color: "#7ee0c2", fontSize: 9, fontWeight: 900,
+                      cursor: "pointer", whiteSpace: "nowrap",
+                    }}
+                  >
+                    🤖 Auto
+                  </button>
+                )}
                 <div style={{
                   position: "relative", display: "flex", justifyContent: "center",
                   marginBottom: 4, height: 80, alignItems: "flex-end",
