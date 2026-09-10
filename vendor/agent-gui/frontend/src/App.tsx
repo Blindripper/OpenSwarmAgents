@@ -2593,16 +2593,12 @@ export default function App() {
         </div>
         <ResultCanvas
           open={resultCanvasOpen}
-          teams={projectCanvasTeams}
-          focusedDeskId={selectedCanvasSession?.id ?? null}
-          taskContents={taskContents}
           autoModeHistory={autoHook.state.history}
           autoModeRunning={autoHook.state.running}
           onOpenChange={(open) => {
             setResultCanvasOpen(open);
             writeStoredItem(RESULT_CANVAS_OPEN_KEY, String(open));
           }}
-          onPreview={handleFilePreview}
         />
       </div>
       {walletSelectorWallets && (
