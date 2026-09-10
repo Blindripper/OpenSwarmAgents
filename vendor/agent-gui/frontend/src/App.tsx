@@ -553,6 +553,7 @@ export default function App() {
   const [walletConnectPending, setWalletConnectPending] = useState(false);
   const [autoModeSessionId, setAutoModeSessionId] = useState<string | null>(null);
   const [autoModeAgentId, setAutoModeAgentId] = useState<string>("technocore-specialist");
+  const [autoModeCollapsed, setAutoModeCollapsed] = useState(false);
   const [showAutoHistory, setShowAutoHistory] = useState(false);
   const [autoModeInitialized, setAutoModeInitialized] = useState(false);
   const autoHook = useAutomode(autoModeSessionId ?? undefined, autoModeAgentId ?? undefined);
@@ -2905,10 +2906,11 @@ export default function App() {
         onCopy={copyDeskToHome}
       />
       {/* Automode floating overlay */}
-      {dashboardTab === "workbench" && (autoHook.state.running || autoHook.state.current || showAutoHistory) && (
+      {dashboardTab === "workbench" && (autoHook.state.running || autoHook.state.current || !autoModeCollapsed) && (
         <div style={{
           position: "fixed", bottom: 16, right: 16,
-          width: 400, maxHeight: 520,
+          width: autoModeCollapsed ? "auto" : 400,
+          maxHeight: autoModeCollapsed ? "auto" : 280,
           display: "flex", flexDirection: "column",
           overflow: "hidden", zIndex: 9999,
           border: "1px solid rgba(126, 224, 194, .42)",
@@ -2916,62 +2918,44 @@ export default function App() {
           background: "rgba(11, 18, 28, .98)",
           boxShadow: "0 18px 60px rgba(0, 0, 0, .5)",
         }}>
-          <div style={{
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-            padding: "8px 10px", borderBottom: "1px solid rgba(71, 85, 105, .5)",
-          }}>
+          <div
+            style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "8px 10px", borderBottom: "1px solid rgba(71, 85, 105, .5)",
+              cursor: "pointer", userSelect: "none",
+            }}
+            onClick={() => setAutoModeCollapsed(!autoModeCollapsed)}
+          >
             <span style={{ fontSize: 12, fontWeight: 950, color: "#7ee0c2" }}>
-              🤖 Automode {autoHook.state.running ? "• Active" : ""}
+              {autoModeCollapsed ? "▶ " : "▼ "}🤖 Automode {autoHook.state.running ? "• Active" : ""}
             </span>
             <div style={{ display: "flex", gap: 4 }}>
-              <button type="button" onClick={() => setShowAutoHistory(!showAutoHistory)}
-                style={{ height: 22, padding: "0 6px", borderRadius: 4, border: "1px solid #2a3558", background: "#121828", color: "#cbd5e1", fontSize: 9, fontWeight: 900, cursor: "pointer" }}>
-                {showAutoHistory ? "Status" : "History"}
-              </button>
-              {autoHook.state.running
-                ? <button type="button" onClick={() => autoHook.stop()}
+              {!autoModeCollapsed && (autoHook.state.running
+                ? <button type="button" onClick={(e) => { e.stopPropagation(); autoHook.stop(); }}
                     style={{ height: 22, padding: "0 6px", borderRadius: 4, border: "1px solid #7f1d1d", background: "#2a1015", color: "#fca5a5", fontSize: 9, fontWeight: 900, cursor: "pointer" }}>
                     Stop
                   </button>
-                : <button type="button" onClick={() => {
-                    const dsks = teams.flatMap(t => t.desks).filter(d => !("isPending" in d) && (d as any).is_running === true);
-                    if (dsks.length > 0) {
-                      const s = dsks[0] as any;
-                      setAutoModeSessionId(s.id);
-                      setAutoModeAgentId(s.agent || "technocore-specialist");
-                      autoHook.start();
-                    }
-                  }}
+                : <button type="button" onClick={(e) => { e.stopPropagation(); autoHook.start(); }}
                     style={{ height: 22, padding: "0 6px", borderRadius: 4, border: "1px solid #2a8c72", background: "#10251f", color: "#7ee0c2", fontSize: 9, fontWeight: 900, cursor: "pointer" }}>
                     Start
                   </button>
-              }
-              <button type="button" onClick={() => { if (!autoHook.state.running && !autoHook.state.current) setShowAutoHistory(false); }}
+              )}
+              <button type="button" onClick={(e) => { e.stopPropagation(); if (!autoHook.state.running && !autoHook.state.current) setShowAutoHistory(false); setAutoModeCollapsed(true); }}
                 style={{ height: 22, padding: "0 6px", borderRadius: 4, border: "1px solid #2a3558", background: "#121828", color: "#94a3b8", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                 ✕
               </button>
             </div>
           </div>
-          <div style={{ flex: 1, overflow: "auto", padding: 10 }}>
-            {showAutoHistory ? (
-              <AutomodeHistoryView history={autoHook.state.history} onClear={() => autoHook.clearHistory()} />
-            ) : (
+          {!autoModeCollapsed && (
+            <div style={{ flex: "none", overflow: "auto", padding: 10, maxHeight: 200 }}>
               <AutomodeControl
                 automodeState={autoHook.state}
-                onStart={() => {
-                  const dsks = teams.flatMap(t => t.desks).filter(d => !("isPending" in d) && (d as any).is_running === true);
-                  if (dsks.length > 0) {
-                    const s = dsks[0] as any;
-                    setAutoModeSessionId(s.id);
-                    setAutoModeAgentId(s.agent || "technocore-specialist");
-                  }
-                  autoHook.start();
-                }}
+                onStart={() => autoHook.start()}
                 onStop={() => autoHook.stop()}
                 agentId={autoModeAgentId}
               />
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
     </div>

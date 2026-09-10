@@ -213,6 +213,61 @@ export function ResultCanvas({
   );
 }
 
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+}
+
+function JobWorkView({ entry }: { entry: AutomodeEntry }) {
+  const [work, setWork] = useState<{ activity: ActivityEvent[]; consoleText: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const sid = (entry.sessionId && entry.sessionId !== "automode-default" && !entry.sessionId.startsWith("sim-"))
+    ? entry.sessionId
+    : null;
+
+  useEffect(() => {
+    if (!sid) { setWork(null); return; }
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([
+      api.sessions.activity(sid, 120).catch(() => [] as ActivityEvent[]),
+      api.sessions.consoleHistory(sid, 3000).catch(() => ({ text: "" })),
+    ])
+      .then(([act, cons]) => { if (!cancelled) setWork({ activity: act, consoleText: cons.text || "" }); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [sid]);
+
+  if (!sid) return <div style={{ fontSize: 9, color: "#64748b" }}>No linked session for this job.</div>;
+  if (loading) return <div style={{ fontSize: 9, color: "#64748b" }}>Loading agent work…</div>;
+  if (!work || (work.activity.length === 0 && !work.consoleText)) {
+    return <div style={{ fontSize: 9, color: "#64748b" }}>No recorded agent activity yet.</div>;
+  }
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      {work.activity.length > 0 && (
+        <div>
+          <div style={{ fontWeight: 900, fontSize: 9, color: "#cbd5e1", marginBottom: 3 }}>Agent activity</div>
+          {work.activity.slice(-20).map((ev, i) => (
+            <div key={i} style={{ fontSize: 9, color: "#94a3b8", lineHeight: 1.5 }}>
+              • {(ev.title || ev.event_type || "event").slice(0, 140)}
+            </div>
+          ))}
+        </div>
+      )}
+      {work.consoleText && (
+        <details>
+          <summary style={{ fontSize: 9, color: "#64748b", cursor: "pointer" }}>Console output</summary>
+          <pre style={{
+            fontSize: 9, color: "#94a3b8", lineHeight: 1.5,
+            whiteSpace: "pre-wrap", maxHeight: 180, overflow: "auto",
+            marginTop: 4, fontFamily: "ui-monospace, monospace",
+          }}>{stripAnsi(work.consoleText.slice(-3000))}</pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function JobsView({ history, running }: { history: AutomodeEntry[]; running: boolean }) {
   if (history.length === 0 && !running) {
     return (
@@ -250,6 +305,10 @@ function JobsView({ history, running }: { history: AutomodeEntry[]; running: boo
               {entry.activityLog.length > 0 && (
                 <div style={{ color: "#64748b", fontSize: 9, marginTop: 4 }}>{entry.activityLog[entry.activityLog.length - 1]}</div>
               )}
+              <details style={{ marginTop: 6 }}>
+                <summary style={{ fontSize: 9, color: "#64748b", cursor: "pointer" }}>What the agent did</summary>
+                <div style={{ marginTop: 5 }}><JobWorkView entry={entry} /></div>
+              </details>
             </div>
           );
         })}
@@ -276,6 +335,10 @@ function JobsView({ history, running }: { history: AutomodeEntry[]; running: boo
                 </div>
               </details>
             )}
+            <details style={{ marginTop: 6 }}>
+              <summary style={{ fontSize: 9, color: "#64748b", cursor: "pointer" }}>What the agent did</summary>
+              <div style={{ marginTop: 5 }}><JobWorkView entry={entry} /></div>
+            </details>
           </div>
         );
       })}
