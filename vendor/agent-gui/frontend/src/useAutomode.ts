@@ -129,7 +129,7 @@ async function waitForSessionCompletion(
 
   // Fetch final data
   const [consoleData] = await Promise.all([
-    apiGet<{ text: string }>(`/api/sessions/${sid}/console?limit=3000`).catch(() => ({ text: "" })),
+    apiGet<{ text: string }>(`/api/sessions/${sid}/console?limit=8000`).catch(() => ({ text: "" })),
   ]);
 
   if (Date.now() >= deadline) statusLine("Completed waiting (agent still running — result captured from partial output).");
@@ -261,7 +261,7 @@ export function useAutomode(sessionId: string | undefined, agentId: string | und
             setState((prev) => prev.current ? { ...prev, current } : prev);
           },
         );
-        consoleSnippet = result.consoleText.slice(0, 2000);
+        consoleSnippet = result.consoleText.slice(0, 12000);
         resultDetail = result.activityTitles.length > 0
           ? result.activityTitles.join("\n")
           : "Agent finished (no activity titles — see console output below)";
@@ -274,7 +274,7 @@ export function useAutomode(sessionId: string | undefined, agentId: string | und
       // --- Submit result ---
       current = log(current, "Posting result...");
       try {
-        const resultSummary = resultDetail.slice(0, 200);
+        const resultSummary = resultDetail.slice(0, 500);
         const resultPost = await apiPost<{ ok: boolean }>("/api/jobs/result", {
           job_id: String(job.seq ?? ""), claim_id: claimId || "unknown",
           agent_id: agentId, summary: resultSummary,
@@ -284,7 +284,7 @@ export function useAutomode(sessionId: string | undefined, agentId: string | und
         current = log(current, "Result endpoint noted.");
       }
 
-      current.resultSummary = resultDetail ? resultDetail.slice(0, 300) : `Completed: ${title}`;
+      current.resultSummary = resultDetail ? resultDetail.slice(0, 800) : `Completed: ${title}`;
       current.status = "completed";
       current.completedAt = new Date().toISOString();
       current = log(current, "Job completed. Pipeline: claimed \u2713 work done \u2713 result in \u2713 reward (requires TCLK deal + FLOP mainnet — pending until settlement rail is live).");
