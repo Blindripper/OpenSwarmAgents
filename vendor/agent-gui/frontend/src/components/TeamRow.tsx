@@ -1334,7 +1334,7 @@ export function TeamRow({
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent("osa:automode-toggle")); }}
-                    title="Automode: Agent sucht selbstständig auf Technocore nach Jobs, führt sie aus und claimt Belohnungen"
+                    title="Automode: agent autonomously hunts jobs on Technocore, executes them and claims rewards"
                     style={{
                       position: "absolute", top: 2, right: 2, zIndex: 15,
                       height: 20, padding: "0 6px", borderRadius: 5,

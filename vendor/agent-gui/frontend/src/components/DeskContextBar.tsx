@@ -76,6 +76,8 @@ export function DeskContextBar({
     if (config.profileModel) names.add(config.profileModel);
     for (const m of models) names.add(m);
     if (config.model) names.add(config.model);
+    // Include common model defaults so the dropdown is never empty.
+    for (const fb of ["OpenClaw local agent", "openai/gpt-5.5", "openai/gpt-5.4-mini", "openai/gpt-5.4-nano", "openrouter/deepseek/deepseek-v4-flash", "openrouter/deepseek/deepseek-v4"]) names.add(fb);
     return [...names];
   }, [config, models]);
 
@@ -207,8 +209,7 @@ export function DeskContextBar({
             <select
               value={config.model}
               onChange={(e) => focusAnd(onModelChange, e.target.value)}
-              disabled={!hasBackend}
-              title={config.baseUrl || "No backend URL in config"}
+              title={config.baseUrl || "Choose a model"}
               style={modelSelectStyle}
             >
               {modelOptions.map((m) => (
