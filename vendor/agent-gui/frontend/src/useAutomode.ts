@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "./api/client";
 
 export interface AutomodeEntry {
   id: string;
@@ -57,56 +58,83 @@ async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return r.json();
 }
 
-function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
-
 /**
- * Poll a session until the agent finishes, up to a timeout.
- * Returns the session's final console text and activity feed.
+ * Wait for session completion via WebSocket activity stream (instant) with
+ * a fallback poll every 5s up to 120 minutes. Returns console output + activity titles.
  */
-async function waitForSessionCompletion(sid: string, statusLine: (msg: string) => void): Promise<{ consoleText: string; activityTitles: string[] }> {
-  const deadline = Date.now() + 5 * 60 * 1000; // 5 min max wait
-  let consoleText = "";
-  let activityTitles: string[] = [];
-  let idleLogged = false;
-  let lastTitleCount = 0;
+async function waitForSessionCompletion(
+  sid: string,
+  onActivityTitle: (title: string) => void,
+  statusLine: (msg: string) => void,
+): Promise<{ consoleText: string; activityTitles: string[] }> {
+  const activityTitles: string[] = [];
+  const seenTitles = new Set<string>();
+  let finished = false;
+  let wsDone: any = null;
 
-  while (Date.now() < deadline) {
+  // Use WebSocket for instant done notification
+  const wsPromise = new Promise<void>((resolve) => {
     try {
-      const [session, consoleData, activityData] = await Promise.all([
-        apiGet<{ is_running?: boolean; task_solved?: boolean; ended_at?: string | null }>(`/api/sessions/${sid}`),
-        apiGet<{ text: string }>(`/api/sessions/${sid}/console?limit=3000`).catch(() => ({ text: "" })),
-        apiGet<{ events?: { title?: string; event_type?: string }[] }>(`/api/sessions/${sid}/activity?limit=120`).catch(() => ({ events: [] })),
-      ]);
-
-      consoleText = consoleData.text || "";
-      activityTitles = (activityData.events || []).map((e) => e.title || e.event_type || "event").filter(Boolean).slice(-30);
-
-      const freshTitles = activityTitles.length > lastTitleCount;
-      lastTitleCount = activityTitles.length;
-
-      const finished = !session.is_running || session.task_solved === true || session.ended_at != null;
-      if (finished) {
-        statusLine("Agent completed the work.");
-        return { consoleText, activityTitles };
-      }
-
-      // Only log status changes — suppress repeated idle lines
-      if (freshTitles) {
-        statusLine(`Agent produced activity: "${activityTitles[activityTitles.length - 1].slice(0, 80)}"`);
-        idleLogged = false;
-      } else if (!idleLogged) {
-        statusLine("Agent working... waiting for activity.");
-        idleLogged = true;
-      }
+      wsDone = api.sessions.activityWs(
+        sid,
+        (events) => {
+          for (const ev of events) {
+            const title = (ev.title || "").trim();
+            if (title && !seenTitles.has(title)) {
+              seenTitles.add(title);
+              activityTitles.push(title);
+              onActivityTitle(title);
+            }
+          }
+        },
+        (live) => {
+          // "done" type or idle status = agent finished
+          if (live.type === "done" || live.event === "idle") {
+            finished = true;
+            resolve();
+          }
+        },
+        () => resolve(), // WS closed — fall back to poll
+      );
     } catch {
-      // silent — retry next poll
+      resolve(); // WS failed — fall back to poll
     }
+  });
 
-    await sleep(4000);
-  }
+  // Fallback poll — resolves as soon as WS finishes, or after 120 min max
+  const deadline = Date.now() + 120 * 60 * 1000;
+  let pollLogged = false;
 
-  statusLine("Time out waiting for agent completion. Recording partial results.");
-  return { consoleText, activityTitles };
+  // Poll in parallel with WS, check every 5s
+  await Promise.race([
+    wsPromise,
+    (async () => {
+      while (Date.now() < deadline && !finished) {
+        await new Promise((r) => setTimeout(r, 5000));
+        try {
+          const session = await apiGet<{ is_running?: boolean; task_solved?: boolean; ended_at?: string | null }>(`/api/sessions/${sid}`);
+          if (!session.is_running || session.task_solved === true || session.ended_at != null) {
+            finished = true;
+            if (!pollLogged) statusLine("Agent completed the work.");
+            return;
+          }
+          if (!pollLogged) { statusLine("Agent working..."); pollLogged = true; }
+        } catch { /* retry */ }
+      }
+    })(),
+  ]);
+
+  // Cleanup WS safely (type is inferred from api client)
+  if (wsDone && typeof wsDone.close === "function") { try { wsDone.close(); } catch {} }
+
+  // Fetch final data
+  const [consoleData] = await Promise.all([
+    apiGet<{ text: string }>(`/api/sessions/${sid}/console?limit=3000`).catch(() => ({ text: "" })),
+  ]);
+
+  if (Date.now() >= deadline) statusLine("Completed waiting (agent still running — result captured from partial output).");
+
+  return { consoleText: consoleData.text || "", activityTitles: activityTitles.slice(-30) };
 }
 
 export function useAutomode(sessionId: string | undefined, agentId: string | undefined) {
@@ -133,7 +161,7 @@ export function useAutomode(sessionId: string | undefined, agentId: string | und
         return;
       }
 
-      // Skip jobs already claimed in history (deduplicate by room:seq)
+      // Deduplicate: skip already-claimed jobs
       const claimedKeys = new Set<string>();
       for (const entry of state.history) {
         const key = `${entry.jobRoom}:${entry.jobId}`;
@@ -192,29 +220,36 @@ export function useAutomode(sessionId: string | undefined, agentId: string | und
           content: `You have claimed a Technocore job:\n\n${job.text || "Complete the described task."}\n\nWork through this thoroughly. Report what you accomplished.`,
           agent: agentId,
         });
-        current = log(current, "Agent dispatched. Waiting for completion...");
+        current = log(current, "Agent dispatched. Waiting for completion (WebSocket → instant, fallback poll → 120 min timeout)...");
       } catch {
         current = log(current, "Dispatch note: agent runs independently.");
       }
       setState((prev) => ({ ...prev, current }));
 
-      // --- Wait for real completion + capture real output ---
+      // --- Wait for real completion via WebSocket + poll fallback ---
       current.status = "completing";
-      current = log(current, "Polling agent session for real result...");
+      current = log(current, "Waiting for agent to finish...");
       setState((prev) => ({ ...prev, current }));
 
       let resultDetail = "No agent output captured yet.";
       let consoleSnippet = "";
 
       if (claimSessionId && !claimSessionId.startsWith("sim-")) {
-        const result = await waitForSessionCompletion(claimSessionId, (msg) => {
-          current = log(current, msg);
-          setState((prev) => prev.current ? { ...prev, current } : prev);
-        });
+        const result = await waitForSessionCompletion(
+          claimSessionId,
+          (title) => {
+            current = log(current, `Activity: ${title.slice(0, 80)}`);
+            setState((prev) => prev.current ? { ...prev, current } : prev);
+          },
+          (msg) => {
+            current = log(current, msg);
+            setState((prev) => prev.current ? { ...prev, current } : prev);
+          },
+        );
+        consoleSnippet = result.consoleText.slice(0, 2000);
         resultDetail = result.activityTitles.length > 0
           ? result.activityTitles.join("\n")
-          : "Agent finished, no activity titles recorded.";
-        consoleSnippet = result.consoleText.slice(0, 2000);
+          : "Agent finished (no activity titles — see console output below)";
         current.resultDetail = consoleSnippet;
         current = log(current, `Agent produced ${result.activityTitles.length} activity events, ${consoleSnippet.length} chars of output.`);
       } else {
@@ -245,11 +280,10 @@ export function useAutomode(sessionId: string | undefined, agentId: string | und
         history: [current, ...prev.history].slice(0, 100),
       }));
     } catch (err) {
-      const entry = state.current || makeEntry("error", "technocore", "Error", agentId);
-      current = log(entry, `Cycle error: ${(err as Error).message || "Unknown error"}`);
+      current = log(current, `Cycle error: ${(err as Error).message || "Unknown error"}`);
       current.status = "failed";
       current.completedAt = new Date().toISOString();
-      setState((prev) => ({ ...prev, lastJobBoardScan: new Date().toISOString(), current: null, history: [current, ...prev.history].slice(0, 100) }));
+      setState((prev) => ({ ...prev, lastJobBoardScan: new Date().toISOString(), current: null, history: [current!, ...prev.history].slice(0, 100) }));
     }
   }, [sessionId, agentId, state.current]);
 
