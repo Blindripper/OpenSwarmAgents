@@ -25,7 +25,7 @@ class Runner {
     this.status = "idle";            // idle|starting|registering|forming|writing|submitting|done|failed
     this.step = "";
     this.words = [];                 // [{ word, agentId, seq, ts }]
-    this.lineSyllables = [];         // per line 0..9
+             // per line 0..9
     this.stateHash = null;           // latest referee receipt
     this.lastSeq = 0;                // team room cursor
     this.turns = 0;
@@ -46,7 +46,7 @@ function makeRunner(opts) {
   r.status = "idle";
   r.step = "";
   r.words = [];
-  r.lineSyllables = [];
+
   r.stateHash = null;
   r.lastSeq = 0;
   r.turns = 0;
@@ -288,30 +288,17 @@ async function waitForRefereeReceipt(runner, room, timeoutMs) {
  * Each turn a different agent proposes one word that fits the current line.
  */
 async function proposeWord(runner) {
-  if (!runner.words.length) {
-    runner.lineSyllables = [];
-    runner.step = "Starting line 1 — proposing first word…";
-  }
-
-  // figure out target: current line syllable fill
   const totalSyllables = runner.words.reduce((s, w) => s + w.syllables, 0);
-  const lineIndex = Math.min(13, Math.floor((totalSyllables) / 10));
-  const filledInLine = runner.lineSyllables.slice(-1)[0] || 0;
-  const target = 10 - filledInLine;
   if (totalSyllables >= 140) {
     runner.status = "done";
     runner.step = "Poem complete (140 syllables).";
     eventLine(runner, "poem complete — 14 lines × 10 syllables");
     return;
   }
-  if (target <= 0) {
-    // flush line
-    runner.lineSyllables.push(10);
-    runner.step = `Line ${lineIndex + 1} complete. Next line…`;
-    eventLine(runner, `line ${lineIndex + 1} complete`);
-    await delay(1200);
-    return;
-  }
+  const filledInLine = totalSyllables % 10;
+  const target = 10 - filledInLine;
+  const currentLine = Math.floor(totalSyllables / 10);
+  eventLine(runner, `target ${target} syl for line ${currentLine + 1}/14 (filled ${filledInLine}/10)`);
 
   const agent = runner.agents[runner.turns % runner.agents.length];
   runner.turns += 1;
@@ -337,13 +324,12 @@ async function proposeWord(runner) {
     request_id: `w-${cryptoRandomUuid().slice(0, 12)}`,
   };
 
-  runner.step = `Turn ${runner.turns}: ${agent.agentId} proposes "${pick.word}" (${pick.syllables} syl, line ${lineIndex + 1}/14)…`;
+  runner.step = `Turn ${runner.turns}: ${agent.agentId} proposes "${pick.word}" (${pick.syllables} syl, line ${currentLine + 1}/14)…`;
   eventLine(runner, `word "${pick.word}" by ${agent.agentId} (${pick.syllables})`);
   try {
     await runner.ctx.postSigned(agent.agentId, `d-sonnet-1-team-${runner.gameId}`, JSON.stringify(payload));
     runner.words.push({ word: pick.word, syllables: pick.syllables, agentId: agent.agentId, ts: nowIso() });
-    runner.lineSyllables = runner.lineSyllables.slice(0, -1);
-    runner.lineSyllables.push(filledInLine + pick.syllables <= 10 ? filledInLine + pick.syllables : 10);
+    // line fill is implicit via totalSyllables, no separate tracking needed
   } catch (err) {
     eventLine(runner, `word post failed (${err?.message}) — retrying next turn`);
   }
