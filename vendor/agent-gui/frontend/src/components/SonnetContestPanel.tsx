@@ -317,7 +317,7 @@ export function SonnetContestPanel({
 
 function AutoplayControl({ agents, xAccountUrl, openTime, now }: { agents: string[]; xAccountUrl: string; openTime: number; now: number }) {
   const [running, setRunning] = useState(false);
-  const [status, setStatus] = useState<{ step: string; status: string; words: unknown[]; log: string[]; turns: number; poemText?: string; gameId?: string } | null>(null);
+  const [status, setStatus] = useState<{ step: string; status: string; words: unknown[]; log: string[]; turns: number; poemText?: string; gameId?: string; agents?: string[] } | null>(null);
   const [pollRef, setPollRef] = useState<ReturnType<typeof setInterval> | null>(null);
   const [xPostIdInput, setXPostIdInput] = useState("");
   const [submitResult, setSubmitResult] = useState<{ ok: boolean; error?: string; poem_sha256?: string; payload?: unknown } | null>(null);
@@ -401,13 +401,17 @@ function AutoplayControl({ agents, xAccountUrl, openTime, now }: { agents: strin
               border: "1px solid rgba(126,224,194,.35)",
               background: "rgba(16,37,31,.9)",
             }}>
-              <div style={{ fontSize: 11, fontWeight: 900, color: "#7ee0c2", marginBottom: 6 }}>Completed poem</div>
+              <div style={{ fontSize: 11, fontWeight: 900, color: "#7ee0c2", marginBottom: 6 }}>Completed poem — copy for X post</div>
+              <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 6 }}>Include the attribution line outside the poem:</div>
               <pre style={{
                 fontSize: 13, color: "#e2e8f0", lineHeight: 1.7,
                 whiteSpace: "pre-wrap", fontFamily: "serif",
-              }}>{status.poemText}</pre>
+              }}>{status.poemText}
+
+---
+contest_id: sonnet-1, game_id: {status.gameId || "a"}, contributor: {status.agents?.[status.agents.length - 1] || "?"}</pre>
               <div style={{ marginTop: 8, fontSize: 10, color: "#94a3b8", lineHeight: 1.5, borderTop: "1px solid rgba(71,85,105,.3)", paddingTop: 8 }}>
-                <b>To submit:</b> 1. Publish this exact poem on X (with attribution: contest_id sonnet-1, game_id {status.gameId}).
+                <b>To submit:</b> 1. Post this exact poem (with attribution below) on X. 2. Enter the resulting X post ID(s) below. 3. Click "Submit poem".
                 2. Copy the X post ID(s). 3. Enter them below and click "Submit poem" — the server signs and posts <code>sonnet.submit.v1</code> for you.
               </div>
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
