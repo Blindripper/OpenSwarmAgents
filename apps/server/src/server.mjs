@@ -16603,7 +16603,7 @@ body: JSON.stringify({
               const sid = created.session?.id;
               if (!sid) return null;
               // Wait up to 15s for agent to suggest a word
-              const deadline = Date.now() + 15000;
+              const deadline = Date.now() + 300000; // 5 minutes for AI to craft a word
               while (Date.now() < deadline) {
                 await new Promise((r) => setTimeout(r, 5000));
                 try {

@@ -2507,12 +2507,6 @@ export default function App() {
           onRefresh={refreshNetworkActivity}
           onOpenProject={(projectId) => setProjectDetails({ projectId })}
         />
-      ) : dashboardTab === "sonnet" ? (
-        <SonnetContestPanel
-          agents={agents}
-          nodeDid={runtimeStatus?.technocoreDid}
-          onUseAgent={(agentId) => useLocalAgentFromSkillFinder(agentId)}
-        />
       ) : dashboardTab === "trustVault" ? (
         <div className="osa-dashboard-page">
           <div className="osa-dashboard-inner">
@@ -2910,6 +2904,13 @@ export default function App() {
         onClose={() => setProjectDetails(null)}
         onCopy={copyDeskToHome}
       />
+      <div style={{ display: dashboardTab === "sonnet" ? undefined : "none" }}>
+        <SonnetContestPanel
+          agents={agents}
+          nodeDid={runtimeStatus?.technocoreDid}
+          onUseAgent={(agentId) => useLocalAgentFromSkillFinder(agentId)}
+        />
+      </div>
       {/* Automode floating overlay */}
       {autoModePanelOpen && dashboardTab === "workbench" && (
         <div style={{

@@ -359,13 +359,13 @@ async function proposeWord(runner) {
   const usedWords = new Set(runner.words.map((w) => w.word.toLowerCase()));
 
   // Try agent-provided word first, fall back to dictionary
+  // Only use agent-picked words — no dictionary fallback for competition quality
   async function pickWord() {
     const poemSoFar = runner.words.map((w) => w.word).join(" ");
     const lineCount = Math.floor(runner.words.reduce((s, w) => s + w.syllables, 0) / 10);
     const allowedSet = new Set([...agent.did.toLowerCase()].filter((c) => c >= "a" && c <= "z"));
-    const promptContext = `Current poem so far: "${poemSoFar}"\nLine ${lineCount + 1}/14, need ${target} more syllable(s) to reach 10.\nYour DID letters: ${[...allowedSet].join("")}\nAlready used: ${runner.words.map(w => w.word).join(", ") || "none"}`;
+    const promptContext = `Current poem so far: "${poemSoFar}"\nLine ${lineCount + 1}/14, need ${target} more syllable(s) to reach 10.\nYour DID letters: ${[...allowedSet].join("")}\nAlready used: ${runner.words.map(w => w.word).join(", ") || "none"}.\n\nRespond with exactly one lowercase English word that fits the sonnet context.`;
 
-    // Try agent-based pick (fast timeout: 15s)
     if (runner.ctx.askWordProvider) {
       try {
         const agentWord = await runner.ctx.askWordProvider(agent.agentId, agent.did, promptContext, target);
@@ -382,12 +382,8 @@ async function proposeWord(runner) {
           }
         }
       } catch {}
-      eventLine(runner, `Agent word rejected — falling back to lexicon`);
     }
-    // Fall back to dictionary
-    if (runner.ctx.pickWord) {
-      return runner.ctx.pickWord(runner.ctx.lexicon, agent.did, target, usedWords);
-    }
+    eventLine(runner, `AI could not provide a valid word for this turn — retrying next cycle.`);
     return null;
   }
 
