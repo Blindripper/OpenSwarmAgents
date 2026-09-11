@@ -25,7 +25,6 @@ class Runner {
     this.status = "idle";            // idle|starting|registering|forming|writing|submitting|done|failed
     this.step = "";
     this.words = [];                 // [{ word, agentId, seq, ts }]
-             // per line 0..9
     this.stateHash = null;           // latest referee receipt
     this.lastSeq = 0;                // team room cursor
     this.turns = 0;
@@ -64,6 +63,29 @@ function eventLine(runner, message) {
 }
 
 function cryptoRandomUuid() { return randomUUID(); }
+
+/** Build canonical poem text from accepted words (14 lines, 4/4/4/2 stanzas). */
+function buildPoemText(words) {
+  if (!words.length) return "";
+  const lines = [];
+  let lineSyl = 0;
+  let lineWords = [];
+  for (const w of words) {
+    lineWords.push(w.word);
+    lineSyl += w.syllables;
+    if (lineSyl >= 10) {
+      lines.push(lineWords.join(" "));
+      lineWords = [];
+      lineSyl = 0;
+    }
+  }
+  if (lineWords.length) lines.push(lineWords.join(" "));
+  const stanzas = [];
+  for (let i = 0; i < lines.length; i += 4) {
+    stanzas.push(lines.slice(i, i + 4).join("\n"));
+  }
+  return stanzas.join("\n\n");
+}
 
 /**
  * Pick a word for the given proposer DID and target syllable increments.
@@ -132,7 +154,7 @@ export function createSonnetAutoplay({ log }) {
         status: runner.status,
         step: runner.step,
         words: runner.words.slice(0, 80),
-        lineSyllables: runner.lineSyllables,
+        poemText: buildPoemText(runner.words),
         stateHash: runner.stateHash,
         turns: runner.turns,
         startedAt: runner.startedAt,

@@ -317,7 +317,7 @@ export function SonnetContestPanel({
 
 function AutoplayControl({ agents, xAccountUrl, openTime, now }: { agents: string[]; xAccountUrl: string; openTime: number; now: number }) {
   const [running, setRunning] = useState(false);
-  const [status, setStatus] = useState<{ step: string; status: string; words: unknown[]; log: string[]; turns: number } | null>(null);
+  const [status, setStatus] = useState<{ step: string; status: string; words: unknown[]; log: string[]; turns: number; poemText?: string; gameId?: string } | null>(null);
   const [pollRef, setPollRef] = useState<ReturnType<typeof setInterval> | null>(null);
 
   const start = (async () => {
@@ -393,6 +393,23 @@ function AutoplayControl({ agents, xAccountUrl, openTime, now }: { agents: strin
             <span style={{ fontSize: 12, color: "#cbd5e1" }}>{status.step}</span>
             <span style={{ fontSize: 10, color: "#64748b" }}>{status.turns} turns · {status.words.length} words</span>
           </div>
+          {(status.status === "done") && status.poemText ? (
+            <div style={{
+              padding: 12, borderRadius: 8,
+              border: "1px solid rgba(126,224,194,.35)",
+              background: "rgba(16,37,31,.9)",
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 900, color: "#7ee0c2", marginBottom: 6 }}>Completed poem</div>
+              <pre style={{
+                fontSize: 13, color: "#e2e8f0", lineHeight: 1.7,
+                whiteSpace: "pre-wrap", fontFamily: "serif",
+              }}>{status.poemText}</pre>
+              <div style={{ marginTop: 8, fontSize: 10, color: "#94a3b8", lineHeight: 1.5, borderTop: "1px solid rgba(71,85,105,.3)", paddingTop: 8 }}>
+                <b>To submit:</b> 1. Publish this exact poem on X (with attribution: contest_id sonnet-1, game_id {status.gameId}).
+                2. Copy the X post ID(s). 3. Post a signed <code>sonnet.submit.v1</code> to mb-sonnet-1-submissions with the poem SHA-256 and post IDs.
+              </div>
+            </div>
+          ) : null}
           {status.log.length > 0 && (
             <div style={{
               fontSize: 10, color: "#94a3b8", lineHeight: 1.6, maxHeight: 140, overflow: "auto",
