@@ -16598,31 +16598,28 @@ async function handleApi(req, res, url) {
         const d = await r.json();
         const sid = d.session?.id;
         if (!sid) return null;
-        const deadline = Date.now() + 300000;
+        const deadline = Date.now() + 600000; // 10 min max wait
         while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 8000));
+          await new Promise((r) => setTimeout(r, 5000));
           try {
             const s = await (await fetch(base + "/api/sessions/" + sid)).json();
             if (!s.is_running || s.task_solved || s.ended_at) {
-              // Try activity feed first, then console output
-              let fullText = null;
+              let best = "";
               try {
-                const act = await (await fetch(base + "/api/sessions/" + sid + "/activity?limit=150")).json();
-                const msgs = (act.events || []).filter((e) => e.event_type === "message").map((e) => e.title || "").filter(Boolean);
-                if (msgs.length) fullText = msgs.join("\n");
+                const c = await (await fetch(base + "/api/sessions/" + sid + "/console?limit=8000")).json();
+                best = (c.text || "").replace(/\x1b\[[0-9;]*m/g, "").trim();
               } catch {}
-              if (!fullText) {
+              if (!best) {
                 try {
-                  const cons = await (await fetch(base + "/api/sessions/" + sid + "/console?limit=4000")).json();
-                  const text = (cons.text || "").replace(/[^m]*m/g, "").trim();
-                  const lines = text.split("\n").filter((l) => l.trim() && l.trim().length > 5 && !l.includes("```") && !l.startsWith("#"));
-                  if (lines.length >= 14) fullText = lines.slice(-18).join("\n");
-                  else if (text.length > 200) fullText = text.slice(-3000);
+                  const a = await (await fetch(base + "/api/sessions/" + sid + "/activity?limit=200")).json();
+                  const msgs = (a.events || []).filter((e) => e.event_type === "message").map((e) => e.title || "").filter(Boolean);
+                  if (msgs.length) best = msgs.join("\n");
                 } catch {}
               }
-              return fullText || null;
+              if (!best) best = "(poem generated but output was empty)";
+              return best;
             }
-          } catch { break; }
+          } catch { /* retry */ }
         }
       } catch {}
       return null;
