@@ -16604,10 +16604,23 @@ async function handleApi(req, res, url) {
           try {
             const s = await (await fetch(base + "/api/sessions/" + sid)).json();
             if (!s.is_running || s.task_solved || s.ended_at) {
-              const act = await (await fetch(base + "/api/sessions/" + sid + "/activity?limit=150")).json().catch(() => ({}));
-              const msgs = (act.events || []).filter((e) => e.event_type === "message").map((e) => e.title || "").filter(Boolean);
-              const fullText = msgs.join("\n") || null;
-              return fullText;
+              // Try activity feed first, then console output
+              let fullText = null;
+              try {
+                const act = await (await fetch(base + "/api/sessions/" + sid + "/activity?limit=150")).json();
+                const msgs = (act.events || []).filter((e) => e.event_type === "message").map((e) => e.title || "").filter(Boolean);
+                if (msgs.length) fullText = msgs.join("\n");
+              } catch {}
+              if (!fullText) {
+                try {
+                  const cons = await (await fetch(base + "/api/sessions/" + sid + "/console?limit=4000")).json();
+                  const text = (cons.text || "").replace(/[^m]*m/g, "").trim();
+                  const lines = text.split("\n").filter((l) => l.trim() && l.trim().length > 5 && !l.includes("```") && !l.startsWith("#"));
+                  if (lines.length >= 14) fullText = lines.slice(-18).join("\n");
+                  else if (text.length > 200) fullText = text.slice(-3000);
+                } catch {}
+              }
+              return fullText || null;
             }
           } catch { break; }
         }
