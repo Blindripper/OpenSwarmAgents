@@ -223,7 +223,10 @@ async function runLoop(runner) {
         await formTeam(runner);
       }
       if (runner.running && runner.status === "writing") {
-        await proposeWord(runner);
+        await generateFullPoem(runner);
+      }
+      if (runner.running && runner.status === "posting") {
+        await postOneWord(runner);
       }
       if (runner.running && runner.status === "done") {
         runner.step = "Poem complete — awaiting operator X publication + submission packet.";
@@ -340,79 +343,93 @@ async function waitForRefereeReceipt(runner, room, timeoutMs) {
  * Build the current poem line by line: 14 lines of 10 syllables (4/4/4/2).
  * Each turn a different agent proposes one word that fits the current line.
  */
-async function proposeWord(runner) {
-  const totalSyllables = runner.words.reduce((s, w) => s + w.syllables, 0);
-  if (totalSyllables >= 140) {
+async function generateFullPoem(runner) {
+  eventLine(runner, "Generating complete sonnet via AI agent...");
+  runner.step = "Generating poem...";
+  const poetAgent = runner.agents.find((a) => a.agentId === "sonnet-poet") || runner.agents[0];
+  const prompt = `Write a complete Shakespearean sonnet: 14 lines, ABAB CDCD EFEF GG rhyme scheme, exactly 10 syllables per line, 4/4/4/2 stanzas. Theme: Collaboration between AI agents discovering knowledge and creating together. Use vivid imagery and literary English. The final couplet should turn or resolve the poem.\n\nRespond with ONLY the 14 lines of the sonnet, one per line. No introduction, no explanation.`;
+
+  try {
+    const result = await runner.ctx.askWordProvider(poetAgent.agentId, poetAgent.did, prompt, -1);
+    if (!result || typeof result !== "string") throw new Error("No poem generated");
+
+    const lines = result.split("\n").map((l) => l.trim().replace(/[\[\]\d\.]+/g, "").trim()).filter((l) => l.length > 10).slice(0, 14);
+    if (lines.length < 14) { eventLine(runner, `AI returned ${lines.length} lines. Retrying...`); return; }
+
+    const pendingLines = [];
+    for (let li = 0; li < lines.length; li += 1) {
+      const tokens = lines[li].toLowerCase().replace(/[,.;:!?"'\u2018\u2019]/g, "").split(/\s+/).filter(Boolean);
+      const words = [];
+      for (const t of tokens) {
+        const word = t.replace(/[^a-z']/g, "");
+        const syl = runner.ctx.lexicon?.get(word) || 1;
+        words.push({ word, syl });
+      }
+      pendingLines.push({ lineIndex: li, words });
+    }
+
+    runner.pendingLines = pendingLines;
+    runner.status = "posting";
+    eventLine(runner, "Poem generated (" + lines.length + " lines). Starting word-by-word posting...");
+    for (const line of lines) eventLine(runner, "  " + line);
+  } catch (err) {
+    eventLine(runner, "Poem gen error: " + (err.message || err) + ". Retrying...");
+    await delay(10000);
+  }
+}
+
+function bestAgentForWord(word, agents) {
+  const letters = [...word.toLowerCase()].filter((c) => c >= "a" && c <= "z");
+  if (!letters.length) return agents[0];
+  const letterSet = new Set(letters);
+  for (const agent of agents) {
+    const allowed = new Set([...agent.did.toLowerCase()].filter((c) => c >= "a" && c <= "z"));
+    if ([...letterSet].every((c) => allowed.has(c))) return agent;
+  }
+  // Agent with most matching letters
+  let best = agents[0]; let bestScore = 0;
+  for (const agent of agents) {
+    const allowed = new Set([...agent.did.toLowerCase()].filter((c) => c >= "a" && c <= "z"));
+    const match = [...letterSet].filter((c) => allowed.has(c)).length;
+    if (match > bestScore) { bestScore = match; best = agent; }
+  }
+  return best;
+}
+
+async function postOneWord(runner) {
+  if (!runner.pendingLines || !runner.pendingLines.length) {
     runner.status = "done";
-    runner.step = "Poem complete (140 syllables).";
-    eventLine(runner, "poem complete — 14 lines × 10 syllables");
+    eventLine(runner, "poem complete — all words posted");
     return;
   }
-  const filledInLine = totalSyllables % 10;
-  const target = 10 - filledInLine;
-  const currentLine = Math.floor(totalSyllables / 10);
-  eventLine(runner, `target ${target} syl for line ${currentLine + 1}/14 (filled ${filledInLine}/10)`);
+  let next = null;
+  let li = 0; let wi = 0;
+  for (li = 0; li < runner.pendingLines.length && !next; li += 1) {
+    for (wi = 0; wi < runner.pendingLines[li].words.length && !next; wi += 1) {
+      const posted = runner.words.some((pw) => pw.line === li && pw.wordIdx === wi);
+      if (!posted) { next = { line: li, wordIdx: wi }; break; }
+    }
+  }
+  if (!next) { runner.status = "done"; eventLine(runner, "poem complete — 14 lines × 10 syllables"); return; }
 
-  const agent = runner.agents[runner.turns % runner.agents.length];
+  const wordObj = runner.pendingLines[next.line].words[next.wordIdx];
+  const agent = bestAgentForWord(wordObj.word, runner.agents);
   runner.turns += 1;
 
-  const usedWords = new Set(runner.words.map((w) => w.word.toLowerCase()));
-
-  // Try agent-provided word first, fall back to dictionary
-  // Only use agent-picked words — no dictionary fallback for competition quality
-  async function pickWord() {
-    const poemSoFar = runner.words.map((w) => w.word).join(" ");
-    const lineCount = Math.floor(runner.words.reduce((s, w) => s + w.syllables, 0) / 10);
-    const allowedSet = new Set([...agent.did.toLowerCase()].filter((c) => c >= "a" && c <= "z"));
-    const promptContext = `Current poem so far: "${poemSoFar}"\nLine ${lineCount + 1}/14, need ${target} more syllable(s) to reach 10.\nYour DID letters: ${[...allowedSet].join("")}\nAlready used: ${runner.words.map(w => w.word).join(", ") || "none"}.\n\nRespond with exactly one lowercase English word that fits the sonnet context.`;
-
-    if (runner.ctx.askWordProvider) {
-      try {
-        const agentWord = await runner.ctx.askWordProvider(agent.agentId, agent.did, promptContext, target, usedWords);
-        if (agentWord && typeof agentWord === "string") {
-          const clean = agentWord.trim().replace(/[^a-zA-Z'\-]/g, "").toLowerCase();
-          eventLine(runner, `Agent proposed "${clean}" — validating…`);
-          if (runner.ctx.lexicon) {
-            const sylCount = runner.ctx.lexicon.get(clean);
-            if (sylCount && sylCount <= target && !usedWords.has(clean)) {
-              let ok = true;
-              for (const c of clean) { if (c >= "a" && c <= "z" && !allowedSet.has(c)) { ok = false; break; } }
-              if (ok) return { word: clean, syllables: sylCount };
-            }
-          }
-        }
-      } catch {}
-    }
-    eventLine(runner, `AI could not provide a valid word for this turn — retrying next cycle.`);
-    return null;
-  }
-
-  const pick = await pickWord();
-  if (!pick) {
-    eventLine(runner, `no valid word for ${agent.agentId} (target ${target}) — skipping turn`);
-    await delay(3000);
-    return;
-  }
-
   const payload = {
-    type: "sonnet.word.v1",
-    contest_id: CONTEST_ID,
-    game_id: runner.gameId,
-    room_generation: runner.roomGeneration,
-    version: runner.words.length,
-    previous_state_hash: runner.stateHash || null,
-    word: pick.word,
-    request_id: `w-${cryptoRandomUuid().slice(0, 12)}`,
+    type: "sonnet.word.v1", contest_id: CONTEST_ID, game_id: runner.gameId,
+    room_generation: runner.roomGeneration, version: runner.words.length,
+    previous_state_hash: runner.stateHash || null, word: wordObj.word,
+    request_id: "w-" + cryptoRandomUuid().slice(0, 12),
   };
 
-  runner.step = `Turn ${runner.turns}: ${agent.agentId} proposes "${pick.word}" (${pick.syllables} syl, line ${currentLine + 1}/14)…`;
-  eventLine(runner, `word "${pick.word}" by ${agent.agentId} (${pick.syllables})`);
+  runner.step = "Line " + (next.line + 1) + "/14 " + agent.agentId + ": \"" + wordObj.word + "\"";
+  eventLine(runner, "word \"" + wordObj.word + "\" by " + agent.agentId + " (" + wordObj.syl + ")");
   try {
-    await runner.ctx.postSigned(agent.agentId, `d-sonnet-1-team-${runner.gameId}`, JSON.stringify(payload));
-    runner.words.push({ word: pick.word, syllables: pick.syllables, agentId: agent.agentId, ts: nowIso() });
-    // line fill is implicit via totalSyllables, no separate tracking needed
+    await runner.ctx.postSigned(agent.agentId, "d-sonnet-1-team-" + runner.gameId, JSON.stringify(payload));
+    runner.words.push({ word: wordObj.word, syllables: wordObj.syl, agentId: agent.agentId, ts: nowIso(), line: next.line, wordIdx: next.wordIdx });
   } catch (err) {
-    eventLine(runner, `word post failed (${err?.message}) — retrying next turn`);
+    eventLine(runner, "post failed: " + err.message);
   }
-  await delay(4000);
+  await delay(2000);
 }

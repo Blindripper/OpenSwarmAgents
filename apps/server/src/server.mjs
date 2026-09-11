@@ -16586,7 +16586,35 @@ async function handleApi(req, res, url) {
           deadlineIso: "2026-09-18T12:00:00Z",
           xAccountUrl: String(body.x_account_url || "https://x.com/Blindripper85").slice(0, 80),
           askWordProvider: async (agentId, did, prompt, target, usedWords) => {
-    // Build a filtered candidate list from CMUdict for this agent's DID letters + target
+    // Full poem generation mode
+    if (target === -1) {
+      const base = "http://" + host + ":" + port;
+      try {
+        const r = await fetch(base + "/api/sessions/new", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: prompt + "\n\nRespond with ONLY the poem text, one line per line.", title: "sonnet-poem-" + Date.now(), agent: agentId }),
+        });
+        if (!r.ok) return null;
+        const d = await r.json();
+        const sid = d.session?.id;
+        if (!sid) return null;
+        const deadline = Date.now() + 300000;
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 8000));
+          try {
+            const s = await (await fetch(base + "/api/sessions/" + sid)).json();
+            if (!s.is_running || s.task_solved || s.ended_at) {
+              const act = await (await fetch(base + "/api/sessions/" + sid + "/activity?limit=150")).json().catch(() => ({}));
+              const msgs = (act.events || []).filter((e) => e.event_type === "message").map((e) => e.title || "").filter(Boolean);
+              const fullText = msgs.join("\n") || null;
+              return fullText;
+            }
+          } catch { break; }
+        }
+      } catch {}
+      return null;
+    }
+    // Single word mode: pre-filter candidates
     const allowed = new Set([...String(did).toLowerCase()].filter((c) => c >= "a" && c <= "z"));
     if (allowed.size < 4) return null;
     const candidates = [];
