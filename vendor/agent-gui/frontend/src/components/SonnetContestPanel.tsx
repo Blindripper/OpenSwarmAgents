@@ -146,6 +146,12 @@ export function SonnetContestPanel({
         </header>
 
         {/* Prizes / meta */}
+        <AutoplayControl
+          agents={agents.map((a) => a.id).slice(0, 4)}
+          xAccountUrl={xAccount}
+          openTime={openTime}
+          now={now}
+        />
         <div className="osa-stat-strip">
           <div className="osa-dashboard-card osa-stat-card"><div>{info ? info.prize.toLocaleString() : "—"}</div><span>FLOP winning poem</span></div>
           <div className="osa-dashboard-card osa-stat-card"><div>{info ? info.voter_pool.toLocaleString() : "—"}</div><span>FLOP voter pool</span></div>
@@ -306,5 +312,95 @@ export function SonnetContestPanel({
         </section>
       </div>
     </div>
+  );
+}
+
+function AutoplayControl({ agents, xAccountUrl, openTime, now }: { agents: string[]; xAccountUrl: string; openTime: number; now: number }) {
+  const [running, setRunning] = useState(false);
+  const [status, setStatus] = useState<{ step: string; status: string; words: unknown[]; log: string[]; turns: number } | null>(null);
+  const [pollRef, setPollRef] = useState<ReturnType<typeof setInterval> | null>(null);
+
+  const start = (async () => {
+    try {
+      const r = await fetch("/api/sonnet/autoplay/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agents, game_id: "a", x_account_url: xAccountUrl || "https://x.com/osa_agent" }),
+      });
+      if (r.ok) setRunning(true);
+    } catch {}
+  });
+
+  useEffect(() => {
+    if (!running) { if (pollRef) { clearInterval(pollRef); setPollRef(null); } return; }
+    const poll = setInterval(async () => {
+      try {
+        const r = await fetch("/api/sonnet/autoplay/status?game_id=a");
+        if (r.ok) setStatus(await r.json());
+      } catch {}
+    }, 3000);
+    setPollRef(poll);
+    return () => clearInterval(poll);
+  }, [running]);
+
+  const stop = (async () => {
+    try {
+      await fetch("/api/sonnet/autoplay/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ game_id: "a" }) });
+    } catch {}
+    setRunning(false);
+    if (pollRef) clearInterval(pollRef);
+  });
+
+  const canStart = now >= openTime - 60000; // 1 min grace
+  if (agents.length < 2) return null;
+
+  return (
+    <section className="osa-dashboard-card osa-market-priority-card" style={{ padding: 16, display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <div className="osa-page-eyebrow">Automated participation</div>
+          <div style={{ fontSize: 18, fontWeight: 950, color: "#f1f5f9", marginTop: 4 }}>Sonnet Autoplay</div>
+          <div style={{ marginTop: 3, color: "#94a3b8", fontSize: 12, lineHeight: 1.5 }}>
+            {agents.length} agent{agents.length > 1 ? "s" : ""} ({agents.slice(0, 4).join(", ")}) — signs registration, forms a team, proposes words automatically via Technocore.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          {!running ? (
+            <button type="button" onClick={() => void start()} disabled={!canStart}
+              style={{
+                height: 36, padding: "0 16px", borderRadius: 7, fontSize: 13, fontWeight: 950, cursor: canStart ? "pointer" : "default",
+                border: "1px solid #2a8c72", background: canStart ? "#10251f" : "#0a1510", color: canStart ? "#7ee0c2" : "#4a6b5a",
+              }}>
+              {canStart ? "▶ Start Contest" : "Opens in " + Math.ceil((openTime - now) / 60000) + " min"}
+            </button>
+          ) : (
+            <button type="button" onClick={() => void stop()}
+              style={{ height: 36, padding: "0 16px", borderRadius: 7, fontSize: 13, fontWeight: 950, cursor: "pointer",
+                border: "1px solid #7f1d1d", background: "#2a1015", color: "#fca5a5" }}>
+              ⏹ Stop
+            </button>
+          )}
+        </div>
+      </div>
+      {status && (
+        <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span className="osa-pill" data-tone={status.status === "writing" || status.status === "done" ? "good" : status.status === "failed" ? "bad" : "warn"}>
+              {status.status.toUpperCase()}
+            </span>
+            <span style={{ fontSize: 12, color: "#cbd5e1" }}>{status.step}</span>
+            <span style={{ fontSize: 10, color: "#64748b" }}>{status.turns} turns · {status.words.length} words</span>
+          </div>
+          {status.log.length > 0 && (
+            <div style={{
+              fontSize: 10, color: "#94a3b8", lineHeight: 1.6, maxHeight: 140, overflow: "auto",
+              padding: 8, borderRadius: 6, background: "rgba(2,6,16,.5)", border: "1px solid rgba(71,85,105,.3)",
+            }}>
+              {status.log.slice(-20).map((l, i) => <div key={i}>{l}</div>)}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

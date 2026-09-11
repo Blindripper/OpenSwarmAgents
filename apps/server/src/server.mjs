@@ -92,7 +92,13 @@ import {
 import { buildMatchmakingView, normalizeMatchmakingJob } from "./matchmaking.mjs";
 import { buildFlopMinerStatus, buildFlopValidatorStatus } from "./flop-operator.mjs";
 import { getAutomodeStatus, startAutomode, stopAutomode, clearAutomodeHistory } from "./automode.mjs";
-import { checkSonnetWord, validateSonnetPoem, sonnetContestInfo } from "./sonnet-contest.mjs";
+import { checkSonnetWord, loadLexicon as loadSonnetLexicon, validateSonnetPoem, sonnetContestInfo } from "./sonnet-contest.mjs";
+import { createSonnetAutoplay } from "./sonnet-autoplay.mjs";
+
+// Lazy CMUdict lexicon for sonnet autoplay word picking
+function sonnetContestLexicon() {
+  try { return loadSonnetLexicon(); } catch { return null; }
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "../../..");
@@ -16526,6 +16532,58 @@ async function handleApi(req, res, url) {
     if (method === "GET" && path === "/api/sonnet/poem-check") {
       const text = url.searchParams.get("text") || "";
       return sendJson(res, 200, validateSonnetPoem(text));
+    }
+
+    // Sonnet autoplay runner (dashboard “Start Contest” button)
+    const sonnetAutoplay = global.__sonnetAutoplay || (global.__sonnetAutoplay = createSonnetAutoplay({ log: [] }));
+    if (method === "GET" && path === "/api/sonnet/autoplay/status") {
+      const gameId = url.searchParams.get("game_id") || "default";
+      return sendJson(res, 200, sonnetAutoplay.statusParticipant(gameId));
+    }
+    if (method === "POST" && path === "/api/sonnet/autoplay/start") {
+      const body = await readJson(req);
+      const gameId = String(body.game_id || "default").slice(0, 40);
+      const agents = Array.isArray(body.agents) ? body.agents.slice(0, 8) : [];
+      if (agents.length < 2) return sendJson(res, 400, { ok: false, detail: "Need at least 2 agents" });
+      const agentProfiles = agents.map((aId) => ({ agentId: aId, did: agentDidForProfile(aId) || aId }));
+      const result = sonnetAutoplay.startParticipant({
+        gameId,
+        roomGeneration: 0,
+        agents: agentProfiles,
+        ctx: {
+          openAtIso: "2026-09-11T12:00:00Z",
+          deadlineIso: "2026-09-18T12:00:00Z",
+          xAccountUrl: String(body.x_account_url || "https://x.com/osa_agent").slice(0, 80),
+          pickWord: (lexicon, did, target, usedWords) => {
+            const allowed = new Set([...String(did).toLowerCase()].filter((c) => c >= "a" && c <= "z"));
+            if (allowed.size < 4 || !lexicon) return null;
+            for (const [word, syl] of lexicon) {
+              if (usedWords.has(word) || syl > target) continue;
+              let ok = true;
+              for (const c of word) { if (c < "a" || c > "z" || !allowed.has(c)) { ok = false; break; } }
+              if (ok) return { word, syllables: syl };
+            }
+            return null;
+          },
+          lexicon: sonnetContestLexicon(),
+          postSigned: async (agentId, room, text) => {
+            try {
+              await technocoreSayAsAgent(agentId, room, text, "sign_text");
+              return { ok: true };
+            } catch (err) { return { ok: false, error: err.message }; }
+          },
+          readRoom: async (room, since) => {
+            try {
+              return await fetchTechnocoreRoomJson(`/r/${room}?format=json&since=${Math.max(0, Number(since || 0))}&limit=20`);
+            } catch { return { messages: [] }; }
+          },
+        },
+      });
+      return sendJson(res, 200, result);
+    }
+    if (method === "POST" && path === "/api/sonnet/autoplay/stop") {
+      const body = await readJson(req);
+      return sendJson(res, 200, sonnetAutoplay.stopParticipant(String(body.game_id || "default")));
     }
 
     if (method === "GET" && path === "/api/trust-ledger") {

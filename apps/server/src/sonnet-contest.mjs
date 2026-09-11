@@ -11,7 +11,8 @@ const ED25519_DID_RE = /^did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}$/;
 const VOWELS = new Set(["AA","AE","AH","AO","AW","AY","EH","ER","EY","IH","IY","OW","OY","UH","UW"]);
 
 /** Load CMUdict once into { word: maxSyllables }. */
-function loadLexicon() {
+/** Load CMUdict once into { word: maxSyllables }. */
+export function loadLexicon() {
   if (lexicon) return lexicon;
   lexicon = new Map();
   const text = readFileSync(join(CONTEST_DIR, "cmudict.dict"), "utf8");
