@@ -368,7 +368,7 @@ async function proposeWord(runner) {
 
     if (runner.ctx.askWordProvider) {
       try {
-        const agentWord = await runner.ctx.askWordProvider(agent.agentId, agent.did, promptContext, target);
+        const agentWord = await runner.ctx.askWordProvider(agent.agentId, agent.did, promptContext, target, usedWords);
         if (agentWord && typeof agentWord === "string") {
           const clean = agentWord.trim().replace(/[^a-zA-Z'\-]/g, "").toLowerCase();
           eventLine(runner, `Agent proposed "${clean}" — validating…`);

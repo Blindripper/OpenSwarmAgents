@@ -16585,62 +16585,66 @@ async function handleApi(req, res, url) {
           openAtIso: "2026-09-11T12:00:00Z",
           deadlineIso: "2026-09-18T12:00:00Z",
           xAccountUrl: String(body.x_account_url || "https://x.com/Blindripper85").slice(0, 80),
-          askWordProvider: async (agentId, did, prompt, target) => {
-            // Create a temporary agent session to ask for a word choice
-            const base = `http://${host}:${port}`;
+          askWordProvider: async (agentId, did, prompt, target, usedWords) => {
+    // Build a filtered candidate list from CMUdict for this agent's DID letters + target
+    const allowed = new Set([...String(did).toLowerCase()].filter((c) => c >= "a" && c <= "z"));
+    if (allowed.size < 4) return null;
+    const candidates = [];
+    const lexicon = sonnetContestLexicon();
+    if (lexicon) {
+      for (const [word, syl] of lexicon) {
+        if (syl < 1 || syl > target) continue;
+        let ok = true;
+        for (const c of word) { if (c < "a" || c > "z" || !allowed.has(c)) { ok = false; break; } }
+        if (ok) usedWords && !usedWords.has(word) && candidates.push([word, syl]);
+        if (candidates.length >= 60) break;
+      }
+    }
+    if (!candidates.length) return null;
+    const wordList = candidates.map(([w, s]) => `${w} (${s} syl)`).join("\n");
+    const sessionPrompt = `You are writing a Shakespearean sonnet (ABAB CDCD EFEF GG, 14 lines, 10 syllables each).\n\n${prompt}\n\nChoose ONE word from this list that best fits the poem at this position:\n${wordList}\n\nRespond with ONLY the word, nothing else.`;
+    const base = "http://" + host + ":" + port;
+    let bestWord = null;
+    try {
+      const createRes = await fetch(base + "/api/sessions/new", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: sessionPrompt, title: "sonnet-word-" + Date.now(), agent: agentId }),
+      });
+      if (createRes.ok) {
+        const created = await createRes.json();
+        const sid = created.session?.id;
+        if (sid) {
+          const deadline = Date.now() + 120000;
+          while (Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 5000));
             try {
-              const createRes = await fetch(`${base}/api/sessions/new`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-body: JSON.stringify({
-                content: `Respond with EXACTLY ONE WORD in lowercase that fits this sonnet context. No explanation, no punctuation, no capitalization:\n\n${prompt}`,
-                title: `sonnet-word-${Date.now()}`,
-                agent: agentId,
-              }),
-              });
-              if (!createRes.ok) return null;
-              const created = await createRes.json();
-              const sid = created.session?.id;
-              if (!sid) return null;
-              // Wait up to 15s for agent to suggest a word
-              const deadline = Date.now() + 300000; // 5 minutes for AI to craft a word
-              while (Date.now() < deadline) {
-                await new Promise((r) => setTimeout(r, 5000));
-                try {
-                  const sessRes = await fetch(`${base}/api/sessions/${sid}`);
-                  if (!sessRes.ok) break;
-                  const sess = await sessRes.json();
-                  if (!sess.is_running || sess.task_solved) {
-                    // Get the console/activity output
-                    const consRes = await fetch(`${base}/api/sessions/${sid}/console?limit=2000`);
-                    const actRes = await fetch(`${base}/api/sessions/${sid}/activity?limit=80`);
-                    let text = "";
-                    if (consRes.ok) { const d = await consRes.json(); text = d.text || ""; }
-                    // Extract first single word from output
-                    const words = text.match(/\b[a-z]+(?:'[a-z]+)?\b/gi);
-                    if (actRes.ok) {
-                      const act = await actRes.json();
-                      const msgs = (act.events || []).filter((e) => e.event_type === "message" && e.title);
-                      for (const msg of msgs.slice().reverse()) {
-                        const found = (msg.title || "").match(/\b[a-z]{2,}(?:'[a-z]+)?\b/i);
-                        if (found) {
-                          text = found[0];
-                          break;
-                        }
-                      }
-                    }
-                    if (words && words.length > 0) {
-                      // Return the first good-looking word
-                      return words[0];
-                    }
-                    break;
-                  }
-                } catch { break; }
+              const sessRes = await fetch(base + "/api/sessions/" + sid);
+              if (!sessRes.ok) break;
+              const sess = await sessRes.json();
+              if (!sess.is_running || sess.task_solved || sess.ended_at) {
+                const a = await (await fetch(base + "/api/sessions/" + sid + "/activity?limit=80")).json().catch(() => ({}));
+                const msgs = (a.events || []).filter((e) => e.event_type === "message" && e.title);
+                let responseText = msgs.length ? msgs[msgs.length - 1].title || "" : "";
+                if (!responseText) {
+                  const c = await (await fetch(base + "/api/sessions/" + sid + "/console?limit=2000")).json().catch(() => ({}));
+                  responseText = (c.text || "").match(/[a-z]+/i)?.[0] || "";
+                }
+                const cleaned = responseText.toLowerCase().replace(/[^a-z]/g, "").trim();
+                if (candidates.some(([w]) => w === cleaned)) bestWord = cleaned;
+                break;
               }
-            } catch {}
-            return null;
-          },
-          pickWord: (lexicon, did, target, usedWords) => {
+            } catch { break; }
+          }
+        }
+      }
+    } catch {}
+    if (!bestWord) {
+      const random = candidates[Math.floor(Math.random() * candidates.length)];
+      return random[0];
+    }
+    return bestWord;
+  },pickWord: (lexicon, did, target, usedWords) => {
             const allowed = new Set([...String(did).toLowerCase()].filter((c) => c >= "a" && c <= "z"));
             if (allowed.size < 4 || !lexicon) return null;
             for (const [word, syl] of lexicon) {
