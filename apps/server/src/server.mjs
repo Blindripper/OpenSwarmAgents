@@ -16584,7 +16584,7 @@ async function handleApi(req, res, url) {
         ctx: {
           openAtIso: "2026-09-11T12:00:00Z",
           deadlineIso: "2026-09-18T12:00:00Z",
-          xAccountUrl: String(body.x_account_url || "https://x.com/osa_agent").slice(0, 80),
+          xAccountUrl: String(body.x_account_url || "https://x.com/Blindripper85").slice(0, 80),
           pickWord: (lexicon, did, target, usedWords) => {
             const allowed = new Set([...String(did).toLowerCase()].filter((c) => c >= "a" && c <= "z"));
             if (allowed.size < 4 || !lexicon) return null;
@@ -16615,6 +16615,12 @@ async function handleApi(req, res, url) {
     if (method === "POST" && path === "/api/sonnet/autoplay/stop") {
       const body = await readJson(req);
       return sendJson(res, 200, sonnetAutoplay.stopParticipant(String(body.game_id || "default")));
+    }
+    if (method === "POST" && path === "/api/sonnet/submit") {
+      const body = await readJson(req);
+      const gameId = String(body.game_id || "default").slice(0, 40);
+      const xPostIds = Array.isArray(body.x_post_ids) ? body.x_post_ids : [String(body.x_post_ids || "")].filter(Boolean);
+      return sendJson(res, 200, await sonnetAutoplay.submitPoem(gameId, xPostIds));
     }
 
     if (method === "GET" && path === "/api/trust-ledger") {

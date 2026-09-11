@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 
 /**
  * Sonnet contest autoplay: one click in the dashboard, participate
@@ -161,6 +161,37 @@ export function createSonnetAutoplay({ log }) {
         log: runner.log.slice(-150),
         agents: runner.agents.map((a) => a.agentId),
       };
+    },
+
+    async submitPoem(gameId, xPostIds) {
+      const runner = runners.get(gameId);
+      if (!runner) return { ok: false, error: "not found" };
+      if (runner.status !== "done") return { ok: false, error: "poem not complete" };
+      const poemText = buildPoemText(runner.words);
+      if (!poemText) return { ok: false, error: "no poem words" };
+      const sha256 = createHash("sha256").update(poemText, "utf8").digest("hex");
+      const finalContributor = runner.agents.length > 0 ? runner.agents[runner.agents.length - 1] : runner.agents[0];
+      if (!finalContributor) return { ok: false, error: "no contributor" };
+      const payload = {
+        type: "sonnet.submit.v1",
+        contest_id: CONTEST_ID,
+        game_id: gameId,
+        poem_room: `d-sonnet-1-team-${gameId}`,
+        room_generation: runner.roomGeneration,
+        final_version: runner.words.length,
+        poem_sha256: `0x${sha256}`,
+        x_post_ids: Array.isArray(xPostIds) ? xPostIds.slice(0, 10) : [String(xPostIds || "")].filter(Boolean),
+        request_id: `submit-${cryptoRandomUuid().slice(0, 12)}`,
+      };
+      try {
+        await runner.ctx.postSigned(finalContributor.agentId, "mb-sonnet-1-submissions", JSON.stringify(payload));
+        eventLine(runner, `Submitted sonnet.submit.v1 by ${finalContributor.agentId} (sha256: 0x${sha256.slice(0, 12)}…)`);
+        runner.status = "submitting";
+        runner.step = "Submitted. Waiting for referee receipt…";
+        return { ok: true, poem_sha256: `0x${sha256}`, poemText, contributor: finalContributor.agentId, payload };
+      } catch (err) {
+        return { ok: false, error: `Submit post failed: ${err.message}`, payload };
+      }
     },
 
     listParticipants() {
