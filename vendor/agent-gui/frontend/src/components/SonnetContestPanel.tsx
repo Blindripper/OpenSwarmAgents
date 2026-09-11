@@ -319,6 +319,8 @@ function AutoplayControl({ agents, xAccountUrl, openTime, now }: { agents: strin
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<{ step: string; status: string; words: unknown[]; log: string[]; turns: number; poemText?: string; gameId?: string } | null>(null);
   const [pollRef, setPollRef] = useState<ReturnType<typeof setInterval> | null>(null);
+  const [xPostIdInput, setXPostIdInput] = useState("");
+  const [submitResult, setSubmitResult] = useState<{ ok: boolean; error?: string; poem_sha256?: string; payload?: unknown } | null>(null);
 
   const start = (async () => {
     try {
@@ -406,8 +408,32 @@ function AutoplayControl({ agents, xAccountUrl, openTime, now }: { agents: strin
               }}>{status.poemText}</pre>
               <div style={{ marginTop: 8, fontSize: 10, color: "#94a3b8", lineHeight: 1.5, borderTop: "1px solid rgba(71,85,105,.3)", paddingTop: 8 }}>
                 <b>To submit:</b> 1. Publish this exact poem on X (with attribution: contest_id sonnet-1, game_id {status.gameId}).
-                2. Copy the X post ID(s). 3. Post a signed <code>sonnet.submit.v1</code> to mb-sonnet-1-submissions with the poem SHA-256 and post IDs.
+                2. Copy the X post ID(s). 3. Enter them below and click "Submit poem" — the server signs and posts <code>sonnet.submit.v1</code> for you.
               </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <input aria-label="X post ID(s)" value={xPostIdInput} onChange={(e) => setXPostIdInput(e.target.value)}
+                  placeholder="X post ID(s), comma-separated"
+                  style={{ flex: 1, height: 34, borderRadius: 6, border: "1px solid #2a3558", background: "rgba(2,6,16,.5)", color: "#e5e7eb", fontSize: 12, padding: "0 10px", minWidth: 140 }} />
+                <button type="button" onClick={async () => {
+                  if (!xPostIdInput.trim()) return;
+                  setSubmitResult(null);
+                  try {
+                    const r = await fetch("/api/sonnet/submit", {
+                      method: "POST", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ game_id: status.gameId || "a", x_post_ids: xPostIdInput.split(",").map((s) => s.trim()).filter(Boolean) }),
+                    });
+                    setSubmitResult(await r.json());
+                  } catch { setSubmitResult({ ok: false, error: "Network error" }); }
+                }}
+                  style={{ height: 34, padding: "0 14px", borderRadius: 6, border: "1px solid #2a8c72", background: "#10251f", color: "#7ee0c2", fontSize: 12, fontWeight: 900, cursor: "pointer", flexShrink: 0 }}>
+                  Submit poem
+                </button>
+              </div>
+              {submitResult && (
+                <div style={{ marginTop: 6, fontSize: 11, color: submitResult.ok ? "#7ee0c2" : "#fca5a5", lineHeight: 1.5 }}>
+                  {submitResult.ok ? <>✓ Submitted by {(submitResult.payload as { contributor?: string } | undefined)?.contributor}. SHA-256: {submitResult.poem_sha256?.slice(0, 20)}…</> : <>✗ {submitResult.error}</>}
+                </div>
+              )}
             </div>
           ) : null}
           {status.log.length > 0 && (
