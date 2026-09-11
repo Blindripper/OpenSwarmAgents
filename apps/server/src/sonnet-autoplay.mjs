@@ -360,12 +360,13 @@ async function proposeWord(runner) {
 
   // Try agent-provided word first, fall back to dictionary
   async function pickWord() {
-    // Build context for the agent
     const poemSoFar = runner.words.map((w) => w.word).join(" ");
     const lineCount = Math.floor(runner.words.reduce((s, w) => s + w.syllables, 0) / 10);
-    const promptContext = `Current poem so far: "${poemSoFar}"\nLine ${lineCount + 1}/14, need ${target} more syllable(s) to reach 10.\nYour DID letters: ${[...new Set([...agent.did.toLowerCase()].filter(c => c >= "a" && c <= "z"))].join("")}\nAlready used: ${runner.words.map(w => w.word).join(", ") || "none"}`;
-    // Try agent-based pick
-    if (runner.ctx.askWordProvider && runner.turns >= 0) {
+    const allowedSet = new Set([...agent.did.toLowerCase()].filter((c) => c >= "a" && c <= "z"));
+    const promptContext = `Current poem so far: "${poemSoFar}"\nLine ${lineCount + 1}/14, need ${target} more syllable(s) to reach 10.\nYour DID letters: ${[...allowedSet].join("")}\nAlready used: ${runner.words.map(w => w.word).join(", ") || "none"}`;
+
+    // Try agent-based pick (fast timeout: 15s)
+    if (runner.ctx.askWordProvider) {
       try {
         const agentWord = await runner.ctx.askWordProvider(agent.agentId, agent.did, promptContext, target);
         if (agentWord && typeof agentWord === "string") {
@@ -374,17 +375,14 @@ async function proposeWord(runner) {
           if (runner.ctx.lexicon) {
             const sylCount = runner.ctx.lexicon.get(clean);
             if (sylCount && sylCount <= target && !usedWords.has(clean)) {
-              const allowed = new Set([...agent.did.toLowerCase()].filter((c) => c >= "a" && c <= "z"));
               let ok = true;
-              for (const c of clean) { if (c >= "a" && c <= "z" && !allowed.has(c)) { ok = false; break; } }
+              for (const c of clean) { if (c >= "a" && c <= "z" && !allowedSet.has(c)) { ok = false; break; } }
               if (ok) return { word: clean, syllables: sylCount };
             }
-            eventLine(runner, `Agent word "${clean}" rejected (syllables: ${sylCount || "?"}, allowed: ${[...allowed].join("")}) — falling back to lexicon`);
           }
         }
-      } catch (err) {
-        eventLine(runner, `askWordProvider error: ${err.message} — falling back to lexicon`);
-      }
+      } catch {}
+      eventLine(runner, `Agent word rejected — falling back to lexicon`);
     }
     // Fall back to dictionary
     if (runner.ctx.pickWord) {

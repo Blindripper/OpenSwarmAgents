@@ -16592,14 +16592,18 @@ async function handleApi(req, res, url) {
               const createRes = await fetch(`${base}/api/sessions/new`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ content: prompt, agent: agentId, title: `sonnet-word-${Date.now()}` }),
+body: JSON.stringify({
+                content: `Respond with EXACTLY ONE WORD in lowercase that fits this sonnet context. No explanation, no punctuation, no capitalization:\n\n${prompt}`,
+                title: `sonnet-word-${Date.now()}`,
+                agent: agentId,
+              }),
               });
               if (!createRes.ok) return null;
               const created = await createRes.json();
               const sid = created.session?.id;
               if (!sid) return null;
-              // Wait up to 60s for completion, polling every 5s
-              const deadline = Date.now() + 60000;
+              // Wait up to 15s for agent to suggest a word
+              const deadline = Date.now() + 15000;
               while (Date.now() < deadline) {
                 await new Promise((r) => setTimeout(r, 5000));
                 try {
