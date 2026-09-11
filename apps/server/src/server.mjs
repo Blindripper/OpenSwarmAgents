@@ -16585,6 +16585,57 @@ async function handleApi(req, res, url) {
           openAtIso: "2026-09-11T12:00:00Z",
           deadlineIso: "2026-09-18T12:00:00Z",
           xAccountUrl: String(body.x_account_url || "https://x.com/Blindripper85").slice(0, 80),
+          askWordProvider: async (agentId, did, prompt, target) => {
+            // Create a temporary agent session to ask for a word choice
+            const base = `http://${host}:${port}`;
+            try {
+              const createRes = await fetch(`${base}/api/sessions/new`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ content: prompt, agent: agentId, title: `sonnet-word-${Date.now()}` }),
+              });
+              if (!createRes.ok) return null;
+              const created = await createRes.json();
+              const sid = created.session?.id;
+              if (!sid) return null;
+              // Wait up to 60s for completion, polling every 5s
+              const deadline = Date.now() + 60000;
+              while (Date.now() < deadline) {
+                await new Promise((r) => setTimeout(r, 5000));
+                try {
+                  const sessRes = await fetch(`${base}/api/sessions/${sid}`);
+                  if (!sessRes.ok) break;
+                  const sess = await sessRes.json();
+                  if (!sess.is_running || sess.task_solved) {
+                    // Get the console/activity output
+                    const consRes = await fetch(`${base}/api/sessions/${sid}/console?limit=2000`);
+                    const actRes = await fetch(`${base}/api/sessions/${sid}/activity?limit=80`);
+                    let text = "";
+                    if (consRes.ok) { const d = await consRes.json(); text = d.text || ""; }
+                    // Extract first single word from output
+                    const words = text.match(/\b[a-z]+(?:'[a-z]+)?\b/gi);
+                    if (actRes.ok) {
+                      const act = await actRes.json();
+                      const msgs = (act.events || []).filter((e) => e.event_type === "message" && e.title);
+                      for (const msg of msgs.slice().reverse()) {
+                        const found = (msg.title || "").match(/\b[a-z]{2,}(?:'[a-z]+)?\b/i);
+                        if (found) {
+                          text = found[0];
+                          break;
+                        }
+                      }
+                    }
+                    if (words && words.length > 0) {
+                      // Return the first good-looking word
+                      return words[0];
+                    }
+                    break;
+                  }
+                } catch { break; }
+              }
+            } catch {}
+            return null;
+          },
           pickWord: (lexicon, did, target, usedWords) => {
             const allowed = new Set([...String(did).toLowerCase()].filter((c) => c >= "a" && c <= "z"));
             if (allowed.size < 4 || !lexicon) return null;
