@@ -351,8 +351,10 @@ function AutoplayControl({ agents, xAccountUrl, openTime, now }: { agents: strin
     if (pollRef) clearInterval(pollRef);
   });
 
-  const canStart = now >= openTime - 60000; // 1 min grace
+  const canStart = Number.isFinite(openTime) && now >= openTime - 60000; // 1 min grace
   if (agents.length < 2) return null;
+
+  const opensIn = Number.isFinite(openTime) ? Math.ceil((openTime - now) / 60000) : null;
 
   return (
     <section className="osa-dashboard-card osa-market-priority-card" style={{ padding: 16, display: "grid", gap: 12 }}>
@@ -371,7 +373,7 @@ function AutoplayControl({ agents, xAccountUrl, openTime, now }: { agents: strin
                 height: 36, padding: "0 16px", borderRadius: 7, fontSize: 13, fontWeight: 950, cursor: canStart ? "pointer" : "default",
                 border: "1px solid #2a8c72", background: canStart ? "#10251f" : "#0a1510", color: canStart ? "#7ee0c2" : "#4a6b5a",
               }}>
-              {canStart ? "▶ Start Contest" : "Opens in " + Math.ceil((openTime - now) / 60000) + " min"}
+              {canStart ? "▶ Start Contest" : opensIn !== null ? "Opens in " + opensIn + " min" : "Loading contest info…"}
             </button>
           ) : (
             <button type="button" onClick={() => void stop()}
