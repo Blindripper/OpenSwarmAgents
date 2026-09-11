@@ -92,6 +92,7 @@ import {
 import { buildMatchmakingView, normalizeMatchmakingJob } from "./matchmaking.mjs";
 import { buildFlopMinerStatus, buildFlopValidatorStatus } from "./flop-operator.mjs";
 import { getAutomodeStatus, startAutomode, stopAutomode, clearAutomodeHistory } from "./automode.mjs";
+import { checkSonnetWord, validateSonnetPoem, sonnetContestInfo } from "./sonnet-contest.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "../../..");
@@ -16511,6 +16512,20 @@ async function handleApi(req, res, url) {
         runtime: publicRuntime(),
         serverTime: now()
       });
+    }
+
+    if (method === "GET" && path === "/api/sonnet/contest") {
+      return sendJson(res, 200, sonnetContestInfo());
+    }
+    if (method === "GET" && path === "/api/sonnet/word-check") {
+      const word = url.searchParams.get("word") || "";
+      const did = url.searchParams.get("did") || "";
+      const line = url.searchParams.get("line") || "";
+      return sendJson(res, 200, checkSonnetWord(word, did, line));
+    }
+    if (method === "GET" && path === "/api/sonnet/poem-check") {
+      const text = url.searchParams.get("text") || "";
+      return sendJson(res, 200, validateSonnetPoem(text));
     }
 
     if (method === "GET" && path === "/api/trust-ledger") {

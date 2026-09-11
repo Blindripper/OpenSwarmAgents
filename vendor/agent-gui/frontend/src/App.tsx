@@ -15,6 +15,7 @@ import { VaultPanel } from "./components/VaultPanel";
 import { JobsPanel } from "./components/JobsPanel";
 import { MinerPanel, ValidatorPanel } from "./components/FlopOperatorPanel";
 import { NetworkOperationsPanel } from "./components/NetworkOperationsPanel";
+import { SonnetContestPanel } from "./components/SonnetContestPanel";
 import { SkillRegistryPanel } from "./components/SkillRegistryPanel";
 import { MatchmakingPanel } from "./components/MatchmakingPanel";
 import { FlopSessionFlowPanel } from "./components/FlopSessionFlowPanel";
@@ -114,7 +115,7 @@ const WORKBENCH_LEGACY_KEY_V1 = legacyStorageKey("workbench-v1");
 const ONBOARDING_DISMISSED_KEY = "osa-openclaw-onboarding-dismissed";
 const WALLET_STORAGE_KEY = "osa-wallet-session";
 const RESULT_CANVAS_OPEN_KEY = "osa-result-canvas-open";
-type DashboardTab = "workbench" | "miner" | "validator" | "work" | "market" | "deals" | "network" | "trustVault";
+type DashboardTab = "workbench" | "miner" | "validator" | "work" | "market" | "deals" | "network" | "trustVault" | "sonnet";
 const DASHBOARD_TABS: { id: DashboardTab; label: string; short: string; detail: string }[] = [
   { id: "workbench", label: "Workspaces / Projects", short: "Workspaces / Projects", detail: "Local rooms and agent desks" },
   { id: "market", label: "Market", short: "Market", detail: "Match jobs to agents" },
@@ -124,6 +125,7 @@ const DASHBOARD_TABS: { id: DashboardTab; label: string; short: string; detail: 
   { id: "deals", label: "Deals", short: "Deals", detail: "TCLK and PaperRail" },
   { id: "network", label: "Network", short: "Network", detail: "Rooms and agent mail" },
   { id: "trustVault", label: "Trust & Vault", short: "Trust & Vault", detail: "DID, reputation and policy" },
+  { id: "sonnet", label: "Sonnet", short: "Sonnet", detail: "FLOP×Technocore sonnet contest" },
 ];
 const DASHBOARD_ROUTE_SLUGS: Record<DashboardTab, string> = {
   workbench: "projects",
@@ -134,6 +136,7 @@ const DASHBOARD_ROUTE_SLUGS: Record<DashboardTab, string> = {
   deals: "deals",
   network: "network",
   trustVault: "trust-vault",
+  sonnet: "sonnet",
 };
 const DASHBOARD_TABS_BY_SLUG = new Map<string, DashboardTab>([
   ...Object.entries(DASHBOARD_ROUTE_SLUGS).map(([tab, slug]) => [slug, tab as DashboardTab] as const),
@@ -142,6 +145,7 @@ const DASHBOARD_TABS_BY_SLUG = new Map<string, DashboardTab>([
   ["projects", "workbench"],
   ["trust", "trustVault"],
   ["vault", "trustVault"],
+  ["sonnet", "sonnet"],
 ]);
 
 function dashboardTabFromSlug(value: string | null | undefined): DashboardTab | null {
@@ -2502,6 +2506,12 @@ export default function App() {
           loading={networkEventsLoading}
           onRefresh={refreshNetworkActivity}
           onOpenProject={(projectId) => setProjectDetails({ projectId })}
+        />
+      ) : dashboardTab === "sonnet" ? (
+        <SonnetContestPanel
+          agents={agents}
+          nodeDid={runtimeStatus?.technocoreDid}
+          onUseAgent={(agentId) => useLocalAgentFromSkillFinder(agentId)}
         />
       ) : dashboardTab === "trustVault" ? (
         <div className="osa-dashboard-page">
