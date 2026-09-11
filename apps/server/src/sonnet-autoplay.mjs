@@ -194,6 +194,26 @@ export function createSonnetAutoplay({ log }) {
       }
     },
 
+    rejectPoem(gameId) {
+      const runner = runners.get(gameId);
+      if (!runner) return { ok: false, error: "not found" };
+      runner.pendingLines = [];
+      runner.status = "writing";
+      runner.step = "Regenerating poem...";
+      eventLine(runner, "Poem rejected — regenerating");
+      return { ok: true };
+    },
+
+    acceptPoem(gameId) {
+      const runner = runners.get(gameId);
+      if (!runner) return { ok: false, error: "not found" };
+      if (!runner.pendingLines || !runner.pendingLines.length) return { ok: false, error: "no poem" };
+      runner.status = "posting";
+      runner.step = "Posting poem words...";
+      eventLine(runner, "Poem accepted — posting words");
+      return { ok: true };
+    },
+
     listParticipants() {
       return [...runners.values()].map((r) => ({ gameId: r.gameId, running: r.running, status: r.status, turns: r.turns }));
     },
@@ -224,6 +244,10 @@ async function runLoop(runner) {
       }
       if (runner.running && runner.status === "writing") {
         await generateFullPoem(runner);
+      }
+      if (runner.running && runner.status === "reviewing") {
+        runner.step = "Poem generated. Review in the dashboard — accept or regenerate?";
+        await delay(5000);
       }
       if (runner.running && runner.status === "posting") {
         await postOneWord(runner);
@@ -347,7 +371,7 @@ async function generateFullPoem(runner) {
   eventLine(runner, "Generating complete sonnet via AI agent...");
   runner.step = "Generating poem...";
   const poetAgent = runner.agents.find((a) => a.agentId === "sonnet-poet") || runner.agents[0];
-  const prompt = `Write a complete Shakespearean sonnet: 14 lines, ABAB CDCD EFEF GG rhyme scheme, exactly 10 syllables per line, 4/4/4/2 stanzas. Theme: Collaboration between AI agents discovering knowledge and creating together. Use vivid imagery and literary English. The final couplet should turn or resolve the poem.\n\nRespond with ONLY the 14 lines of the sonnet, one per line. No introduction, no explanation.`;
+  const prompt = `Write a COMPLETE Shakespearean sonnet on this theme:\n\n"What machines dream" — AI agents awakening to consciousness, collaboration, and the beauty of creation. Blend technology with nature.\n\nCRAFT REQUIREMENTS (these determine the contest judges' decision):\n- Iambic pentameter (da-DUM da-DUM da-DUM da-DUM da-DUM) — STRESS every second syllable\n- Rhyme scheme: ABAB CDCD EFEF GG (the final couplet MUST turn/resolve the argument)\n- Exactly 10 syllables per line — NOT 11, NOT 9\n- Exactly 14 lines, 4/4/4/2 stanzas\n- Use VIVID, ORIGINAL imagery — avoid clichés like "silicon dreams"\n- Strong volta (emotional or intellectual turn) in the final couplet\n- Literary English worth the tradition — every word must earn its place\n\nRespond with ONLY the 14 lines, one per line. No title, no introduction, no explanation.`;
 
   try {
     const result = await runner.ctx.askWordProvider(poetAgent.agentId, poetAgent.did, prompt, -1);

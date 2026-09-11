@@ -16709,6 +16709,25 @@ async function handleApi(req, res, url) {
       const xPostIds = Array.isArray(body.x_post_ids) ? body.x_post_ids : [String(body.x_post_ids || "")].filter(Boolean);
       return sendJson(res, 200, await sonnetAutoplay.submitPoem(gameId, xPostIds));
     }
+    if (method === "POST" && path === "/api/sonnet/accept") {
+      const body = await readJson(req);
+      return sendJson(res, 200, sonnetAutoplay.acceptPoem(String(body.game_id || "default")));
+    }
+    if (method === "POST" && path === "/api/sonnet/reject") {
+      const body = await readJson(req);
+      return sendJson(res, 200, sonnetAutoplay.rejectPoem(String(body.game_id || "default")));
+    }
+    if (method === "GET" && path === "/api/sonnet/voting-info") {
+      return sendJson(res, 200, {
+        contest_id: "sonnet-1",
+        vote_room: "mb-sonnet-1-votes",
+        ballot_type: "sonnet.ballot.v1",
+        voter_role: "voter",
+        prompt: "Which poem do you think FLOP's human judges will find best?",
+        voter_registration: "POST a signed sonnet.register.v1 with role=voter to mb-sonnet-1-registration. Requires DID verified before 2026-09-11T12:00:00Z.",
+        ballot_format: { type: "sonnet.ballot.v1", contest_id: "sonnet-1", voter_did: "<your DID>", entry_id: "<entry ID from submissions>", request_id: "<unique>" },
+      });
+    }
 
     if (method === "GET" && path === "/api/trust-ledger") {
       const auth = authFromReq(req);

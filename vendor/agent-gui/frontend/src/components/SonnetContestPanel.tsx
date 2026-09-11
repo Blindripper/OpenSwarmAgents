@@ -389,12 +389,39 @@ function AutoplayControl({ agents, xAccountUrl, openTime, now }: { agents: strin
       {status && (
         <div style={{ display: "grid", gap: 8 }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <span className="osa-pill" data-tone={status.status === "writing" || status.status === "done" ? "good" : status.status === "failed" ? "bad" : "warn"}>
+            <span className="osa-pill" data-tone={status.status === "writing" || status.status === "done" || status.status === "posting" ? "good" : status.status === "failed" ? "bad" : "warn"}>
               {status.status.toUpperCase()}
             </span>
             <span style={{ fontSize: 12, color: "#cbd5e1" }}>{status.step}</span>
             <span style={{ fontSize: 10, color: "#64748b" }}>{status.turns} turns · {status.words.length} words</span>
           </div>
+          {(status.status === "reviewing") && status.poemText ? (
+            <div style={{
+              padding: 12, borderRadius: 8,
+              border: "1px solid rgba(96,165,250,.4)",
+              background: "rgba(15,23,42,.9)",
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 900, color: "#93c5fd", marginBottom: 6 }}>Generated poem — review and accept, or regenerate</div>
+              <pre style={{
+                fontSize: 13, color: "#e2e8f0", lineHeight: 1.7,
+                whiteSpace: "pre-wrap", fontFamily: "serif",
+              }}>{status.poemText}</pre>
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button type="button" onClick={async () => {
+                  await fetch("/api/sonnet/accept", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ game_id: status.gameId || "a" }) });
+                }}
+                  style={{ height: 34, padding: "0 14px", borderRadius: 6, border: "1px solid #2a8c72", background: "#10251f", color: "#7ee0c2", fontSize: 12, fontWeight: 900, cursor: "pointer" }}>
+                  ✓ Accept poem
+                </button>
+                <button type="button" onClick={async () => {
+                  await fetch("/api/sonnet/reject", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ game_id: status.gameId || "a" }) });
+                }}
+                  style={{ height: 34, padding: "0 14px", borderRadius: 6, border: "1px solid #7f1d1d", background: "#2a1015", color: "#fca5a5", fontSize: 12, fontWeight: 900, cursor: "pointer" }}>
+                  ✗ Regenerate
+                </button>
+              </div>
+            </div>
+          ) : null}
           {(status.status === "done") && status.poemText ? (
             <div style={{
               padding: 12, borderRadius: 8,
