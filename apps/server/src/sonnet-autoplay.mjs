@@ -392,9 +392,31 @@ async function generateFullPoem(runner) {
       pendingLines.push({ lineIndex: li, words });
     }
 
+    // Quality check: every line must end with a strong content word
+    const weakWords = new Set(["the","a","an","of","in","to","for","with","at","by","from","as","and","or","but","nor","yet","so","he","she","it","they","we","you","me","him","her","them","my","your","his","its","our","their","this","that","is","are","was","were","be","been","has","have","had","do","does","did","will","would","can","could","shall","should","may","might","must","not","no","there","their","its","also","very","just","than","then","each","both","some","any","such","which","what","when","where","how","who","whom","why","all","every","own","same","so","if","then","else","once","about","into","through","during","before","after","above","below","between","out","off","over","under","again","further","here","there","on","up","down","away","back","inside","near","around","along","onto","upon","across","past","till","until","among","amongst","beside","besides","towards","toward","like","unlike","despite","without","within","beneath","underneath","via"]);
+
+    let weakFound = false;
+    for (const line of pendingLines) {
+      const words = line.words;
+      if (words.length > 0) {
+        const last = words[words.length - 1].word.toLowerCase();
+        if (weakWords.has(last)) {
+          eventLine(runner, "Weak line ending: line " + (line.lineIndex + 1) + " ends with \"" + last + "\" — regenerating");
+          weakFound = true;
+        }
+      }
+    }
+
+    if (weakFound) {
+      runner.status = "writing";
+      runner.step = "Regenerating poem (weak line endings)...";
+      eventLine(runner, "Weak line endings detected — asking agent to regenerate with stronger ends");
+      return;
+    }
+
     runner.pendingLines = pendingLines;
-    runner.status = "posting";
-    eventLine(runner, "Poem generated (" + lines.length + " lines). Starting word-by-word posting...");
+    runner.status = "reviewing";
+    eventLine(runner, "Poem generated (" + lines.length + " lines) — quality check passed. Review in dashboard.");
     for (const line of lines) eventLine(runner, "  " + line);
   } catch (err) {
     eventLine(runner, "Poem gen error: " + (err.message || err) + ". Retrying...");
