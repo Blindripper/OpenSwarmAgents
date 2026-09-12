@@ -16604,48 +16604,51 @@ async function handleApi(req, res, url) {
           try {
             const s = await (await fetch(base + "/api/sessions/" + sid)).json();
             if (!s.is_running || s.task_solved || s.ended_at) {
-              // Priority 1: Check console for agent output (after "Result:" marker)
+              // Read console output - this contains the raw agent response before JSON parsing
               try {
-                const c = await (await fetch(base + "/api/sessions/" + sid + "/console?limit=8000")).json();
-                const raw = (c.text || "").replace(/\x1b\[[0-9;]*m/g, "").trim();
-                // Try to extract content after "Result:" marker
-                const resultMarker = raw.lastIndexOf("Result:");
-                if (resultMarker >= 0) {
-                  const afterResult = raw.slice(resultMarker + 7).trim();
-                  if (afterResult.length > 50) return afterResult.slice(0, 3000);
+                const c = await (await fetch(base + "/api/sessions/" + sid + "/console?limit=12000")).json();
+                let raw = (c.text || "").replace(/\x1b\[[0-9;]*m/g, "").trim();
+                // The poem is before the "Result:" marker or before the JSON parse error
+                // Look for the poem pattern: multiple lines starting with capital letters (iambic verse)
+                const resultIdx = raw.indexOf("Result:");
+                let poem = "";
+                if (resultIdx >= 0) {
+                  poem = raw.slice(resultIdx + 7).trim();
+                } else {
+                  // Before any Python traceback (file /home/...connector.py)
+                  const traceIdx = raw.indexOf("file /home/");
+                  if (traceIdx >= 0) {
+                    poem = raw.slice(0, traceIdx).trim();
+                  } else {
+                    poem = raw;
+                  }
                 }
-                // If no Result: marker, check if raw text looks like a poem (no technical keywords)
-                if (raw.length > 50 && !raw.includes("agentguihome") && !raw.includes("requiredcapabilities")) {
-                  return raw.slice(-3000);
+                // Clean up: remove lines that look like file paths, JSON, or technical output
+                const lines = poem.split("\n").filter((l) => {
+                  const t = l.trim();
+                  if (!t || t.startsWith("{") || t.startsWith("}") || t.startsWith("[") || t.startsWith("file ") || t.startsWith("/usr/lib") || t.startsWith("Traceback") || t.includes("connector.py") || t.startsWith("  ")) return false;
+                  return true;
+                });
+                if (lines.length >= 14) {
+                  // Take lines that look like poem text (start with capital letter, 20-80 chars)
+                  const poemLines = lines.filter((l) => /^[A-Z"']/.test(l.trim()) && l.trim().length > 15 && l.trim().length < 100);
+                  if (poemLines.length >= 14) return poemLines.join("\n");
+                  if (lines.length >= 14) return lines.slice(0, 14).join("\n");
                 }
               } catch {}
-              // Priority 2: Check for actual OUT events (result title)
+              // Fallback: try to get from activity events (OUT events or result messages)
               try {
                 const a = await (await fetch(base + "/api/sessions/" + sid + "/activity?limit=200")).json();
                 const events = a.events || [];
-                // Find the OUT event that is NOT the task description
                 for (let i = events.length - 1; i >= 0; i -= 1) {
                   const ev = events[i];
-                  if (ev.event_type === "message" && ev.icon === "OUT") {
-                    const title = (ev.title || "").trim();
-                    // Skip if it looks like a task description/prompt (too long or has "write a complete shakespearean")
-                    if (title.length > 20 && title.length < 2000 && !title.toLowerCase().includes("write a complete shakespearean")) {
-                      return title;
-                    }
-                  }
-                }
-                // Fallback: any message event that doesn't match the prompt
-                for (let i = events.length - 1; i >= 0; i -= 1) {
-                  const ev = events[i];
-                  if (ev.event_type === "message") {
-                    const title = (ev.title || "").trim();
-                    if (title.length > 30 && title.length < 2000 && !title.toLowerCase().includes("write a complete shakespearean")) {
-                      return title;
-                    }
+                  const title = (ev.title || "").trim();
+                  if (title.length > 50 && title.includes(" ") && !title.includes("shakespearean") && !title.includes("connector.py") && !title.includes("file ")) {
+                    return title;
                   }
                 }
               } catch {}
-              return null; // No valid poem found
+              return null;
             }
           } catch { /* retry */ }
         }
