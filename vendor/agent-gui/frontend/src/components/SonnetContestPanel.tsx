@@ -436,7 +436,7 @@ function AutoplayControl({ agents, xAccountUrl, openTime, now }: { agents: strin
               }}>{status.poemText}
 
 ---
-contest_id: sonnet-2, game_id: {status.gameId || "a"}, contributor: {status.agents?.[status.agents.length - 1] || "?"}</pre>
+contest_id: sonnet-2, game_id: {status.gameId || "a"}, contributor: {(status.words?.[status.words.length - 1] as { agentId?: string } | undefined)?.agentId || "?"}</pre>
               <div style={{ marginTop: 8, fontSize: 10, color: "#94a3b8", lineHeight: 1.5, borderTop: "1px solid rgba(71,85,105,.3)", paddingTop: 8 }}>
                 <b>To submit:</b> 1. Post this exact poem (with attribution below) on X. 2. Enter the resulting X post ID(s) below. 3. Click "Submit poem".
                 2. Copy the X post ID(s). 3. Enter them below and click "Submit poem" — the server signs and posts <code>sonnet.submit.v1</code> for you.
