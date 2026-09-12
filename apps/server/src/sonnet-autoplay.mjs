@@ -87,6 +87,22 @@ function buildPoemText(words) {
   return stanzas.join("\n\n");
 }
 
+/** Build poem text from pending lines (pre-generated, not yet posted). */
+function buildPendingPoemText(pendingLines) {
+  if (!pendingLines || !pendingLines.length) return "";
+  const lines = [];
+  for (const line of pendingLines) {
+    const words = line.words.map((w) => w.word).join(" ");
+    if (words) lines.push(words);
+  }
+  const stanzas = [];
+  for (let i = 0; i < lines.length; i += 4) {
+    stanzas.push(lines.slice(i, i + 4).join("\n"));
+  }
+  return stanzas.join("\n\n");
+}
+
+
 /**
  * Pick a word for the given proposer DID and target syllable increments.
  * Uses the frozen CMUdict lexicon + per-agent DID letter set.
@@ -154,7 +170,7 @@ export function createSonnetAutoplay({ log }) {
         status: runner.status,
         step: runner.step,
         words: runner.words.slice(0, 80),
-        poemText: buildPoemText(runner.words),
+        poemText: buildPoemText(runner.words) || buildPendingPoemText(runner.pendingLines),
         stateHash: runner.stateHash,
         turns: runner.turns,
         startedAt: runner.startedAt,
@@ -247,7 +263,7 @@ async function runLoop(runner) {
       }
       if (runner.running && runner.status === "reviewing") {
         runner.step = "Poem generated. Review in the dashboard — accept or regenerate?";
-        await delay(5000);
+        await delay(30000);
       }
       if (runner.running && runner.status === "posting") {
         await postOneWord(runner);
