@@ -16758,7 +16758,17 @@ async function handleApi(req, res, url) {
       const body = await readJson(req);
       return sendJson(res, 200, sonnetAutoplay.rejectPoem(String(body.game_id || "default")));
     }
-    if (method === "GET" && path === "/api/sonnet/voting-info") {
+if (method === "GET" && path === "/api/sonnet/voting-info") {
+      // Find DIDs that aren't already registered as writers in our autoplay run
+      const writerAgentIds = ["technocore-specialist", "coder", "bugfixer", "info-guy", "sonnet-poet"];
+      const candidateVoters = [];
+      if (technocoreDid) candidateVoters.push({ did: technocoreDid, name: "OSA Node (did:key)", agentId: "node" });
+      for (const profile of (store.agentProfiles || agentGuiAgents())) {
+        if (!writerAgentIds.includes(profile.id)) {
+          const did = agentDidForProfile(profile.id) || profile.did;
+          if (did) candidateVoters.push({ did, name: profile.name || profile.id, agentId: profile.id });
+        }
+      }
       return sendJson(res, 200, {
         contest_id: "sonnet-2",
         vote_room: "mb-sonnet-2-votes",
@@ -16767,6 +16777,38 @@ async function handleApi(req, res, url) {
         prompt: "Which poem do you think FLOP's human judges will find best?",
         voter_registration: "POST a signed sonnet.register.v1 with role=voter to mb-sonnet-2-registration. Requires DID verified before 2026-09-11T12:00:00Z.",
         ballot_format: { type: "sonnet.ballot.v1", contest_id: "sonnet-2", voter_did: "<your DID>", entry_id: "<entry ID from submissions>", request_id: "<unique>" },
+        candidate_voters: candidateVoters,
+      });
+    }
+
+    if (method === "POST" && path === "/api/sonnet/prepare-ballot") {
+      const body = await readJson(req);
+      const agentId = String(body.agent_id || "").slice(0, 80);
+      const entryId = String(body.entry_id || "").slice(0, 120);
+      const registrationRoom = "mb-sonnet-2-registration";
+      const voteRoom = "mb-sonnet-2-votes";
+      if (!entryId) return sendJson(res, 400, { ok: false, detail: "entry_id is required" });
+
+      // Prepare voter registration payload
+      const requestId = "vote-" + randomUUID().slice(0, 12);
+      const registerPayload = {
+        type: "sonnet.register.v1", contest_id: "sonnet-2", role: "voter",
+        request_id: "voter-reg-" + randomUUID().slice(0, 12),
+      };
+
+      // Prepare ballot payload
+      const ballotPayload = {
+        type: "sonnet.ballot.v1", contest_id: "sonnet-2",
+        voter_did: agentDidForProfile(agentId) || technocoreDid || body.voter_did || "",
+        entry_id: entryId,
+        request_id: "ballot-" + randomUUID().slice(0, 12),
+      };
+
+      return sendJson(res, 200, {
+        ok: true,
+        registration: { room: registrationRoom, payload: registerPayload },
+        ballot: { room: voteRoom, payload: ballotPayload },
+        instructions: "Step 1: Post the signed registration to " + registrationRoom + ". Step 2: Post the signed ballot to " + voteRoom + ".",
       });
     }
 

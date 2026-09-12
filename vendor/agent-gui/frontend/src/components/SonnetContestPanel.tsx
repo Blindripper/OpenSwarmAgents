@@ -320,7 +320,7 @@ function AutoplayControl({ agents, xAccountUrl, openTime, now }: { agents: strin
   const [status, setStatus] = useState<{ step: string; status: string; words: unknown[]; log: string[]; turns: number; poemText?: string; gameId?: string; agents?: string[] } | null>(null);
   const [pollRef, setPollRef] = useState<ReturnType<typeof setInterval> | null>(null);
   const [xPostIdInput, setXPostIdInput] = useState("");
-  const [submitResult, setSubmitResult] = useState<{ ok: boolean; error?: string; poem_sha256?: string; payload?: unknown } | null>(null);
+  const [submitResult, setSubmitResult] = useState<{ ok: boolean; registration?: { room: string; payload: unknown }; ballot?: { room: string; payload: unknown }; instructions?: string; error?: string; poem_sha256?: string; payload?: unknown } | null>(null);
 
   const start = (async () => {
     try {
@@ -465,6 +465,10 @@ contest_id: sonnet-2, game_id: {status.gameId || "a"}, contributor: {(status.wor
                   {submitResult.ok ? <>✓ Submitted by {(submitResult.payload as { contributor?: string } | undefined)?.contributor}. SHA-256: {submitResult.poem_sha256?.slice(0, 20)}…</> : <>✗ {submitResult.error}</>}
                 </div>
               )}
+              <details style={{ marginTop: 6, fontSize: 11, color: "#94a3b8" }}>
+                <summary style={{ cursor: "pointer", fontWeight: 900, fontSize: 12, color: "#cbd5e1", padding: "4px 0" }}>🗳 Voting</summary>
+                <VotingSection gameId={status.gameId || "a"} />
+              </details>
             </div>
           ) : null}
           {status.log.length > 0 && (
@@ -478,5 +482,75 @@ contest_id: sonnet-2, game_id: {status.gameId || "a"}, contributor: {(status.wor
         </div>
       )}
     </section>
+  );
+}
+
+function VotingSection({ gameId }: { gameId: string }) {
+  const [voterData, setVoterData] = useState<{ candidate_voters?: { did: string; name: string; agentId: string }[] } | null>(null);
+  const [entryId, setEntryId] = useState("");
+  const [selectedVoter, setSelectedVoter] = useState("");
+  const [ballotResult, setBallotResult] = useState<{ ok: boolean; registration?: { room: string; payload: unknown }; ballot?: { room: string; payload: unknown }; instructions?: string } | null>(null);
+  const [loadingInfo, setLoadingInfo] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/sonnet/voting-info").then((r) => r.json()).then((d) => { setVoterData(d); setLoadingInfo(false); }).catch(() => setLoadingInfo(false));
+  }, []);
+
+  const voterOptions = voterData?.candidate_voters || [];
+
+  return (
+    <div style={{ display: "grid", gap: 8, marginTop: 6 }}>
+      {loadingInfo ? <div style={{ fontSize: 11, color: "#94a3b8" }}>Loading voter info…</div> : (
+        <>
+          <div style={{ fontSize: 10, color: "#94a3b8", lineHeight: 1.5 }}>
+            Register a voter DID and cast a ballot. Only DIDs verified before 2026-09-11T12:00:00Z can vote. Available candidates:
+          </div>
+          <select aria-label="Voter DID" value={selectedVoter} onChange={(e) => setSelectedVoter(e.target.value)}
+            style={{ height: 34, borderRadius: 6, border: "1px solid #2a3558", background: "rgba(2,6,16,.5)", color: "#e5e7eb", fontSize: 12, padding: "0 10px", width: "100%" }}>
+            <option value="">— Select voter DID —</option>
+            {voterOptions.map((v) => <option key={v.did} value={v.did}>{v.name} ({v.did.slice(0, 20)}…)</option>)}
+          </select>
+          <input aria-label="Entry ID" value={entryId} onChange={(e) => setEntryId(e.target.value)}
+            placeholder="Entry ID from submissions receipt"
+            style={{ height: 34, borderRadius: 6, border: "1px solid #2a3558", background: "rgba(2,6,16,.5)", color: "#e5e7eb", fontSize: 12, padding: "0 10px", width: "100%" }} />
+          <button type="button" onClick={async () => {
+            if (!selectedVoter || !entryId.trim()) return;
+            setBallotResult(null);
+            try {
+              const r = await fetch("/api/sonnet/prepare-ballot", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ agent_id: "", entry_id: entryId.trim(), voter_did: selectedVoter }),
+              });
+              setBallotResult(await r.json());
+            } catch { setBallotResult({ ok: false, instructions: "Network error" }); }
+          }}
+            style={{ height: 34, padding: "0 14px", borderRadius: 6, border: "1px solid #2563eb", background: "#10204a", color: "#bfdbfe", fontSize: 12, fontWeight: 900, cursor: "pointer" }}>
+            Prepare ballot
+          </button>
+          {ballotResult && (
+            <div style={{ fontSize: 10, lineHeight: 1.5, padding: 8, borderRadius: 6, border: "1px solid rgba(71,85,105,.3)", background: "rgba(2,6,16,.5)" }}>
+              <div style={{ color: "#cbd5e1", fontSize: 11, fontWeight: 900, marginBottom: 4 }}>Instructions</div>
+              <div style={{ color: "#94a3b8", marginBottom: 6 }}>{ballotResult.instructions}</div>
+              {ballotResult.registration && (
+                <>
+                  <div style={{ color: "#facc15", fontSize: 10, fontWeight: 900, marginBottom: 3 }}>Step 1: Voter registration</div>
+                  <div style={{ color: "#64748b", fontSize: 10, marginBottom: 2 }}>POST signed to: {ballotResult.registration.room}</div>
+                  <pre style={{ fontSize: 10, color: "#94a3b8", marginTop: 2, whiteSpace: "pre-wrap", fontFamily: "ui-monospace, monospace", padding: 6, borderRadius: 4, background: "rgba(2,6,16,.3)" }}>
+{JSON.stringify(ballotResult.registration.payload, null, 2)}</pre>
+                </>
+              )}
+              {ballotResult.ballot && (
+                <>
+                  <div style={{ color: "#7ee0c2", fontSize: 10, fontWeight: 900, marginTop: 6, marginBottom: 3 }}>Step 2: Cast ballot</div>
+                  <div style={{ color: "#64748b", fontSize: 10, marginBottom: 2 }}>POST signed to: {ballotResult.ballot.room}</div>
+                  <pre style={{ fontSize: 10, color: "#94a3b8", marginTop: 2, whiteSpace: "pre-wrap", fontFamily: "ui-monospace, monospace", padding: 6, borderRadius: 4, background: "rgba(2,6,16,.3)" }}>
+{JSON.stringify(ballotResult.ballot.payload, null, 2)}</pre>
+                </>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
