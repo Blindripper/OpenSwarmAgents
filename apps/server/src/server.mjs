@@ -16600,35 +16600,52 @@ async function handleApi(req, res, url) {
         if (!sid) return null;
         const deadline = Date.now() + 600000;
         while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 5000));
+          await new Promise((r) => setTimeout(r, 8000));
           try {
             const s = await (await fetch(base + "/api/sessions/" + sid)).json();
             if (!s.is_running || s.task_solved || s.ended_at) {
-              // Extract from activity events - LAST message (result output)
-              try {
-                const a = await (await fetch(base + "/api/sessions/" + sid + "/activity?limit=200")).json();
-                const outEvents = (a.events || []).filter((e) => e.event_type === "message" && (e.icon === "OUT" || (e.title || "").includes("submitted output")));
-                if (outEvents.length > 0) {
-                  const text = outEvents[outEvents.length - 1].title || "";
-                  if (text.length > 30) return text.trim();
-                }
-                // Fallback: last message event regardless of icon
-                const allMsgs = (a.events || []).filter((e) => e.event_type === "message").map((e) => e.title || "").filter(Boolean);
-                if (allMsgs.length > 0) {
-                  const last = allMsgs[allMsgs.length - 1];
-                  if (last.length > 30) return last.trim();
-                  // If last is short, return the second-to-last (often the real output)
-                  if (allMsgs.length >= 2) return allMsgs[allMsgs.length - 2].trim();
-                  return allMsgs.join("\n").trim();
-                }
-              } catch {}
-              // Fallback to console text
+              // Priority 1: Check console for agent output (after "Result:" marker)
               try {
                 const c = await (await fetch(base + "/api/sessions/" + sid + "/console?limit=8000")).json();
-                let raw = (c.text || "").replace(/\x1b\[[0-9;]*m/g, "").trim();
-                if (raw) return raw.slice(-3000);
+                const raw = (c.text || "").replace(/\x1b\[[0-9;]*m/g, "").trim();
+                // Try to extract content after "Result:" marker
+                const resultMarker = raw.lastIndexOf("Result:");
+                if (resultMarker >= 0) {
+                  const afterResult = raw.slice(resultMarker + 7).trim();
+                  if (afterResult.length > 50) return afterResult.slice(0, 3000);
+                }
+                // If no Result: marker, check if raw text looks like a poem (no technical keywords)
+                if (raw.length > 50 && !raw.includes("agentguihome") && !raw.includes("requiredcapabilities")) {
+                  return raw.slice(-3000);
+                }
               } catch {}
-              return null;
+              // Priority 2: Check for actual OUT events (result title)
+              try {
+                const a = await (await fetch(base + "/api/sessions/" + sid + "/activity?limit=200")).json();
+                const events = a.events || [];
+                // Find the OUT event that is NOT the task description
+                for (let i = events.length - 1; i >= 0; i -= 1) {
+                  const ev = events[i];
+                  if (ev.event_type === "message" && ev.icon === "OUT") {
+                    const title = (ev.title || "").trim();
+                    // Skip if it looks like a task description/prompt (too long or has "write a complete shakespearean")
+                    if (title.length > 20 && title.length < 2000 && !title.toLowerCase().includes("write a complete shakespearean")) {
+                      return title;
+                    }
+                  }
+                }
+                // Fallback: any message event that doesn't match the prompt
+                for (let i = events.length - 1; i >= 0; i -= 1) {
+                  const ev = events[i];
+                  if (ev.event_type === "message") {
+                    const title = (ev.title || "").trim();
+                    if (title.length > 30 && title.length < 2000 && !title.toLowerCase().includes("write a complete shakespearean")) {
+                      return title;
+                    }
+                  }
+                }
+              } catch {}
+              return null; // No valid poem found
             }
           } catch { /* retry */ }
         }
