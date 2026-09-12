@@ -16598,26 +16598,37 @@ async function handleApi(req, res, url) {
         const d = await r.json();
         const sid = d.session?.id;
         if (!sid) return null;
-        const deadline = Date.now() + 600000; // 10 min max wait
+        const deadline = Date.now() + 600000;
         while (Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, 5000));
           try {
             const s = await (await fetch(base + "/api/sessions/" + sid)).json();
             if (!s.is_running || s.task_solved || s.ended_at) {
-              let best = "";
+              // Extract from activity events - LAST message (result output)
+              try {
+                const a = await (await fetch(base + "/api/sessions/" + sid + "/activity?limit=200")).json();
+                const outEvents = (a.events || []).filter((e) => e.event_type === "message" && (e.icon === "OUT" || (e.title || "").includes("submitted output")));
+                if (outEvents.length > 0) {
+                  const text = outEvents[outEvents.length - 1].title || "";
+                  if (text.length > 30) return text.trim();
+                }
+                // Fallback: last message event regardless of icon
+                const allMsgs = (a.events || []).filter((e) => e.event_type === "message").map((e) => e.title || "").filter(Boolean);
+                if (allMsgs.length > 0) {
+                  const last = allMsgs[allMsgs.length - 1];
+                  if (last.length > 30) return last.trim();
+                  // If last is short, return the second-to-last (often the real output)
+                  if (allMsgs.length >= 2) return allMsgs[allMsgs.length - 2].trim();
+                  return allMsgs.join("\n").trim();
+                }
+              } catch {}
+              // Fallback to console text
               try {
                 const c = await (await fetch(base + "/api/sessions/" + sid + "/console?limit=8000")).json();
-                best = (c.text || "").replace(/\x1b\[[0-9;]*m/g, "").trim();
+                let raw = (c.text || "").replace(/\x1b\[[0-9;]*m/g, "").trim();
+                if (raw) return raw.slice(-3000);
               } catch {}
-              if (!best) {
-                try {
-                  const a = await (await fetch(base + "/api/sessions/" + sid + "/activity?limit=200")).json();
-                  const msgs = (a.events || []).filter((e) => e.event_type === "message").map((e) => e.title || "").filter(Boolean);
-                  if (msgs.length) best = msgs.join("\n");
-                } catch {}
-              }
-              if (!best) best = "(poem generated but output was empty)";
-              return best;
+              return null;
             }
           } catch { /* retry */ }
         }
