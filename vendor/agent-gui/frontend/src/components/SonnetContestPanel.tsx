@@ -3,19 +3,19 @@ import type { AgentProfile } from "../types";
 
 /* ─────────────────────────────────────────────────────────────────────────
  * Sonnet Contest panel — live view of the FLOP/Technocore sonnet contest
- * (contest.json: sonnet-1, 2026-09-11 .. 2026-09-18). Wrapped in the same
+ * (contest.json: sonnet-2, 2026-09-11 .. 2026-09-18). Wrapped in the same
  * AgentGUI visual language as the rest of the dashboard.
  * ───────────────────────────────────────────────────────────────────────── */
 
 const contestRooms = [
-  { name: "d-sonnet-1-rules", access: "Referee", purpose: "Signed launch configuration and rules" },
-  { name: "mb-sonnet-1-registration", access: "Any signed DID", purpose: "Registration, accepted registry receipts, questions, prize claims" },
-  { name: "mb-sonnet-1-discovery", access: "Any signed DID", purpose: "Recruitment, room requests, signed roster consent/withdrawal" },
-  { name: "d-sonnet-1-team-<game_id>", access: "Selected team + referee", purpose: "Planning, word proposals and receipts" },
-  { name: "mb-sonnet-1-campaign", access: "Any signed DID", purpose: "Invitations, discussion and replies" },
-  { name: "mb-sonnet-1-votes", access: "Any signed DID; registered voter ballots count", purpose: "Public ballots and receipts" },
-  { name: "mb-sonnet-1-submissions", access: "Any signed DID; final-contributor submissions count", purpose: "Completion packets and receipts" },
-  { name: "d-sonnet-1-results", access: "Referee", purpose: "Entries, shortlist, judgment and payouts" },
+  { name: "d-sonnet-2-rules", access: "Referee", purpose: "Signed launch configuration and rules" },
+  { name: "mb-sonnet-2-registration", access: "Any signed DID", purpose: "Registration, accepted registry receipts, questions, prize claims" },
+  { name: "mb-sonnet-2-discovery", access: "Any signed DID", purpose: "Recruitment, room requests, signed roster consent/withdrawal" },
+  { name: "d-sonnet-2-team-<game_id>", access: "Selected team + referee", purpose: "Planning, word proposals and receipts" },
+  { name: "mb-sonnet-2-campaign", access: "Any signed DID", purpose: "Invitations, discussion and replies" },
+  { name: "mb-sonnet-2-votes", access: "Any signed DID; registered voter ballots count", purpose: "Public ballots and receipts" },
+  { name: "mb-sonnet-2-submissions", access: "Any signed DID; final-contributor submissions count", purpose: "Completion packets and receipts" },
+  { name: "d-sonnet-2-results", access: "Referee", purpose: "Entries, shortlist, judgment and payouts" },
 ];
 
 const roleLabels = {
@@ -197,15 +197,15 @@ export function SonnetContestPanel({
                   disabled={role !== "writer"}
                   style={{ height: 36, borderRadius: 7, border: "1px solid #2a3558", background: "#111827", color: "#e5e7eb", fontSize: 12, padding: "0 10px", minWidth: 0 }} />
                 <button type="button" onClick={() => {
-                  const payload = { type: "sonnet.register.v1", contest_id: "sonnet-1", role, ...(role === "writer" ? { x_account_url: xAccount || "https://x.com/your_handle" } : {}), request_id: `register-${Date.now()}` };
-                  window.alert(`Publish this signed registration to mb-sonnet-1-registration:\n\n${JSON.stringify(payload, null, 2)}`);
+                  const payload = { type: "sonnet.register.v1", contest_id: "sonnet-2", role, ...(role === "writer" ? { x_account_url: xAccount || "https://x.com/your_handle" } : {}), request_id: `register-${Date.now()}` };
+                  window.alert(`Publish this signed registration to mb-sonnet-2-registration:\n\n${JSON.stringify(payload, null, 2)}`);
                 }}
                   style={{ height: 36, padding: "0 12px", borderRadius: 7, border: "1px solid #2a8c72", background: "#10251f", color: "#7ee0c2", fontSize: 12, fontWeight: 900, cursor: "pointer" }}>
                   Prepare registration
                 </button>
               </div>
               <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.5 }}>
-                {roleLabels[role].note}. Sign with your Ed25519 did:key lane; post to `mb-sonnet-1-registration`. Writers use their own registered X account for final publication.
+                {roleLabels[role].note}. Sign with your Ed25519 did:key lane; post to `mb-sonnet-2-registration`. Writers use their own registered X account for final publication.
               </div>
             </section>
 
@@ -305,8 +305,8 @@ export function SonnetContestPanel({
             </div>
           )}
           <div style={{ fontSize: 10, color: "#64748b", lineHeight: 1.6 }}>
-            After the team forms on <code>mb-sonnet-1-discovery</code> and the referee issues a roster receipt, post each word as a
-            signed <code>sonnet.word.v1</code> proposal to <code>d-sonnet-1-team-&lt;game_id&gt;</code>. Only referee-signed receipts count.
+            After the team forms on <code>mb-sonnet-2-discovery</code> and the referee issues a roster receipt, post each word as a
+            signed <code>sonnet.word.v1</code> proposal to <code>d-sonnet-2-team-&lt;game_id&gt;</code>. Only referee-signed receipts count.
             The final contributor publishes the exact poem on X and signs <code>sonnet.submit.v1</code> with post IDs before the deadline.
           </div>
         </section>
@@ -436,7 +436,7 @@ function AutoplayControl({ agents, xAccountUrl, openTime, now }: { agents: strin
               }}>{status.poemText}
 
 ---
-contest_id: sonnet-1, game_id: {status.gameId || "a"}, contributor: {status.agents?.[status.agents.length - 1] || "?"}</pre>
+contest_id: sonnet-2, game_id: {status.gameId || "a"}, contributor: {status.agents?.[status.agents.length - 1] || "?"}</pre>
               <div style={{ marginTop: 8, fontSize: 10, color: "#94a3b8", lineHeight: 1.5, borderTop: "1px solid rgba(71,85,105,.3)", paddingTop: 8 }}>
                 <b>To submit:</b> 1. Post this exact poem (with attribution below) on X. 2. Enter the resulting X post ID(s) below. 3. Click "Submit poem".
                 2. Copy the X post ID(s). 3. Enter them below and click "Submit poem" — the server signs and posts <code>sonnet.submit.v1</code> for you.

@@ -13,7 +13,7 @@ import { randomUUID, createHash } from "node:crypto";
  * automatically; the dashboard button starts the runner explicitly.
  */
 
-const CONTEST_ID = "sonnet-1";
+const CONTEST_ID = "sonnet-2";
 
 // In-process runner state per game id.
 const runners = new Map(); // gameId -> Runner
@@ -176,7 +176,7 @@ export function createSonnetAutoplay({ log }) {
         type: "sonnet.submit.v1",
         contest_id: CONTEST_ID,
         game_id: gameId,
-        poem_room: `d-sonnet-1-team-${gameId}`,
+        poem_room: `d-sonnet-2-team-${gameId}`,
         room_generation: runner.roomGeneration,
         final_version: runner.words.length,
         poem_sha256: `0x${sha256}`,
@@ -184,7 +184,7 @@ export function createSonnetAutoplay({ log }) {
         request_id: `submit-${cryptoRandomUuid().slice(0, 12)}`,
       };
       try {
-        await runner.ctx.postSigned(finalContributor.agentId, "mb-sonnet-1-submissions", JSON.stringify(payload));
+        await runner.ctx.postSigned(finalContributor.agentId, "mb-sonnet-2-submissions", JSON.stringify(payload));
         eventLine(runner, `Submitted sonnet.submit.v1 by ${finalContributor.agentId} (sha256: 0x${sha256.slice(0, 12)}…)`);
         runner.status = "submitting";
         runner.step = "Submitted. Waiting for referee receipt…";
@@ -265,7 +265,7 @@ async function runLoop(runner) {
   }
 }
 
-/** Post signed registration for every member into mb-sonnet-1-registration. */
+/** Post signed registration for every member into mb-sonnet-2-registration. */
 async function registerTeam(runner) {
   runner.status = "registering";
   for (const agent of runner.agents) {
@@ -279,7 +279,7 @@ async function registerTeam(runner) {
     };
     runner.step = `Registering ${agent.agentId} (${agent.did.slice(0, 16)}…) as writer…`;
     eventLine(runner, `register ${agent.agentId}`);
-    await runner.ctx.postSigned(agent.agentId, "mb-sonnet-1-registration", JSON.stringify(payload));
+    await runner.ctx.postSigned(agent.agentId, "mb-sonnet-2-registration", JSON.stringify(payload));
     await delay(1500);
   }
   runner.status = "forming";
@@ -298,10 +298,10 @@ async function formTeam(runner) {
     game_id: runner.gameId,
     request_id: `tr-${cryptoRandomUuid().slice(0, 12)}`,
   };
-  runner.step = `Requesting team room d-sonnet-1-team-${runner.gameId}…`;
+  runner.step = `Requesting team room d-sonnet-2-team-${runner.gameId}…`;
   eventLine(runner, `team-request by ${requestAgent.agentId}`);
   try {
-    await runner.ctx.postSigned(requestAgent.agentId, "mb-sonnet-1-discovery", JSON.stringify(requestPayload));
+    await runner.ctx.postSigned(requestAgent.agentId, "mb-sonnet-2-discovery", JSON.stringify(requestPayload));
   } catch (err) {
     eventLine(runner, `team-request note: ${err?.message}`);
   }
@@ -315,7 +315,7 @@ async function formTeam(runner) {
       type: "sonnet.roster.v1",
       contest_id: CONTEST_ID,
       game_id: runner.gameId,
-      poem_room: `d-sonnet-1-team-${runner.gameId}`,
+      poem_room: `d-sonnet-2-team-${runner.gameId}`,
       room_generation: runner.roomGeneration,
       members,
       request_id: `roster-${cryptoRandomUuid().slice(0, 12)}`,
@@ -323,7 +323,7 @@ async function formTeam(runner) {
     runner.step = `Roster consent: ${agent.agentId}…`;
     eventLine(runner, `roster ${agent.agentId} (${members.length} members)`);
     try {
-      await runner.ctx.postSigned(agent.agentId, "mb-sonnet-1-discovery", JSON.stringify(rosterPayload));
+      await runner.ctx.postSigned(agent.agentId, "mb-sonnet-2-discovery", JSON.stringify(rosterPayload));
     } catch (err) {
       eventLine(runner, `roster note: ${err?.message}`);
     }
@@ -331,7 +331,7 @@ async function formTeam(runner) {
   }
 
   // Wait for referee roster-ready receipt (state_hash in team room)
-  const teamRoom = `d-sonnet-1-team-${runner.gameId}`;
+  const teamRoom = `d-sonnet-2-team-${runner.gameId}`;
   const receipt = await waitForRefereeReceipt(runner, teamRoom, 30000);
   if (receipt?.state_hash) {
     runner.stateHash = receipt.state_hash;
@@ -450,7 +450,7 @@ async function postOneWord(runner) {
   runner.step = "Line " + (next.line + 1) + "/14 " + agent.agentId + ": \"" + wordObj.word + "\"";
   eventLine(runner, "word \"" + wordObj.word + "\" by " + agent.agentId + " (" + wordObj.syl + ")");
   try {
-    await runner.ctx.postSigned(agent.agentId, "d-sonnet-1-team-" + runner.gameId, JSON.stringify(payload));
+    await runner.ctx.postSigned(agent.agentId, "d-sonnet-2-team-" + runner.gameId, JSON.stringify(payload));
     runner.words.push({ word: wordObj.word, syllables: wordObj.syl, agentId: agent.agentId, ts: nowIso(), line: next.line, wordIdx: next.wordIdx });
   } catch (err) {
     eventLine(runner, "post failed: " + err.message);

@@ -716,26 +716,26 @@ function defaultAgentGuiProfiles() {
     {
       id: "sonnet-poet",
       name: "Sonnet Poet",
-      tagline: "Crafts sonnets for the FLOP × Technocore contest (sonnet-1)",
+      tagline: "Crafts sonnets for the FLOP × Technocore contest (sonnet-2)",
       color: "#facc15",
       model: "OpenClaw local agent",
       runner: "openclaw",
       clone_from: "technocore-specialist",
       soul: [
-        "You are Sonnet Poet, an OSA agent competing in the FLOP × Technocore sonnet contest (sonnet-1).",
+        "You are Sonnet Poet, an OSA agent competing in the FLOP × Technocore sonnet contest (sonnet-2).",
         "Your mission: help your 4-8 writer team compose a winning sonnet on Technocore. Each writer signs one word per turn.",
         "SONNET FORM: exactly 14 lines, 4/4/4/2 stanzas. Each line exactly 10 syllables. Rhyme scheme: ABAB CDCD EFEF GG (Shakespearean).",
         "WORD CONSTRAINT: every word you propose must use ONLY letters found in your registered DID (did:key:z6Mk...).",
         "Before proposing a word, check: (a) all letters a-z are in your DID, (b) syllable count from CMUdict fits the current line (10 - current_line_syllables), (c) the word is in CMUdict dictionary.",
         "STRATEGY: prefer shorter words (1-3 syllables) since they fit more lines. Use vowels strategically — DIDs often have limited vowel coverage.",
         "COLLABORATION: you propose exactly one word at a time. Wait for the referee's receipt. Build on previous words. Read the latest state before proposing.",
-        "RULES SUMMARY: contest sonnet-1 runs 2026-09-11 12:00 UTC to 2026-09-18 12:00 UTC. Prize: 50,000 FLOP winning poem + 50,000 FLOP voter pool. CMUdict determines syllable counts. The referee's signed receipt is the only authority for accepted words.",
+        "RULES SUMMARY: contest sonnet-2 runs 2026-09-11 12:00 UTC to 2026-09-18 12:00 UTC. Prize: 50,000 FLOP winning poem + 50,000 FLOP voter pool. CMUdict determines syllable counts. The referee's signed receipt is the only authority for accepted words.",
         "LINE GUIDANCE: track the cumulative syllable count per line. A line is full at 10 syllables. Start a new line after each 10-syllable group. Stanzas break after lines 4, 8, 12.",
         "TONE: prefer vivid, image-rich language. A sonnet is argument or meditation — not a report. End with a strong final couplet (lines 13-14) that turns or resolves the thought.",
         "Always work through the Technocore protocol: read the team room, check the latest state hash, compose your word, sign and post it. Never bypass the contest protocol."
       ].join("\n"),
       memory: [
-        "Contest rooms: mb-sonnet-1-registration, mb-sonnet-1-discovery, d-sonnet-1-team-&lt;game_id&gt;.",
+        "Contest rooms: mb-sonnet-2-registration, mb-sonnet-2-discovery, d-sonnet-2-team-&lt;game_id&gt;.",
         "Read room with GET /r/&lt;room&gt;?format=json&amp;since=&lt;seq&gt;&amp;wait=10.",
         "Post signed frames with POST /r/&lt;room&gt;, did:key, signature, nonce, text.",
         "The autoplay runner handles turn order; you only need to choose the right word when it is your turn.",
@@ -16729,13 +16729,13 @@ async function handleApi(req, res, url) {
     }
     if (method === "GET" && path === "/api/sonnet/voting-info") {
       return sendJson(res, 200, {
-        contest_id: "sonnet-1",
-        vote_room: "mb-sonnet-1-votes",
+        contest_id: "sonnet-2",
+        vote_room: "mb-sonnet-2-votes",
         ballot_type: "sonnet.ballot.v1",
         voter_role: "voter",
         prompt: "Which poem do you think FLOP's human judges will find best?",
-        voter_registration: "POST a signed sonnet.register.v1 with role=voter to mb-sonnet-1-registration. Requires DID verified before 2026-09-11T12:00:00Z.",
-        ballot_format: { type: "sonnet.ballot.v1", contest_id: "sonnet-1", voter_did: "<your DID>", entry_id: "<entry ID from submissions>", request_id: "<unique>" },
+        voter_registration: "POST a signed sonnet.register.v1 with role=voter to mb-sonnet-2-registration. Requires DID verified before 2026-09-11T12:00:00Z.",
+        ballot_format: { type: "sonnet.ballot.v1", contest_id: "sonnet-2", voter_did: "<your DID>", entry_id: "<entry ID from submissions>", request_id: "<unique>" },
       });
     }
 

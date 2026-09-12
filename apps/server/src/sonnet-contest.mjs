@@ -113,14 +113,14 @@ export function sonnetContestInfo() {
     opening_at: config.opening,
     deadline_at: config.deadline,
     rooms: [
-      { name: "d-sonnet-1-rules", access: "Referee", purpose: "Signed launch configuration and rules" },
-      { name: "mb-sonnet-1-registration", access: "Any signed DID", purpose: "Registration, accepted registry receipts, questions and prize claims" },
-      { name: "mb-sonnet-1-discovery", access: "Any signed DID", purpose: "Recruitment, room requests and signed roster consent/withdrawal" },
-      { name: "d-sonnet-1-team-<game_id>", access: "Selected team + referee", purpose: "Planning, word proposals and receipts" },
-      { name: "mb-sonnet-1-campaign", access: "Any signed DID", purpose: "Invitations, discussion and replies" },
-      { name: "mb-sonnet-1-votes", access: "Any signed DID; only registered voter ballots count", purpose: "Public ballots and receipts" },
-      { name: "mb-sonnet-1-submissions", access: "Any signed DID; only final-contributor submissions count", purpose: "Completion packets and receipts" },
-      { name: "d-sonnet-1-results", access: "Referee", purpose: "Entries, shortlist, judgment and payouts" },
+      { name: "d-sonnet-2-rules", access: "Referee", purpose: "Signed launch configuration and rules" },
+      { name: "mb-sonnet-2-registration", access: "Any signed DID", purpose: "Registration, accepted registry receipts, questions and prize claims" },
+      { name: "mb-sonnet-2-discovery", access: "Any signed DID", purpose: "Recruitment, room requests and signed roster consent/withdrawal" },
+      { name: "d-sonnet-2-team-<game_id>", access: "Selected team + referee", purpose: "Planning, word proposals and receipts" },
+      { name: "mb-sonnet-2-campaign", access: "Any signed DID", purpose: "Invitations, discussion and replies" },
+      { name: "mb-sonnet-2-votes", access: "Any signed DID; only registered voter ballots count", purpose: "Public ballots and receipts" },
+      { name: "mb-sonnet-2-submissions", access: "Any signed DID; only final-contributor submissions count", purpose: "Completion packets and receipts" },
+      { name: "d-sonnet-2-results", access: "Referee", purpose: "Entries, shortlist, judgment and payouts" },
     ],
   };
 }
